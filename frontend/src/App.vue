@@ -178,7 +178,7 @@
 
         <!-- 錄音記錄 -->
         <div v-if="!searchKeyword && !aiQuestion && historySubTab === 'records'" class="recording-list">
-          <div class="panel-header">📚 錄音記錄（{{ historyList.length }} 筆）</div>
+          <div class="panel-header">📚 錄音記錄（{{ historyList.length }} 筆）<button class="btn btn-small btn-refresh" @click="loadHistory" style="margin-left:8px">🔄</button></div>
           <div class="panel-body">
             <div v-for="(item, idx) in historyList" :key="idx" class="history-item">
               <div class="history-info">
@@ -484,6 +484,8 @@ export default {
         if (importResult.success) {
           this.currentAudioPath = importResult.path
           this.audioInfo = importResult
+          // 儲存原始音檔路徑（fileName 是 f.path，即原始音檔位置）
+          this._originalAudioPath = fileName
           await this.startTranscribe()
         } else {
           this.statusText = `❌ 無法載入音檔: ${importResult.error}`
@@ -764,6 +766,8 @@ export default {
       const now = new Date()
       const id = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}_${this.recordingMode || 'import'}`
       const duration = segments.length > 0 ? segments[segments.length-1].end : 0
+      // 優先使用原始音檔路徑（transcribeAudioFile 傳入的 f.path），否則用 currentAudioPath
+      const audioPath = this._originalAudioPath || this.currentAudioPath || ''
       await window.electronAPI.recoSaveMeta({
         recordingId: id,
         filename: `${id}.webm`,
@@ -773,7 +777,7 @@ export default {
         modelSize: this.selectedModel,
         segments,
         llmResults: llmResults ? { ...llmResults } : { ...this.llmResults },
-        audioPath: this.currentAudioPath || '',
+        audioPath,
       })
     },
 

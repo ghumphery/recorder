@@ -474,13 +474,13 @@ ipcMain.handle('export:save', async (event, { format, results, filePath }) => {
   try {
     let content = ''
     if (format === 'md') {
-      content = '# Recoder — AI 會議記錄\n\n| 時間 | 內容 |\n|------|------|\n'
+      content = '# Recorder — AI 會議記錄\n\n| 時間 | 內容 |\n|------|------|\n'
       for (const r of results) {
         const s = formatTime(r.start); const e = formatTime(r.end)
         content += `| ${s}~${e} | ${r.text} |\n`
       }
     } else {
-      content = 'Recoder — AI 會議記錄\n' + '='.repeat(40) + '\n\n'
+      content = 'Recorder — AI 會議記錄\n' + '='.repeat(40) + '\n\n'
       for (const r of results) {
         const s = formatTime(r.start); const e = formatTime(r.end)
         content += `[${s} - ${e}]\n${r.text}\n\n`
@@ -584,6 +584,7 @@ ipcMain.handle('reco:batchTranscribeNew', async (event, { modelSize, useGpu, gpu
             id, filename: f, recordingMode: 'import', recordedAt: now.toISOString(),
             duration: r.segments.length > 0 ? r.segments[r.segments.length - 1].end : 0,
             modelSize, segments: r.segments, fullText, llmResults: {},
+            audioPath: audioPath,
           }
           const metaPath = path.join(dir, `${id}.json`)
           fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
@@ -732,7 +733,7 @@ function createWindow() {
   registerRecoFileProtocol()
     mainWindow = new BrowserWindow({
     width: 1100, height: 800, minWidth: 720, minHeight: 500,
-    title: `Recoder v${app.getVersion()} — AI 會議記錄`,
+    title: `Recorder v${app.getVersion()} — AI 會議記錄`,
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   })
