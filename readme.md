@@ -59,7 +59,7 @@ frontend\dist-electron\win-unpacked\Recoder.exe
 - 所有錄音與轉譯資料僅存於本機，不上傳雲端
 - 僅在首次下載語音模型時連線 Hugging Face
 - 無後端伺服器 (無 Flask、無 port 5199)，所有處理在 Electron IPC 中完成
-- 詳細檢查清單請參閱 [`security.md`](./security.md)
+- 詳細檢查清單請參閱 `security.md`（僅供開發參考，未納入 repo）
 
 ## 🎯 使用流程
 
@@ -98,9 +98,9 @@ frontend\dist-electron\win-unpacked\Recoder.exe
 ## 📁 專案結構
 
 ```
-recoder/
-├── frontend/
-│   ├── package.json              # Electron + Vue 專案設定
+recorder/
+├── frontend/                     # Electron + Vue.js 前端
+│   ├── package.json              # 專案設定與版本號
 │   ├── vite.config.js
 │   ├── index.html
 │   ├── src/
@@ -111,7 +111,6 @@ recoder/
 │   │   └── preload.js            # preload script (IPC contextBridge)
 │   └── dist-electron/            # electron-builder 產出
 ├── whisper_cli/                  # whisper-cli.exe + DLL
-├── ffmpeg/                       # ffmpeg.exe
 ├── model/                        # GGML 語音模型
 ├── whisper_cpp/                  # whisper.cpp 原始碼 (編譯用)
 ├── assets/                       # 資源檔

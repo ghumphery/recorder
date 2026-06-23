@@ -559,3 +559,19 @@
   - `frontend/package.json` 版本號更新為 `1.8.10`
   - 後續操作：需在 GitHub 建立公開 repo → `git remote add origin <URL>` → `git push` → 在 GitHub Releases 上傳 `Recoder-1.8.9-portable.exe`
   - 備份檔名: backup-202606230922.zip
+
+## [2026-06-23 09:56]
+- **version**: 1.8.10
+- **修改要求**：優化程式碼，移除舊有用不到的 Python 程式碼（PyQt5/Flask/faster-whisper 時代）。
+- **修改規劃**：
+  1. 刪除舊 Python 模組：`main.py`、`diarizer.py`、`recorder.py`、`logger.py`、`transcriber.py`
+  2. 刪除 PyInstaller 相關：`recoder.spec`、`recoder_console_test.spec`、`test_full_windowed.spec`、`test_min_ct2.spec`、`rthook_no_pyqt5_path.py`
+  3. 刪除測試腳本：`test_full_windowed.py`、`test_min_ct2.py`
+  4. 刪除舊 GUI：`ui/` 目錄（PyQt5）
+  5. 刪除舊後端：`backend/` 目錄（Flask）
+  6. 刪除不再需要的 `requirements.txt`、根目錄 `package-lock.json`
+  7. 更新 `readme.md` 專案結構（移除 `ffmpeg/`、`backend/`、`ui/`）
+- **修改結果**：
+  - 已刪除 12 個檔案 + 2 個目錄（`ui/`、`backend/`）
+  - `readme.md` 專案結構已更新
+  - GitHub push 成功（`2fb62f7`）
