@@ -1,7 +1,7 @@
 {
   "name": "recoder-frontend",
   "private": true,
-  "version": "1.10.0",
+  "version": "1.10.1",
   "type": "commonjs",
   "main": "electron/main.js",
   "scripts": {
@@ -24,8 +24,8 @@
     "wait-on": "^8.0.0"
   },
   "build": {
-    "appId": "com.recoder.app",
-    "productName": "Recoder",
+    "appId": "com.recorder.app",
+    "productName": "Recorder",
     "directories": {
       "output": "dist-electron"
     },
@@ -51,7 +51,7 @@
       "icon": "../assets/app.ico"
     },
     "portable": {
-      "artifactName": "Recoder-${version}-portable.exe"
+      "artifactName": "Recorder-${version}-portable.exe"
     }
   }
 }

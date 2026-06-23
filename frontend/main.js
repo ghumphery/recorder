@@ -34,14 +34,14 @@ function startBackend() {
     // 生產模式：啟動 extraResources 中的後端 exe
     // 嘗試多個可能的路徑（portable exe 解壓到暫存目錄時路徑可能不同）
     const possiblePaths = [
-      path.join(process.resourcesPath, 'RecoderBackend'),
-      path.join(path.dirname(process.execPath), 'resources', 'RecoderBackend'),
-      path.join(process.cwd(), 'resources', 'RecoderBackend'),
+      path.join(process.resourcesPath, 'RecorderBackend'),
+      path.join(path.dirname(process.execPath), 'resources', 'RecorderBackend'),
+      path.join(process.cwd(), 'resources', 'RecorderBackend'),
     ]
     let backendDir = null
     let backendExe = null
     for (const p of possiblePaths) {
-      const exe = path.join(p, 'RecoderBackend.exe')
+      const exe = path.join(p, 'RecorderBackend.exe')
       if (fs.existsSync(exe)) {
         backendDir = p
         backendExe = exe
@@ -55,7 +55,7 @@ function startBackend() {
     console.log(`[backend] found backendDir: ${backendDir}`)
     console.log(`[backend] found backendExe: ${backendExe}`)
     if (!backendExe) {
-      console.error(`[backend] 找不到 RecoderBackend.exe！嘗試路徑:`)
+      console.error(`[backend] 找不到 RecorderBackend.exe！嘗試路徑:`)
       possiblePaths.forEach(p => console.error(`  ${p}`))
       return
     }
@@ -103,7 +103,7 @@ function createWindow() {
     height: 720,
     minWidth: 720,
     minHeight: 500,
-    title: 'Recoder — AI 會議記錄',
+    title: 'Recorder — AI 會議記錄',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

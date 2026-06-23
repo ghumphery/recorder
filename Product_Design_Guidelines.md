@@ -26,7 +26,7 @@
   - **線上會議混音**：`getDisplayMedia({ audio: true })`（系統音效）+ `getUserMedia({ audio: true })`（麥克風）→ Web Audio API 混音 → MediaRecorder → ffmpeg → whisper-cli
 - **版本號管理**：
   - 版本號定義於 `frontend/package.json` 的 `version` 欄位
-  - Electron 視窗標題動態讀取版本號：`Recoder v{version} — AI 會議記錄`（設定於 `frontend/electron/main.js` 的 `BrowserWindow title`）
+  - Electron 視窗標題動態讀取版本號：`Recorder v{version} — AI 會議記錄`（設定於 `frontend/electron/main.js` 的 `BrowserWindow title`）
   - 每次功能或修補更新須遞增版本號（Major.Minor.Patch）
 - **資料流**：
   ```
@@ -74,7 +74,7 @@
 - **Electron main.js**：透過 IPC handler 直接在本機呼叫 CLI 工具 (`child_process.spawn`)
 - **編譯工具**：electron-builder 25.1.8 (portable 模式)
 - **編譯命令**：`cd frontend && npm run electron:build`（= `vite build && electron-builder --win portable`）
-- **編譯輸出**：`frontend/dist-electron/Recoder-{version}-portable.exe` (含 Electron + Vue + whisper-cli + ffmpeg)
+- **編譯輸出**：`frontend/dist-electron/Recorder-{version}-portable.exe` (含 Electron + Vue + whisper-cli + ffmpeg)
 - **開發模式**：`cd frontend && npm run electron:dev`（啟動 Vite dev server + Electron）
 - **排除項目**：`files` 中排除 `node_modules/electron`，避免干擾 Electron 內建模組
 
