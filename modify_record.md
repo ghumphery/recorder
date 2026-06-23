@@ -659,3 +659,29 @@
 - 完成原始碼備份: backup-202606231515.zip
 - Git commit `a0b67c2` 並 push 至 GitHub origin master。
 
+## [2026-06-23 15:45]
+- **version**: 1.10.3
+- **修改要求**：修正音檔播放的多項問題：1) 缺少停止播放按鈕；2) 語音未完就提前跳到下一句；3) 切換其他逐字稿時舊音檔仍在播放；4) 從音檔列表辨識後，播放使用的原始音檔與 whisper 辨識的 WAV 時間戳不對齊。
+- **修改規劃**：
+  1. `frontend/src/App.vue`：
+     - 在原始逐字稿 panel header 新增「⏹️ 停止播放」按鈕（`nowPlaying === true` 時顯示），點擊呼叫 `stopPlayback()`
+     - `onAudioTimeUpdate()` 自動跳句條件改為 `currentTime >= seg.end + 0.3`，保留 300ms 緩衝
+     - `reviewRecording()` 與 `playRecordingAudio()` 開頭加入 `this.stopPlayback()`，避免舊音檔繼續播放
+     - `transcribeAudioFile()` 傳入 `outputDir` 給 `import:audio`，讓轉換後的 WAV 輸出到 `reco_data`
+     - `saveRecordingMeta()` 移除 `_originalAudioPath` 優先邏輯，一律使用 `currentAudioPath`（即 WAV）
+     - 新增 `getRecoDataPath()` 透過 IPC 取得正確的 `reco_data` 路徑
+  2. `frontend/electron/main.js`：
+     - `import:audio` IPC handler 改為接收 `{ filePath, outputDir }`，當 `outputDir` 存在時將轉換後的 WAV 寫入該目錄
+     - 新增 `reco:dataPath` IPC handler 回傳 `recoDataPath()`
+  3. `frontend/electron/preload.js`：新增 `recoGetDataPath` bridge 方法
+  4. 版本號 `1.10.2` → `1.10.3`（patch 修復 bug + 小功能新增）。
+  5. 更新 `readme.md`、`Product_Design_Guidelines.md`、`modify_record.md`。
+- **修改結果**：
+  - `frontend/src/App.vue`：已新增停止播放按鈕、跳句緩衝、切換時自動停止、WAV 路徑統一
+  - `frontend/electron/main.js`：`import:audio` 支援 `outputDir`，新增 `reco:dataPath`
+  - `frontend/electron/preload.js`：新增 `recoGetDataPath`
+  - `frontend/package.json`：版本號更新為 `1.10.3`
+  - Vite build 成功（11 modules, ~716ms）
+  - electron-builder 產出 `frontend/dist-electron/Recorder-1.10.3-portable.exe`（127,478,541 bytes）
+- 完成原始碼備份: backup-202606231548.zip
+

@@ -118,7 +118,11 @@
     <!-- 主要內容區：逐字稿 -->
     <div class="content-area" v-if="activeTab === 'transcript'">
       <div class="panel" v-if="hasResult && activeSource === 'original'">
-        <div class="panel-header">📝 原始逐字稿（{{ transcriptionResults.length }} 句）<span v-if="nowPlaying" class="playing-badge">▶️ 播放中</span></div>
+        <div class="panel-header">
+          📝 原始逐字稿（{{ transcriptionResults.length }} 句）
+          <span v-if="nowPlaying" class="playing-badge">▶️ 播放中</span>
+          <button v-if="nowPlaying" class="btn btn-small btn-stop-playback" @click="stopPlayback" title="停止播放">⏹️ 停止播放</button>
+        </div>
         <div class="panel-body">
           <div v-for="(seg, idx) in transcriptionResults" :key="idx" class="segment" :class="{ 'segment-playing': playingSegmentIdx === idx }" @click="playSegment(idx)" :title="currentAudioUrl ? '點擊播放此句' : ''">
             <span class="timestamp">[{{ formatTime(seg.start) }} - {{ formatTime(seg.end) }}]</span>
@@ -241,6 +245,7 @@ export default {
       recordingSeconds: 0, audioContext: null, recordingStream: null,
       segmentMinutes: 0, currentSegment: 0, segmentBlobs: [],
       _segmentStop: false, _segmentCount: 0, _segmentMimeType: '', _segmentElapsed: 0,
+      // 音檔列表辨識原始路徑（已棄用，保留向後相容不影響）
       // LLM
       llmProviders: [], llmProvider: 'ollama', llmModel: '',
       apiKeys: {}, showApiKey: {},
@@ -388,6 +393,7 @@ export default {
     },
     async reviewRecording(id) {
       if (!window.electronAPI) return
+      this.stopPlayback()
       this.busy = true
       this.statusText = `📖 載入 ${id}...`
       this.statusError = false
@@ -477,15 +483,12 @@ export default {
         this.currentAudioPath = null
         this.hasResult = false
         this.transcriptionResults = []
-        // 用 import:audio 取得完整路徑（或直接從 reco_data 讀取）
-        const dir = this.recoDir || ''
-        // 直接呼叫 transcribe:start 需要完整路徑，透過 import:audio 取得
-        const importResult = await window.electronAPI.importAudio(fileName)
+        // 透過 import:audio 轉換並輸出到 reco_data，讓後續播放與辨識使用同一份 WAV
+        const outputDir = this.recoDir || await this.getRecoDataPath()
+        const importResult = await window.electronAPI.importAudio({ filePath: fileName, outputDir })
         if (importResult.success) {
           this.currentAudioPath = importResult.path
           this.audioInfo = importResult
-          // 儲存原始音檔路徑（fileName 是 f.path，即原始音檔位置）
-          this._originalAudioPath = fileName
           await this.startTranscribe()
         } else {
           this.statusText = `❌ 無法載入音檔: ${importResult.error}`
@@ -724,11 +727,19 @@ export default {
       this.busy = true; this.statusText = '載入中...'; this.statusError = false
       try {
         if (!window.electronAPI) return
-        const d = await window.electronAPI.importAudio(fp)
+        const outputDir = this.recoDir || await this.getRecoDataPath()
+        const d = await window.electronAPI.importAudio({ filePath: fp, outputDir })
         if (d.success) { this.audioLoaded = true; this.currentAudioPath = d.path; this.audioInfo = d; this.hasResult = false; this.transcriptionResults = []; this.statusText = `✅ ${d.filename}` }
         else { this.statusText = `❌ ${d.error}`; this.statusError = true }
       } catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true }
       finally { this.busy = false }
+    },
+    async getRecoDataPath() {
+      if (!window.electronAPI) return ''
+      try {
+        const r = await window.electronAPI.recoGetDataPath()
+        return r.path || ''
+      } catch (e) { return '' }
     },
 
     // ── 辨識 ──
@@ -767,7 +778,7 @@ export default {
       const id = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}_${this.recordingMode || 'import'}`
       const duration = segments.length > 0 ? segments[segments.length-1].end : 0
       // 優先使用原始音檔路徑（transcribeAudioFile 傳入的 f.path），否則用 currentAudioPath
-      const audioPath = this._originalAudioPath || this.currentAudioPath || ''
+      const audioPath = this.currentAudioPath || ''
       await window.electronAPI.recoSaveMeta({
         recordingId: id,
         filename: `${id}.webm`,
@@ -954,7 +965,7 @@ export default {
       if (!audio || !this.nowPlaying) return
       const currentTime = audio.currentTime
       const seg = this.transcriptionResults[this.playingSegmentIdx]
-      if (seg && currentTime >= seg.end) {
+      if (seg && currentTime >= seg.end + 0.3) {
         // 自動跳到下一句
         const nextIdx = this.playingSegmentIdx + 1
         if (nextIdx < this.transcriptionResults.length) {
@@ -1024,6 +1035,7 @@ export default {
         this.statusError = true
         return
       }
+      this.stopPlayback()
       await this.loadAudioUrl(item.audioPath)
       if (this.currentAudioUrl) {
         // 載入逐字稿並切換到逐字稿 tab，由使用者自行點擊句子播放
@@ -1145,6 +1157,8 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .btn-play:hover:not(:disabled) { background: #2E7D32; }
 .btn-delete { background: #e53935; }
 .btn-delete:hover:not(:disabled) { background: #c62828; }
+.btn-stop-playback { background: #e53935; margin-left: 8px; }
+.btn-stop-playback:hover { background: #c62828; }
 .segment-playing { background: #e3f2fd; border-radius: 4px; padding: 2px 4px; cursor: pointer; }
 .segment-playing:hover { background: #bbdefb; }
 .segment { cursor: default; }

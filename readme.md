@@ -37,14 +37,14 @@ npm run electron:dev
 
 ### 下載打包版
 
-從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.10.2-portable.exe`，直接執行即可。
+從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.10.3-portable.exe`，直接執行即可。
 
 ### 自行打包
 
 ```bash
 cd frontend
 npm run electron:build
-# 產出：frontend/dist-electron/Recorder-1.10.2-portable.exe
+# 產出：frontend/dist-electron/Recorder-1.10.3-portable.exe
 ```
 
 ### 直接運行打包版
@@ -52,6 +52,13 @@ npm run electron:build
 ```
 frontend\dist-electron\win-unpacked\Recorder.exe
 ```
+
+### 音檔播放注意事項
+
+- 點擊逐字稿句子會從該句的起始時間開始播放
+- 播放中可點擊「⏹️ 停止播放」按鈕立即停止
+- 切換到其他錄音記錄或 Review 時會自動停止舊音檔
+- 從「音檔列表」進行辨識時，程式會同時產生一份 16kHz mono WAV 保存到 `reco_data`，確保播放與辨識使用同一份音檔、時間戳對齊
 
 ## 🧰 系統需求
 
@@ -87,6 +94,7 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 版本歷史
 
+- **v1.10.3** — 修正音檔播放問題並新增停止播放功能：1) 新增「⏹️ 停止播放」按鈕；2) 切換逐字稿（Review / 播放其他錄音）前自動停止舊音檔；3) 自動跳到下一句的判斷加入 300ms 緩衝，避免語音未完就提前跳句；4) 從音檔列表辨識時，將轉換後的 WAV 保存到 `reco_data`，讓 metadata 儲存與播放都使用同一份音檔，解決文字與語音時間戳不對齊的問題
 - **v1.10.2** — 修正音檔播放相關 bug：1) 點擊句子播放時，改在音檔 `loadedmetadata` 完成後才設定 `currentTime` 並播放，解決播放失敗或只播一小段的問題；2) 從歷史記錄播放時不再自動從第 0 句開始，改為僅載入音檔與逐字稿，讓使用者自行選擇起始句子
 - **v1.10.0** — 新增音檔播放功能（逐字稿句子點擊播放對應時段）、刪除管理（錄音記錄/音檔）、錄音記錄標示音檔存在狀態
 - **v1.8.9** — 修正長音訊辨識時 whisper 模型產生 hallucination 重複文字的 bug：加入 whisper-cli 反幻覺參數（`-ml 60`/`-nth 0.7`/`-wt 0.03`/`-bs 1`/`--suppress-nst`/`--no-fallback`）與 Python 端 `_deduplicate_repeats()` 後處理去重邏輯

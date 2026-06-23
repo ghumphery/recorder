@@ -40,4 +40,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   recoDeleteAudio: (p) => ipcRenderer.invoke('reco:deleteAudio', p),
   // 取得音檔 URL（自訂 protocol）
   recoGetAudioUrl: (p) => ipcRenderer.invoke('reco:getAudioUrl', p),
+  // 取得 reco_data 路徑
+  recoGetDataPath: () => ipcRenderer.invoke('reco:dataPath'),
 })

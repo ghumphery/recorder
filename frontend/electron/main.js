@@ -287,12 +287,18 @@ ipcMain.handle('dialog:saveFile', async (event, defaultName) => {
   return result.canceled ? null : result.filePath
 })
 
-ipcMain.handle('import:audio', async (event, filePath) => {
+ipcMain.handle('import:audio', async (event, { filePath, outputDir }) => {
   appLog('INFO', 'import', `匯入音檔: ${filePath}`)
   try {
-    const wavPath = await convertAudio(filePath)
-    const stat = fs.statSync(wavPath)
-    return { success: true, path: wavPath, filename: path.basename(filePath), size: stat.size }
+    let wavPath
+    if (outputDir) {
+      const ext = path.extname(filePath).toLowerCase()
+      fs.mkdirSync(outputDir, { recursive: true })
+      wavPath = path.join(outputDir, `${path.basename(filePath, ext)}_converted.wav`)
+    }
+    const outPath = await convertAudio(filePath, wavPath)
+    const stat = fs.statSync(outPath)
+    return { success: true, path: outPath, filename: path.basename(filePath), size: stat.size }
   } catch (e) { return { success: false, error: e.message } }
 })
 
@@ -635,6 +641,16 @@ ipcMain.handle('reco:deleteAudio', async (event, { audioPath }) => {
     fs.unlinkSync(resolved)
     appLog('INFO', 'reco', `音檔已刪除: ${audioPath}`)
     return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── 取得 reco_data 路徑 ──
+
+ipcMain.handle('reco:dataPath', () => {
+  try {
+    const p = recoDataPath()
+    fs.mkdirSync(p, { recursive: true })
+    return { success: true, path: p }
   } catch (e) { return { success: false, error: e.message } }
 })
 
