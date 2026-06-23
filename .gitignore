@@ -23,6 +23,9 @@ dist/
 dist-electron/
 win-unpacked/
 
+# 根目錄的 package-lock.json（frontend/ 已有自己的）
+/package-lock.json
+
 # 點開頭的目錄與檔案
 .*
 !.gitignore
