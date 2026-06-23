@@ -700,3 +700,18 @@
 - 完成原始碼備份: backup-202606231629.zip
 - Git commit `591bf3c..` 並 push 至 GitHub origin master
 
+## [2026-06-23 16:50]
+- **version**: 1.10.5
+- **修改要求**：修正播放延遲與開頭重複問題：1) 點擊播放需等待 10~30 秒才有反應；2) 切換錄音後播放的還是上一個音檔內容；3) 下一句開頭重複播放仍未改善。
+- **修改規劃**：
+  1. `frontend/src/App.vue` 的 `reviewRecording()`：移除 `this.stopPlayback()` 呼叫，改為僅重置播放狀態旗標（`nowPlaying = false`、`playingSegmentIdx = -1`），不觸碰 `audio.src`，避免清除已載入的音檔 URL
+  2. `frontend/src/App.vue` 的 `seekAndPlay()`：在設定 `currentTime` 前先呼叫 `audio.pause()`，立即停止舊音訊輸出，避免舊緩衝區內容在 seek 完成前洩漏
+  3. 版本號 `1.10.4` → `1.10.5`（patch 修復 bug）。
+- **修改結果**：
+  - `frontend/src/App.vue`：`reviewRecording()` 不再呼叫 `stopPlayback()`；`seekAndPlay()` 先 `pause()` 再 seek
+  - `frontend/package.json`：版本號更新為 `1.10.5`
+  - Vite build 成功（11 modules, ~661ms）
+  - electron-builder 產出 `frontend/dist-electron/Recorder-1.10.5-portable.exe`（127,478,590 bytes）
+- 完成原始碼備份: （待補）
+- Git commit `7145108` 並 push 至 GitHub origin master
+
