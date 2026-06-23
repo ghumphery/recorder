@@ -33,6 +33,9 @@ Thumbs.db
 # Environment
 .env
 
+# 測試資料
+test_data/
+
 # 舊後端（已棄用）
 backend/
 
