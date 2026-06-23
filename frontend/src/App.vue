@@ -199,7 +199,7 @@
                 <span class="history-mode">{{ (f.size / 1024).toFixed(1) }} KB</span>
                 <span class="history-duration">{{ f.ext }}</span>
                 <span class="history-segments">{{ f.mtime.slice(0, 19).replace('T', ' ') }}</span>
-                <button class="btn btn-small btn-transcribe-audio" @click="transcribeAudioFile(f.name)" :disabled="busy">🤖 辨識</button>
+                <button class="btn btn-small btn-transcribe-audio" @click="transcribeAudioFile(f.path)" :disabled="busy">🤖 辨識</button>
               </div>
             </div>
             <div v-if="audioFiles.length === 0" class="empty-hint">尚無音檔</div>

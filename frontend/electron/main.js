@@ -500,8 +500,9 @@ ipcMain.handle('reco:listAudioFiles', async () => {
     const files = entries
       .filter(e => e.isFile() && audioExts.includes(path.extname(e.name).toLowerCase()))
       .map(e => {
-        const stat = fs.statSync(path.join(dir, e.name))
-        return { name: e.name, size: stat.size, ext: path.extname(e.name).toLowerCase(), mtime: stat.mtime.toISOString() }
+        const fullPath = path.join(dir, e.name)
+        const stat = fs.statSync(fullPath)
+        return { name: e.name, path: fullPath, size: stat.size, ext: path.extname(e.name).toLowerCase(), mtime: stat.mtime.toISOString() }
       })
     files.sort((a, b) => b.mtime.localeCompare(a.mtime))
     return { success: true, files }
