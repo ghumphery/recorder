@@ -489,7 +489,7 @@ ipcMain.handle('export:save', async (event, { format, results, filePath }) => {
   } catch (e) { return { success: false, error: e.message } }
 })
 
-// ── 音檔列表與重建 ──
+// ── 音檔列表、載入 Meta、LLM 處理、批次辨識新音檔 ──
 
 ipcMain.handle('reco:listAudioFiles', async () => {
   try {
@@ -509,35 +509,96 @@ ipcMain.handle('reco:listAudioFiles', async () => {
   } catch (e) { return { success: false, error: e.message } }
 })
 
-ipcMain.handle('reco:rebuild', async (event, { recordingId, modelSize, useGpu, gpuDevice }) => {
-  appLog('INFO', 'reco', `重建辨識: ${recordingId} (model=${modelSize})`)
+ipcMain.handle('reco:loadMeta', async (event, { recordingId }) => {
   try {
     const metaPath = recoDataPath(`${recordingId}.json`)
     if (!fs.existsSync(metaPath)) return { success: false, error: `找不到記錄: ${recordingId}` }
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
-    // 找對應的 WAV 音檔
+    return { success: true, meta }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('reco:llmProcess', async (event, { recordingId, provider, apiKey, model, type }) => {
+  appLog('INFO', 'reco', `LLM 處理: ${recordingId} type=${type}`)
+  try {
+    const metaPath = recoDataPath(`${recordingId}.json`)
+    if (!fs.existsSync(metaPath)) return { success: false, error: `找不到記錄: ${recordingId}` }
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+    const text = meta.fullText || meta.segments.map(s => s.text).join(' ')
+    if (!text) return { success: false, error: '無逐字稿內容' }
+    let systemPrompt, result
+    if (type === 'optimize') {
+      systemPrompt = '你是一個專業的會議記錄編輯。請優化以下逐字稿：修正口語化表達、改善語句流暢度、保留原意。直接輸出優化後的文字，不要額外說明。'
+      result = await callLLM(provider, apiKey, model, text, systemPrompt)
+      meta.llmResults = meta.llmResults || {}
+      meta.llmResults.optimized = result
+    } else if (type === 'translate') {
+      systemPrompt = '你是一個專業的翻譯。請將以下逐字稿逐句翻譯為繁體中文。輸出格式為每行「[原文] 原文\n[中文] 翻譯」，句與句之間空一行。保留原意，不要額外說明。'
+      result = await callLLM(provider, apiKey, model, text, systemPrompt)
+      meta.llmResults = meta.llmResults || {}
+      meta.llmResults.translated = result
+    } else if (type === 'summary') {
+      systemPrompt = '你是一個專業的會議記錄分析師。請根據以下逐字稿，提取：\n1. 會議摘要（3-5句話）\n2. 重要決策\n3. 待辦事項\n4. 關鍵時間點\n\n使用繁體中文輸出，條列式呈現。'
+      result = await callLLM(provider, apiKey, model, text, systemPrompt)
+      meta.llmResults = meta.llmResults || {}
+      meta.llmResults.summary = result
+    } else {
+      return { success: false, error: `不支援的類型: ${type}` }
+    }
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
+    appLog('INFO', 'reco', `LLM ${type} 完成: ${recordingId}`)
+    return { success: true, result }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('reco:batchTranscribeNew', async (event, { modelSize, useGpu, gpuDevice }) => {
+  appLog('INFO', 'reco', '批次辨識新音檔開始')
+  try {
     const dir = recoDataPath()
-    const wavName = meta.filename ? path.basename(meta.filename, path.extname(meta.filename)) + '.wav' : null
-    let audioPath = wavName ? path.join(dir, wavName) : null
-    if (!audioPath || !fs.existsSync(audioPath)) {
-      // 嘗試用 recordingId 找
-      audioPath = path.join(dir, `${recordingId}.wav`)
-      if (!fs.existsSync(audioPath)) {
-        // 掃描目錄找可能的 WAV
-        const files = fs.readdirSync(dir).filter(f => f.endsWith('.wav'))
-        if (files.length > 0) audioPath = path.join(dir, files[0])
-        else return { success: false, error: '找不到對應的音檔' }
+    if (!fs.existsSync(dir)) return { success: true, results: [] }
+    const audioExts = ['.wav', '.mp3', '.opus', '.ogg', '.flac', '.m4a', '.webm']
+    const allFiles = fs.readdirSync(dir).filter(f => audioExts.includes(path.extname(f).toLowerCase()))
+    // 過濾已有 JSON metadata 的音檔
+    const existingJson = new Set(fs.readdirSync(dir).filter(f => f.endsWith('.json')).map(f => path.basename(f, '.json')))
+    const newFiles = allFiles.filter(f => {
+      const baseName = path.basename(f, path.extname(f))
+      return !existingJson.has(baseName)
+    })
+    if (newFiles.length === 0) return { success: true, results: [], message: '所有音檔已有 metadata，無需辨識' }
+    const results = []
+    for (let i = 0; i < newFiles.length; i++) {
+      const f = newFiles[i]
+      const audioPath = path.join(dir, f)
+      appLog('INFO', 'reco', `批次辨識 ${i + 1}/${newFiles.length}: ${f}`)
+      if (mainWindow) mainWindow.webContents.send('reco:batch-progress', { current: i + 1, total: newFiles.length, file: f })
+      try {
+        const wavPath = await convertAudio(audioPath)
+        const r = await runWhisper(wavPath, modelSize, useGpu, gpuDevice)
+        if (r.success && r.segments && r.segments.length > 0) {
+          const now = new Date()
+          const id = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}_batch`
+          const fullText = r.segments.map(s => s.text).join(' ')
+          const meta = {
+            id, filename: f, recordingMode: 'import', recordedAt: now.toISOString(),
+            duration: r.segments.length > 0 ? r.segments[r.segments.length - 1].end : 0,
+            modelSize, segments: r.segments, fullText, llmResults: {},
+          }
+          const metaPath = path.join(dir, `${id}.json`)
+          fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
+          results.push({ file: f, segments: r.segments.length, id })
+          appLog('INFO', 'reco', `批次辨識完成: ${f} (${r.segments.length} 句)`)
+        } else {
+          results.push({ file: f, error: r.error || '無辨識結果' })
+          appLog('WARN', 'reco', `批次辨識失敗: ${f} - ${r.error || '無辨識結果'}`)
+        }
+        if (wavPath !== audioPath) { try { fs.unlinkSync(wavPath) } catch {} }
+      } catch (e) {
+        results.push({ file: f, error: e.message })
+        appLog('ERROR', 'reco', `批次辨識異常: ${f} - ${e.message}`)
       }
     }
-    const result = await runWhisper(audioPath, modelSize, useGpu, gpuDevice)
-    if (!result.success) return result
-    // 更新 JSON
-    meta.segments = result.segments
-    meta.fullText = result.segments.map(s => s.text).join(' ')
-    meta.modelSize = modelSize
-    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
-    appLog('INFO', 'reco', `重建完成: ${recordingId} (${result.segments.length} 句)`)
-    return { success: true, segments: result.segments }
+    appLog('INFO', 'reco', `批次辨識新音檔完成: ${results.filter(r => r.id).length}/${newFiles.length} 成功`)
+    return { success: true, results }
   } catch (e) { return { success: false, error: e.message } }
 })
 

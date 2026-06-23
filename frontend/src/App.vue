@@ -182,7 +182,10 @@
                 <span class="history-mode">{{ item.recordingMode === 'mix' ? '🖥️ 混音' : '🎙️ 麥克風' }}</span>
                 <span class="history-duration">{{ formatTime(item.duration) }}</span>
                 <span class="history-segments">{{ item.segmentCount }} 句</span>
-                <button class="btn btn-small btn-rebuild" @click="rebuildRecording(item.id)" :disabled="busy">🔄 重建</button>
+                <button class="btn btn-small btn-review" @click="reviewRecording(item.id)" :disabled="busy">📖 Review</button>
+                <button class="btn btn-small btn-llm-sm" @click="llmProcessRecording(item.id, 'optimize')" :disabled="llmBusy">✨ 優化</button>
+                <button class="btn btn-small btn-llm-sm" @click="llmProcessRecording(item.id, 'translate')" :disabled="llmBusy">🌐 翻譯</button>
+                <button class="btn btn-small btn-llm-sm" @click="llmProcessRecording(item.id, 'summary')" :disabled="llmBusy">📋 摘要</button>
               </div>
             </div>
             <div v-if="historyList.length === 0" class="empty-hint">尚無錄音記錄</div>
@@ -191,7 +194,10 @@
 
         <!-- 音檔列表 -->
         <div v-if="!searchKeyword && !aiQuestion && historySubTab === 'audio'" class="recording-list">
-          <div class="panel-header">🎵 音檔列表（{{ audioFiles.length }} 筆）</div>
+          <div class="panel-header">
+            🎵 音檔列表（{{ audioFiles.length }} 筆）
+            <button class="btn btn-small btn-batch-all" @click="batchTranscribeNew" :disabled="busy || batchNewBusy" style="margin-left:8px">🤖 全部辨識</button>
+          </div>
           <div class="panel-body">
             <div v-for="(f, idx) in audioFiles" :key="idx" class="history-item">
               <div class="history-info">
@@ -253,6 +259,7 @@ export default {
       // 歷史記錄子 Tab
       historySubTab: 'records',
       audioFiles: [],
+      batchNewBusy: false,
     }
   },
   computed: {
@@ -367,29 +374,83 @@ export default {
         if (r.success) this.audioFiles = r.files
       } catch (e) { console.warn('載入音檔列表失敗:', e) }
     },
-    async rebuildRecording(id) {
+    async reviewRecording(id) {
       if (!window.electronAPI) return
       this.busy = true
-      this.statusText = `🔄 重建辨識 ${id}...`
+      this.statusText = `📖 載入 ${id}...`
       this.statusError = false
       try {
-        const r = await window.electronAPI.recoRebuild({
+        const r = await window.electronAPI.recoLoadMeta({ recordingId: id })
+        if (r.success && r.meta && r.meta.segments) {
+          this.transcriptionResults = r.meta.segments
+          this.hasResult = true
+          this.llmResults = r.meta.llmResults || { optimized: '', translated: '', summary: '' }
+          this.llmHistory = { optimized: [], translated: [], summary: [] }
+          this.llmRedo = { optimized: [], translated: [], summary: [] }
+          this.activeSource = 'original'
+          this.currentAudioPath = null
+          this.audioLoaded = false
+          this.audioInfo = { filename: r.meta.filename || id }
+          this.activeTab = 'transcript'
+          this.statusText = `✅ 已載入 ${r.meta.segments.length} 句`
+        } else {
+          this.statusText = `❌ 載入失敗: ${r.error || '無資料'}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 載入異常: ${e.message}`
+        this.statusError = true
+      } finally { this.busy = false }
+    },
+    async llmProcessRecording(id, type) {
+      if (!window.electronAPI) return
+      this.llmBusy = true
+      const labels = { optimize: '✨ 優化', translate: '🌐 翻譯', summary: '📋 摘要' }
+      this.statusText = `${labels[type] || type} ${id}...`
+      this.statusError = false
+      try {
+        const r = await window.electronAPI.recoLlmProcess({
           recordingId: id,
+          provider: this.llmProvider,
+          apiKey: this.apiKeys[this.llmProvider] || '',
+          model: this.llmModel,
+          type,
+        })
+        if (r.success) {
+          this.statusText = `✅ ${labels[type] || type} 完成`
+        } else {
+          this.statusText = `❌ ${labels[type] || type} 失敗: ${r.error}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ ${labels[type] || type} 異常: ${e.message}`
+        this.statusError = true
+      } finally { this.llmBusy = false }
+    },
+    async batchTranscribeNew() {
+      if (!window.electronAPI) return
+      this.batchNewBusy = true
+      this.statusText = '🤖 批次辨識新音檔...'
+      this.statusError = false
+      try {
+        const r = await window.electronAPI.recoBatchTranscribeNew({
           modelSize: this.selectedModel,
           useGpu: this.useGpu,
           gpuDevice: this.gpuDevice,
         })
         if (r.success) {
-          this.statusText = `✅ 重建完成（${r.segments.length} 句）`
-          await this.loadHistory()
+          const ok = r.results.filter(x => x.id).length
+          const fail = r.results.filter(x => x.error).length
+          this.statusText = `✅ 批次完成：${ok} 成功${fail > 0 ? `，${fail} 失敗` : ''}`
+          await this.loadAudioFiles()
         } else {
-          this.statusText = `❌ 重建失敗: ${r.error}`
+          this.statusText = `❌ 批次失敗: ${r.error}`
           this.statusError = true
         }
       } catch (e) {
-        this.statusText = `❌ 重建異常: ${e.message}`
+        this.statusText = `❌ 批次異常: ${e.message}`
         this.statusError = true
-      } finally { this.busy = false }
+      } finally { this.batchNewBusy = false }
     },
     async transcribeAudioFile(fileName) {
       if (!window.electronAPI) return
@@ -916,8 +977,13 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .sub-tab-btn { padding: 5px 14px; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; background: transparent; color: #666; transition: all .2s; }
 .sub-tab-btn.active { background: white; color: #1565C0; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
 .sub-tab-btn:hover:not(.active) { background: #e0e0e0; }
-.btn-rebuild { background: #FF8F00; }
-.btn-rebuild:hover:not(:disabled) { background: #E65100; }
+.btn-review { background: #1565C0; }
+.btn-review:hover:not(:disabled) { background: #0D47A1; }
+.btn-llm-sm { background: #9C27B0; padding: 3px 8px; font-size: 10px; }
+.btn-llm-sm:hover:not(:disabled) { background: #7B1FA2; }
+.btn-llm-sm:disabled { background: #CE93D8 !important; }
+.btn-batch-all { background: #43A047; }
+.btn-batch-all:hover:not(:disabled) { background: #2E7D32; }
 .btn-transcribe-audio { background: #2196F3; }
 .btn-transcribe-audio:hover:not(:disabled) { background: #1976D2; }
 

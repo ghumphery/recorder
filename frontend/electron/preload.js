@@ -26,7 +26,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   recoList: () => ipcRenderer.invoke('reco:list'),
   recoSearch: (p) => ipcRenderer.invoke('reco:search', p),
   recoAiQuery: (p) => ipcRenderer.invoke('reco:aiQuery', p),
-  // 音檔列表與重建
+  // 音檔列表、載入 Meta、LLM 處理、批次辨識新音檔
   recoListAudioFiles: () => ipcRenderer.invoke('reco:listAudioFiles'),
-  recoRebuild: (p) => ipcRenderer.invoke('reco:rebuild', p),
+  recoLoadMeta: (p) => ipcRenderer.invoke('reco:loadMeta', p),
+  recoLlmProcess: (p) => ipcRenderer.invoke('reco:llmProcess', p),
+  recoBatchTranscribeNew: (p) => ipcRenderer.invoke('reco:batchTranscribeNew', p),
+  onBatchNewProgress: (callback) => {
+    ipcRenderer.on('reco:batch-progress', (event, data) => callback(data))
+  },
 })
