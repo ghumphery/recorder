@@ -715,3 +715,23 @@
 - 完成原始碼備份: （待補）
 - Git commit `7145108` 並 push 至 GitHub origin master
 
+## [2026-06-23 17:20]
+- **version**: 1.10.6
+- **修改要求**：修正下一句開頭重複播放的問題（控制語音和句子放的同步機制有問題，導致播了一小段語音後又重新播放）。
+- **修改規劃**：
+  1. 根因分析：`seekAndPlay()` 中 `pause()` 和 `currentTime` 設定都是非同步操作，瀏覽器在音訊硬體完全停止輸出前就開始播放新位置，導致舊緩衝區短暫洩漏（聽到前一句尾端或檔案開頭）。
+  2. 修復方案：`seekAndPlay()` 改為事件驅動序列化流程：
+     - 若已在目標位置且正在播放，不需操作（直接返回）
+     - 若已暫停，直接設定 `currentTime` 並等待 `seeked` 事件 → `play()`
+     - 若正在播放中，先呼叫 `pause()` 並等待 `pause` 事件完成 → 設定 `currentTime` 並等待 `seeked` 事件 → `play()`
+  3. 版本號 `1.10.5` → `1.10.6`（patch 修復 bug）。
+- **修改結果**：
+  - `frontend/src/App.vue`：`seekAndPlay()` 改為事件驅動序列化流程（pause 事件 → seek → seeked 事件 → play）
+  - `frontend/package.json`：版本號更新為 `1.10.6`
+  - Vite build 成功（11 modules, ~716ms）
+  - electron-builder 產出 `frontend/dist-electron/Recorder-1.10.6-portable.exe`（127,478,795 bytes）
+  - `Product_Design_Guidelines.md` 更新音檔播放模組說明，加入事件驅動序列化流程、`reviewRecording` 不觸碰 `audio.src` 等內容
+  - `readme.md` 版本歷史新增 v1.10.6 說明，版本號更新為 1.10.6
+- 完成原始碼備份: （待補）
+- Git commit `20b7470` 並 push 至 GitHub origin master
+

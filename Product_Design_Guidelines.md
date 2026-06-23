@@ -141,7 +141,8 @@
   - `timeupdate` 事件監聽播放進度，自動跳至下一句（`currentTime >= seg.end + 0.3` 時，保留 300ms 緩衝避免語音未完就提前跳句）
   - 播放中的句子高亮顯示（`.segment-playing` 藍色背景 + ▶️ 指示器）
   - 面板標題在播放中顯示「▶️ 播放中」與「⏹️ 停止播放」按鈕，點擊可呼叫 `stopPlayback()` 立即停止
-  - `reviewRecording()` 與 `playRecordingAudio()` 載入新逐字稿前會先呼叫 `stopPlayback()`，避免舊音檔繼續播放
+  - `playSegment()` 採用事件驅動序列化流程：`audio.pause()` → 等 `pause` 事件 → 設定 `currentTime` → 等 `seeked` 事件 → `play()`，避免舊緩衝區內容在 seek 完成前洩漏造成開頭重複播放
+  - `reviewRecording()` 不再呼叫 `stopPlayback()`（僅重置播放狀態旗標），避免清除已載入的音檔 URL 導致播放延遲 10~30 秒
   - `playRecordingAudio()` 從歷史記錄載入音檔 URL 與逐字稿後，切換到逐字稿 tab，不再自動呼叫 `playSegment(0)`
   - **文字與語音對齊**：從音檔列表辨識時，`import:audio` 將原始音檔轉換後的 16kHz mono WAV 輸出到 `reco_data` 目錄；metadata 儲存的 `audioPath` 即為此 WAV，確保播放與辨識使用同一份音檔、時間戳一致
 - **安全限制**：自訂 protocol 僅允許讀取 `recoDataPath()` 下的檔案，防止路徑遍歷攻擊
