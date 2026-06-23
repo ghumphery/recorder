@@ -1,5 +1,8 @@
 # Recorder — AI 離線會議記錄工具
 
+[![GitHub release](https://img.shields.io/github/v/release/ghumphery/recorder)](https://github.com/ghumphery/recorder/releases)
+[![GitHub](https://img.shields.io/github/license/ghumphery/recorder)](https://github.com/ghumphery/recorder)
+
 ## 📝 功能簡介
 
 Recorder 是一款完全**離線**的 AI 會議記錄程式，支援：
@@ -30,12 +33,16 @@ cd frontend
 npm run electron:dev
 ```
 
-### 打包為獨立執行檔
+### 下載打包版
+
+從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recoder-1.8.10-portable.exe`，直接執行即可。
+
+### 自行打包
 
 ```bash
 cd frontend
 npm run electron:build
-# 產出：frontend/dist-electron/Recoder-1.2.0-portable.exe
+# 產出：frontend/dist-electron/Recoder-1.8.10-portable.exe
 ```
 
 ### 直接運行打包版
