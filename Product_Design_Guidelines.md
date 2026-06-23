@@ -1,7 +1,7 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.4.2
-> **最後更新日期**: 2026-06-23
+> **版本**: 1.4.3
+> **最後更新日期**: 2026-06-24
 
 ## 產品核心願景與哲學 (Product Vision & Philosophy)
 - **核心價值**：一句話 — 「離線、輕量、精準的 AI 會議記錄工具，讓每一場對話都有跡可循。」
@@ -147,7 +147,23 @@
   - **文字與語音對齊**：從音檔列表辨識時，`import:audio` 將原始音檔轉換後的 16kHz mono WAV 輸出到 `reco_data` 目錄；metadata 儲存的 `audioPath` 即為此 WAV，確保播放與辨識使用同一份音檔、時間戳一致
 - **安全限制**：自訂 protocol 僅允許讀取 `recoDataPath()` 下的檔案，防止路徑遍歷攻擊
 
-### 6. 刪除管理 (`frontend/electron/main.js` + `frontend/src/App.vue`)
+### 6. Label 管理 (`frontend/electron/main.js` + `frontend/src/App.vue`)
+- **功能**：錄音記錄可新增/修改/刪除標籤（label），支援依 label 篩選記錄列表；搜尋結果顯示 labels 並支援跳轉到真實錄音記錄的相對句子位置
+- **實作方式**：
+  - Metadata JSON 新增 `labels: []` 欄位（向後相容，舊 JSON 無此欄位時預設空陣列）
+  - IPC `reco:updateLabels` 讀取 JSON → 更新 labels → 寫回
+  - IPC `reco:listLabels` 掃描所有 JSON，回傳不重複的 label 清單
+  - `reco:list` 支援 `labelFilter` 參數，僅回傳含該 label 的記錄
+  - `reco:search` 搜尋結果附加 `labels`，keyword 匹配 label 時回傳該錄音的所有 segment
+  - `reco:aiQuery` context 中加入 labels 資訊（`--- 錄音: xxx (標籤: A, B) ---`）
+- **前端 UI**：
+  - 錄音記錄列表每筆顯示 labels（彩色 tag `.label-tag`）
+  - 每筆新增「🏷️」按鈕，點擊彈出 label 編輯視窗（新增/刪除 label）
+  - 歷史記錄區上方新增 label 篩選下拉選單
+  - 搜尋結果每筆顯示 labels 與「📖 跳轉」按鈕
+  - `jumpToSearchResult()` 方法：載入逐字稿 → 載入音檔 URL → 找到對應 segment → 播放
+
+### 7. 刪除管理 (`frontend/electron/main.js` + `frontend/src/App.vue`)
 - **刪除錄音記錄**：IPC `reco:deleteMeta` 刪除 `{recordingId}.json`，前端 confirm 確認後執行
 - **刪除音檔**：IPC `reco:deleteAudio` 刪除指定音檔，含安全檢查（僅允許 `recoDataPath()` 下的檔案）
 - **前端 UI**：
@@ -156,7 +172,7 @@
   - 🗑️ 刪除按鈕（紅色，點擊後彈出 confirm 對話框）
   - 音檔列表每筆也有 🗑️ 刪除按鈕
 
-### 7. 前端 Vue.js 元件 (`frontend/src/App.vue`)
+### 8. 前端 Vue.js 元件 (`frontend/src/App.vue`)
 - **框架**：Vue 3 + Vite 6
 - **通訊方式**：透過 `window.electronAPI` (preload script 暴露的 contextBridge) 呼叫 Electron IPC
 - **主介面元素**：

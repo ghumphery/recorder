@@ -755,3 +755,34 @@
 - 完成原始碼備份: backup-202606232215.zip
 - Git commit `5ffaa86` 並 push 至 GitHub origin master
 
+## [2026-06-24 05:40]
+- **version**: 1.11.0
+- **修改要求**：三項功能需求：1) 錄音記錄可新增/修改/篩選/列出全部/刪除 label；2) 搜尋/AI 查詢支援 label 資訊，可依 label 條列錄音記錄；3) 搜尋結果可跳轉到真實錄音記錄的相對句子位置。
+- **修改規劃**：
+   1. `frontend/electron/main.js`：
+      - `reco:saveMeta` 新增 `labels` 參數寫入 JSON（向後相容，舊 JSON 無 labels 時預設空陣列）
+      - `reco:list` 回傳每筆記錄的 `labels`，支援 `labelFilter` 參數篩選
+      - `reco:search` 搜尋結果附加 `labels`，keyword 匹配 label 時回傳該錄音的所有 segment
+      - `reco:aiQuery` context 中加入 labels 資訊
+      - 新增 `reco:updateLabels` IPC（讀取 JSON → 更新 labels → 寫回）
+      - 新增 `reco:listLabels` IPC（掃描所有 JSON，回傳不重複 label 清單）
+   2. `frontend/electron/preload.js`：新增 `recoUpdateLabels`、`recoListLabels` bridge
+   3. `frontend/src/App.vue`：
+      - 錄音記錄列表每筆顯示 labels（彩色 tag）與「🏷️」編輯按鈕
+      - 新增 label 編輯彈窗（新增/刪除 label）
+      - 歷史記錄區上方新增 label 篩選下拉選單
+      - 搜尋結果顯示 labels 與「📖 跳轉」按鈕
+      - 新增 `jumpToSearchResult()` 方法：載入逐字稿 → 載入音檔 URL → 找到對應 segment → 播放
+      - 新增 `loadAllLabels()`、`editLabels()`、`closeLabelEditor()`、`addLabel()`、`removeLabel()`、`saveLabels()` 方法
+   4. 版本號 `1.10.7` → `1.11.0`（次版號新增功能）。
+- **修改結果**：
+   - `frontend/electron/main.js`：修改 `reco:saveMeta`、`reco:list`、`reco:search`、`reco:aiQuery`；新增 `reco:updateLabels`、`reco:listLabels`
+   - `frontend/electron/preload.js`：新增 `recoUpdateLabels`、`recoListLabels`
+   - `frontend/src/App.vue`：新增 label 管理 UI、label 篩選、搜尋結果跳轉功能
+   - `frontend/package.json`：版本號更新為 `1.11.0`
+   - Vite build 成功（11 modules, ~900ms）
+   - electron-builder 產出 `frontend/dist-electron/Recorder-1.11.0-portable.exe`（127,481,035 bytes）
+   - `readme.md` 版本歷史新增 v1.11.0 說明，版本號更新為 1.11.0
+- 完成原始碼備份: backup-202606240003.zip
+- Git commit `802801d` 並 push 至 GitHub origin master
+
