@@ -44,7 +44,7 @@ npm run electron:dev
 ```bash
 cd frontend
 npm run electron:build
-# 產出：frontend/dist-electron/Recoder-1.9.3-portable.exe
+# 產出：frontend/dist-electron/Recoder-1.10.0-portable.exe
 ```
 
 ### 直接運行打包版
@@ -87,6 +87,7 @@ frontend\dist-electron\win-unpacked\Recoder.exe
 
 ## 📦 版本歷史
 
+- **v1.10.0** — 新增音檔播放功能（逐字稿句子點擊播放對應時段）、刪除管理（錄音記錄/音檔）、錄音記錄標示音檔存在狀態
 - **v1.8.9** — 修正長音訊辨識時 whisper 模型產生 hallucination 重複文字的 bug：加入 whisper-cli 反幻覺參數（`-ml 60`/`-nth 0.7`/`-wt 0.03`/`-bs 1`/`--suppress-nst`/`--no-fallback`）與 Python 端 `_deduplicate_repeats()` 後處理去重邏輯
 - **v1.8.4** — 修正「混音 + 分段錄音」模式下語音轉文字只進行第一段的 bug：將分段索引作為參數傳入 `transcribeBlob`，避免非同步競態條件
 - **v1.8.3** — 錄音分段儲存的原始音檔（WAV）永久保留至 `C:\Users\<user>\recoder\reco_data\`
