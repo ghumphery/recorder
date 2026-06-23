@@ -510,7 +510,7 @@ export default {
             this.audioLoaded = true
             this.audioInfo = { filename: `${mode === 'mix' ? '混音' : '麥克風'}錄音（分段）` }
           } else {
-            // 非分段模式：儲存完整錄音
+            // 非分段模式：儲存完整錄音後自動辨識
             if (blob.size > 0 && window.electronAPI) {
               const buf = Array.from(new Uint8Array(await blob.arrayBuffer()))
               const label = mode === 'mix' ? '混音' : '麥克風'
@@ -520,6 +520,8 @@ export default {
                 this.audioInfo = { filename: `${label}錄音.webm` }
                 this.hasResult = false; this.transcriptionResults = []
                 this.statusText = `✅ ${label}錄音完成 (${this.recordingTime})`
+                // 自動開始辨識
+                await this.startTranscribe()
               } else { this.statusText = `❌ 處理失敗: ${result.error}`; this.statusError = true }
             }
           }
@@ -645,7 +647,7 @@ export default {
         duration,
         modelSize: this.selectedModel,
         segments,
-        llmResults: llmResults || this.llmResults,
+        llmResults: llmResults ? { ...llmResults } : { ...this.llmResults },
       })
     },
 
