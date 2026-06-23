@@ -33,6 +33,11 @@
         <label v-if="useGpu" style="font-size:12px;white-space:nowrap">GPU 編號：</label>
         <input v-if="useGpu" v-model="gpuDevice" type="number" min="0" max="9" step="1" placeholder="0" class="device-input" />
       </div>
+      <div class="setting-row">
+        <label>工作目錄（reco_data）：</label>
+        <span class="reco-dir-path">{{ recoDir || '預設: C:\\Users\\...\\recoder\\reco_data' }}</span>
+        <button class="btn btn-small" @click="selectRecoDir" style="background:#1565C0">📁 選擇目錄</button>
+      </div>
       <div class="setting-row" style="justify-content:flex-end;gap:6px">
         <button class="btn btn-small btn-save" @click="saveSettings">💾 儲存設定</button>
         <button class="btn btn-small" @click="showSettings = false">關閉</button>
@@ -69,6 +74,7 @@
 
       <button class="btn btn-transcribe" @click="startTranscribe" :disabled="busy || !audioLoaded || isRecording">🤖 辨識</button>
       <button class="btn btn-export" @click="exportResult" :disabled="busy || !hasResult">💾 匯出</button>
+      <button class="btn btn-batch" @click="startBatchTranscribe" :disabled="busy || batchBusy || isRecording">📂 批次轉 txt</button>
     </div>
 
     <!-- LLM 動作列 -->
@@ -219,6 +225,11 @@ export default {
       aiResult: '',
       aiBusy: false,
       currentRecordingId: null,
+      // 工作目錄
+      recoDir: '',
+      // 批次轉 txt
+      batchBusy: false,
+      batchProgress: { current: 0, total: 0, file: '' },
     }
   },
   computed: {
@@ -253,6 +264,11 @@ export default {
     if (window.electronAPI && window.electronAPI.onDownloadProgress) {
       window.electronAPI.onDownloadProgress((data) => {
         if (data && data.percent !== undefined) this.progressPercent = data.percent
+      })
+    }
+    if (window.electronAPI && window.electronAPI.onBatchProgress) {
+      window.electronAPI.onBatchProgress((data) => {
+        if (data) this.batchProgress = data
       })
     }
     await this.fetchModels()
@@ -312,10 +328,46 @@ export default {
         if (s.segmentMinutes !== undefined) this.segmentMinutes = s.segmentMinutes
         if (s.useGpu !== undefined) this.useGpu = s.useGpu
         if (s.gpuDevice !== undefined) this.gpuDevice = s.gpuDevice
+        if (s.recoDir) this.recoDir = s.recoDir
         for (const p of this.llmProviders) {
           if (this.showApiKey[p.key] === undefined) this.showApiKey[p.key] = false
         }
       } catch (e) { /* 靜默失敗 */ }
+    },
+    async selectRecoDir() {
+      if (!window.electronAPI) return
+      const dir = await window.electronAPI.openDirDialog()
+      if (dir) {
+        this.recoDir = dir
+        this.saveSettings()
+      }
+    },
+    async startBatchTranscribe() {
+      if (!window.electronAPI) return
+      this.batchBusy = true
+      this.batchProgress = { current: 0, total: 0, file: '' }
+      this.statusText = '📂 批次轉 txt 開始...'
+      this.statusError = false
+      try {
+        const r = await window.electronAPI.batchTranscribe({
+          modelSize: this.selectedModel,
+          useGpu: this.useGpu,
+          gpuDevice: this.gpuDevice,
+        })
+        if (r.success) {
+          const ok = r.results.filter(x => x.txt).length
+          const fail = r.results.filter(x => x.error).length
+          this.statusText = `✅ 批次完成：${ok} 成功${fail > 0 ? `，${fail} 失敗` : ''}`
+        } else {
+          this.statusText = `❌ 批次失敗: ${r.error}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 批次異常: ${e.message}`
+        this.statusError = true
+      } finally {
+        this.batchBusy = false
+      }
     },
     async saveSettings() {
       if (!window.electronAPI) {

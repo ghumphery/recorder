@@ -28,6 +28,13 @@ function userDataPath(...parts) {
 }
 
 function recoDataPath(...parts) {
+  try {
+    const p = getSettingsPath()
+    if (fs.existsSync(p)) {
+      const raw = JSON.parse(fs.readFileSync(p, 'utf-8'))
+      if (raw.recoDir) return path.join(raw.recoDir, ...parts)
+    }
+  } catch (e) {}
   return path.join(os.homedir(), 'recoder', 'reco_data', ...parts)
 }
 
@@ -265,6 +272,13 @@ ipcMain.handle('dialog:openFile', async () => {
   return result.canceled ? null : result.filePaths[0]
 })
 
+ipcMain.handle('dialog:openDir', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+  })
+  return result.canceled ? null : result.filePaths[0]
+})
+
 ipcMain.handle('dialog:saveFile', async (event, defaultName) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: defaultName || '會議記錄.txt',
@@ -472,6 +486,50 @@ ipcMain.handle('export:save', async (event, { format, results, filePath }) => {
     }
     fs.writeFileSync(filePath, content, 'utf-8')
     return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── 批次轉 txt ──
+
+ipcMain.handle('batch:transcribe', async (event, { modelSize, useGpu, gpuDevice }) => {
+  appLog('INFO', 'batch', '批次轉 txt 開始')
+  try {
+    const dir = recoDataPath()
+    if (!fs.existsSync(dir)) return { success: true, results: [] }
+    const audioExts = ['.wav', '.mp3', '.opus', '.ogg', '.flac', '.m4a']
+    const files = fs.readdirSync(dir).filter(f => audioExts.includes(path.extname(f).toLowerCase()))
+    if (files.length === 0) return { success: true, results: [] }
+    const results = []
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      const audioPath = path.join(dir, f)
+      appLog('INFO', 'batch', `處理 ${i + 1}/${files.length}: ${f}`)
+      if (mainWindow) mainWindow.webContents.send('batch:transcribe-progress', { current: i + 1, total: files.length, file: f })
+      try {
+        const wavPath = await convertAudio(audioPath)
+        const r = await runWhisper(wavPath, modelSize, useGpu, gpuDevice)
+        if (r.success && r.segments.length > 0) {
+          const txtPath = path.join(dir, path.basename(f, path.extname(f)) + '.txt')
+          let content = ''
+          for (const seg of r.segments) {
+            const s = formatTime(seg.start); const e = formatTime(seg.end)
+            content += `[${s} - ${e}] ${seg.text}\n`
+          }
+          fs.writeFileSync(txtPath, content, 'utf-8')
+          results.push({ file: f, txt: path.basename(txtPath), segments: r.segments.length })
+          appLog('INFO', 'batch', `完成: ${f} → ${path.basename(txtPath)} (${r.segments.length} 句)`)
+        } else {
+          results.push({ file: f, error: r.error || '無辨識結果' })
+          appLog('WARN', 'batch', `失敗: ${f} - ${r.error || '無辨識結果'}`)
+        }
+        if (wavPath !== audioPath) { try { fs.unlinkSync(wavPath) } catch {} }
+      } catch (e) {
+        results.push({ file: f, error: e.message })
+        appLog('ERROR', 'batch', `異常: ${f} - ${e.message}`)
+      }
+    }
+    appLog('INFO', 'batch', `批次轉 txt 完成: ${results.filter(r => r.txt).length}/${files.length} 成功`)
+    return { success: true, results }
   } catch (e) { return { success: false, error: e.message } }
 })
 

@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('electronAPI', {
   getVersion: () => ipcRenderer.invoke('get:version'),
   openFileDialog: () => ipcRenderer.invoke('dialog:openFile'),
+  openDirDialog: () => ipcRenderer.invoke('dialog:openDir'),
   saveFileDialog: (n) => ipcRenderer.invoke('dialog:saveFile', n),
   importAudio: (p) => ipcRenderer.invoke('import:audio', p),
   saveRecorded: (p) => ipcRenderer.invoke('save:recorded', p),
@@ -25,4 +26,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   recoList: () => ipcRenderer.invoke('reco:list'),
   recoSearch: (p) => ipcRenderer.invoke('reco:search', p),
   recoAiQuery: (p) => ipcRenderer.invoke('reco:aiQuery', p),
+  // 批次轉 txt
+  batchTranscribe: (p) => ipcRenderer.invoke('batch:transcribe', p),
+  onBatchProgress: (callback) => {
+    ipcRenderer.on('batch:transcribe-progress', (event, data) => callback(data))
+  },
 })
