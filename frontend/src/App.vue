@@ -948,17 +948,37 @@ export default {
       const audio = this.$refs.audioPlayer
       if (!audio) return
       const seekAndPlay = () => {
-        // 先暫停，避免舊緩衝區內容在 seek 完成前洩漏
-        audio.pause()
-        audio.currentTime = seg.start
-        audio.play().then(() => {
-          this.nowPlaying = true
-          this.playingSegmentIdx = idx
-        }).catch(e => {
-          console.warn('播放失敗:', e)
-          this.statusText = '❌ 播放失敗，音檔可能不支援此格式'
-          this.statusError = true
-        })
+        // 若已在目標位置且正在播放，不需操作
+        if (Math.abs(audio.currentTime - seg.start) < 0.05 && !audio.paused) {
+          return
+        }
+        const doSeekAndPlay = () => {
+          const onSeeked = () => {
+            audio.removeEventListener('seeked', onSeeked)
+            audio.play().then(() => {
+              this.nowPlaying = true
+              this.playingSegmentIdx = idx
+            }).catch(e => {
+              console.warn('播放失敗:', e)
+              this.statusText = '❌ 播放失敗，音檔可能不支援此格式'
+              this.statusError = true
+            })
+          }
+          audio.addEventListener('seeked', onSeeked)
+          audio.currentTime = seg.start
+        }
+        if (audio.paused) {
+          // 已暫停，直接 seek + play
+          doSeekAndPlay()
+        } else {
+          // 正在播放中：先 pause，等待 pause 事件後再 seek + play
+          const onPaused = () => {
+            audio.removeEventListener('pause', onPaused)
+            doSeekAndPlay()
+          }
+          audio.addEventListener('pause', onPaused)
+          audio.pause()
+        }
       }
       // 音檔已載入中繼資料 → 直接 seek，不重設 src（避免重載造成開頭重複）
       if (audio.readyState >= 1) {

@@ -37,14 +37,14 @@ npm run electron:dev
 
 ### 下載打包版
 
-從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.10.5-portable.exe`，直接執行即可。
+從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.10.6-portable.exe`，直接執行即可。
 
 ### 自行打包
 
 ```bash
 cd frontend
 npm run electron:build
-# 產出：frontend/dist-electron/Recorder-1.10.5-portable.exe
+# 產出：frontend/dist-electron/Recorder-1.10.6-portable.exe
 ```
 
 ### 直接運行打包版
@@ -94,6 +94,7 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 版本歷史
 
+- **v1.10.6** — 修正下一句開頭重複播放：`seekAndPlay()` 改為事件驅動序列化流程，先等待 `pause` 事件完成暫停，再設定 `currentTime` 並等待 `seeked` 事件完成 seek，最後才呼叫 `play()`，確保舊緩衝區內容不會洩漏造成重複播放
 - **v1.10.5** — 修正播放延遲與開頭重複問題：1) `reviewRecording()` 不再呼叫 `stopPlayback()`，避免清除已載入的音檔 URL，解決點擊播放需等待 10~30 秒的問題；2) `seekAndPlay()` 先 `pause()` 再 seek，避免舊緩衝區內容在 seek 完成前洩漏，解決下一句開頭重複播放的問題
 - **v1.10.4** — 修正特定句子播放時，第二句之後每句開頭會重複播放前幾個字的問題：`playSegment()` 改為檢查 `audio.readyState`，已載入中繼資料時直接 seek 不重設 `src`，避免瀏覽器重載音檔造成開頭重複
 - **v1.10.3** — 修正音檔播放問題並新增停止播放功能：1) 新增「⏹️ 停止播放」按鈕；2) 切換逐字稿（Review / 播放其他錄音）前自動停止舊音檔；3) 自動跳到下一句的判斷加入 300ms 緩衝，避免語音未完就提前跳句；4) 從音檔列表辨識時，將轉換後的 WAV 保存到 `reco_data`，讓 metadata 儲存與播放都使用同一份音檔，解決文字與語音時間戳不對齊的問題
