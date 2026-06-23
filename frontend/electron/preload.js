@@ -42,4 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   recoGetAudioUrl: (p) => ipcRenderer.invoke('reco:getAudioUrl', p),
   // 取得 reco_data 路徑
   recoGetDataPath: () => ipcRenderer.invoke('reco:dataPath'),
+  // Label 管理
+  recoUpdateLabels: (p) => ipcRenderer.invoke('reco:updateLabels', p),
+  recoListLabels: () => ipcRenderer.invoke('reco:listLabels'),
 })

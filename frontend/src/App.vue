@@ -109,7 +109,7 @@
     <!-- Tab 切換 -->
     <div class="tab-bar">
       <button class="tab-btn" :class="{ active: activeTab === 'transcript' }" @click="activeTab = 'transcript'">📝 逐字稿</button>
-      <button class="tab-btn" :class="{ active: activeTab === 'history' }" @click="activeTab = 'history'; loadHistory()">📚 歷史記錄</button>
+      <button class="tab-btn" :class="{ active: activeTab === 'history' }" @click="activeTab = 'history'; loadHistory(); loadAllLabels()">📚 歷史記錄</button>
     </div>
 
     <!-- 隱藏音訊播放器 -->
@@ -159,9 +159,13 @@
         <div v-if="searchResults.length > 0" class="search-results">
           <div class="panel-header">🔍 搜尋結果（{{ searchResults.length }} 筆）</div>
           <div class="panel-body">
-            <div v-for="(r, idx) in searchResults" :key="idx" class="segment">
+            <div v-for="(r, idx) in searchResults" :key="idx" class="segment search-result-item">
               <span class="timestamp">[{{ r.filename }}] [{{ formatTime(r.start) }} - {{ formatTime(r.end) }}]</span>
               <span class="text">{{ r.text }}</span>
+              <span v-if="r.labels && r.labels.length > 0" class="search-labels">
+                <span v-for="l in r.labels" :key="l" class="label-tag label-tag-sm">{{ l }}</span>
+              </span>
+              <button class="btn btn-tiny btn-jump" @click="jumpToSearchResult(r)" :title="'跳轉到 ' + r.filename">📖 跳轉</button>
             </div>
           </div>
         </div>
@@ -174,6 +178,16 @@
           </div>
         </div>
 
+        <!-- Label 篩選列 -->
+        <div v-if="!searchKeyword && !aiQuestion" class="label-filter-bar">
+          <span class="label-filter-label">🏷️ 篩選標籤：</span>
+          <select v-model="labelFilter" @change="loadHistory" class="label-filter-select">
+            <option value="">全部</option>
+            <option v-for="l in allLabels" :key="l" :value="l">{{ l }}</option>
+          </select>
+          <button class="btn btn-small btn-refresh" @click="loadHistory" style="margin-left:4px">🔄</button>
+        </div>
+
         <!-- 子 Tab 切換 -->
         <div v-if="!searchKeyword && !aiQuestion" class="history-sub-tabs">
           <button class="sub-tab-btn" :class="{ active: historySubTab === 'records' }" @click="historySubTab = 'records'; loadHistory()">📚 錄音記錄</button>
@@ -182,7 +196,7 @@
 
         <!-- 錄音記錄 -->
         <div v-if="!searchKeyword && !aiQuestion && historySubTab === 'records'" class="recording-list">
-          <div class="panel-header">📚 錄音記錄（{{ historyList.length }} 筆）<button class="btn btn-small btn-refresh" @click="loadHistory" style="margin-left:8px">🔄</button></div>
+          <div class="panel-header">📚 錄音記錄（{{ historyList.length }} 筆）</div>
           <div class="panel-body">
             <div v-for="(item, idx) in historyList" :key="idx" class="history-item">
               <div class="history-info">
@@ -196,10 +210,38 @@
                 <button class="btn btn-small btn-llm-sm" @click="llmProcessRecording(item.id, 'optimize')" :disabled="llmBusy">✨ 優化</button>
                 <button class="btn btn-small btn-llm-sm" @click="llmProcessRecording(item.id, 'translate')" :disabled="llmBusy">🌐 翻譯</button>
                 <button class="btn btn-small btn-llm-sm" @click="llmProcessRecording(item.id, 'summary')" :disabled="llmBusy">📋 摘要</button>
+                <button class="btn btn-small btn-label" @click="editLabels(item)" :disabled="busy">🏷️</button>
                 <button class="btn btn-small btn-delete" @click="deleteRecording(item)" :disabled="busy">🗑️</button>
+              </div>
+              <div class="history-labels" v-if="item.labels && item.labels.length > 0">
+                <span v-for="l in item.labels" :key="l" class="label-tag">{{ l }}</span>
               </div>
             </div>
             <div v-if="historyList.length === 0" class="empty-hint">尚無錄音記錄</div>
+          </div>
+        </div>
+
+        <!-- Label 編輯彈窗 -->
+        <div v-if="showLabelEditor" class="label-editor-overlay" @click.self="closeLabelEditor">
+          <div class="label-editor-panel">
+            <div class="panel-header">🏷️ 編輯標籤 — {{ editingLabelId }}</div>
+            <div class="panel-body">
+              <div class="label-editor-input-row">
+                <input v-model="newLabelInput" placeholder="輸入新標籤..." class="label-input" @keyup.enter="addLabel" />
+                <button class="btn btn-small btn-add-label" @click="addLabel">＋ 新增</button>
+              </div>
+              <div class="label-editor-list">
+                <div v-for="(l, i) in editingLabels" :key="i" class="label-editor-item">
+                  <span class="label-tag">{{ l }}</span>
+                  <button class="btn btn-tiny btn-remove-label" @click="removeLabel(i)">✕</button>
+                </div>
+                <div v-if="editingLabels.length === 0" class="empty-hint">尚無標籤</div>
+              </div>
+              <div class="label-editor-actions">
+                <button class="btn btn-small btn-save" @click="saveLabels">💾 儲存</button>
+                <button class="btn btn-small" @click="closeLabelEditor">取消</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -245,7 +287,6 @@ export default {
       recordingSeconds: 0, audioContext: null, recordingStream: null,
       segmentMinutes: 0, currentSegment: 0, segmentBlobs: [],
       _segmentStop: false, _segmentCount: 0, _segmentMimeType: '', _segmentElapsed: 0,
-      // 音檔列表辨識原始路徑（已棄用，保留向後相容不影響）
       // LLM
       llmProviders: [], llmProvider: 'ollama', llmModel: '',
       apiKeys: {}, showApiKey: {},
@@ -277,6 +318,13 @@ export default {
       currentAudioUrl: '',
       nowPlaying: false,
       playingSegmentIdx: -1,
+      // Label 管理
+      allLabels: [],
+      labelFilter: '',
+      showLabelEditor: false,
+      editingLabelId: '',
+      editingLabels: [],
+      newLabelInput: '',
     }
   },
   computed: {
@@ -393,7 +441,6 @@ export default {
     },
     async reviewRecording(id) {
       if (!window.electronAPI) return
-      // 僅重置播放狀態旗標，不觸碰 audio.src（避免清除已載入的音檔 URL）
       this.nowPlaying = false
       this.playingSegmentIdx = -1
       this.busy = true
@@ -478,14 +525,12 @@ export default {
       this.statusText = `🤖 辨識 ${fileName}...`
       this.statusError = false
       try {
-        // 先切到逐字稿 tab 顯示結果
         this.activeTab = 'transcript'
         this.audioInfo = { filename: fileName }
         this.audioLoaded = true
         this.currentAudioPath = null
         this.hasResult = false
         this.transcriptionResults = []
-        // 透過 import:audio 轉換並輸出到 reco_data，讓後續播放與辨識使用同一份 WAV
         const outputDir = this.recoDir || await this.getRecoDataPath()
         const importResult = await window.electronAPI.importAudio({ filePath: fileName, outputDir })
         if (importResult.success) {
@@ -594,43 +639,33 @@ export default {
         }
       }, 1000)
     },
-    // 分段邊界：停止 MediaRecorder → onRecorderStop 會處理 blob → 辨識 → 重啟
     saveSegment() {
       if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
         this._segmentStop = true
         this.mediaRecorder.stop()
       }
     },
-    // 統一的 onstop 處理器
     async onRecorderStop(mode) {
       const isSegment = this._segmentStop
       this._segmentStop = false
-
-      // 從 audioChunks 建立完整 blob（包含 header，是有效的 webm）
       const blob = new Blob(this.audioChunks, { type: this._segmentMimeType })
       this.audioChunks = []
-
       if (isSegment) {
-        // 分段停止：辨識此 blob，然後重啟 MediaRecorder
         const segIdx = this._segmentCount
         this._segmentCount++
         this.currentSegment = this._segmentCount
         this.statusText = `🔴 分段 ${this.currentSegment} 儲存中...`
         await this.transcribeBlob(blob, this._segmentMimeType, segIdx)
-        // 重啟 MediaRecorder（使用同一個 stream）
         if (this.recordingStream && this.isRecording) {
           this.startMediaRecorder(this.recordingStream, mode)
         }
       } else {
-        // 使用者停止：清理並處理最終結果
         this.cleanupStreams(mode)
         this.isRecording = false
         this.statusText = '正在處理錄音...'
         this.statusError = false
-
         try {
           if (this.segmentMinutes > 0) {
-            // 分段模式：最後一段 blob 已經在 audioChunks 中，直接辨識
             if (blob.size > 0) {
               const segIdx = this._segmentCount
               this._segmentCount++
@@ -642,7 +677,6 @@ export default {
             this.audioLoaded = true
             this.audioInfo = { filename: `${mode === 'mix' ? '混音' : '麥克風'}錄音（分段）` }
           } else {
-            // 非分段模式：儲存完整錄音後自動辨識
             if (blob.size > 0 && window.electronAPI) {
               const buf = Array.from(new Uint8Array(await blob.arrayBuffer()))
               const label = mode === 'mix' ? '混音' : '麥克風'
@@ -652,7 +686,6 @@ export default {
                 this.audioInfo = { filename: `${label}錄音.webm` }
                 this.hasResult = false; this.transcriptionResults = []
                 this.statusText = `✅ ${label}錄音完成 (${this.recordingTime})`
-                // 自動開始辨識
                 await this.startTranscribe()
               } else { this.statusText = `❌ 處理失敗: ${result.error}`; this.statusError = true }
             }
@@ -779,7 +812,6 @@ export default {
       const now = new Date()
       const id = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}_${this.recordingMode || 'import'}`
       const duration = segments.length > 0 ? segments[segments.length-1].end : 0
-      // 優先使用原始音檔路徑（transcribeAudioFile 傳入的 f.path），否則用 currentAudioPath
       const audioPath = this.currentAudioPath || ''
       await window.electronAPI.recoSaveMeta({
         recordingId: id,
@@ -889,9 +921,18 @@ export default {
     async loadHistory() {
       if (!window.electronAPI) return
       try {
-        const r = await window.electronAPI.recoList()
+        const params = {}
+        if (this.labelFilter && this.labelFilter.trim()) params.labelFilter = this.labelFilter.trim()
+        const r = await window.electronAPI.recoList(params)
         if (r.success) this.historyList = r.list
       } catch (e) { console.warn('載入歷史記錄失敗:', e) }
+    },
+    async loadAllLabels() {
+      if (!window.electronAPI) return
+      try {
+        const r = await window.electronAPI.recoListLabels()
+        if (r.success) this.allLabels = r.labels
+      } catch (e) { console.warn('載入標籤列表失敗:', e) }
     },
     async doSearch() {
       if (!this.searchKeyword.trim() || !window.electronAPI) return
@@ -922,6 +963,76 @@ export default {
       finally { this.aiBusy = false; this.statusText = '就緒' }
     },
 
+    // ── Label 管理 ──
+    editLabels(item) {
+      this.editingLabelId = item.id
+      this.editingLabels = item.labels ? [...item.labels] : []
+      this.newLabelInput = ''
+      this.showLabelEditor = true
+    },
+    closeLabelEditor() {
+      this.showLabelEditor = false
+      this.editingLabelId = ''
+      this.editingLabels = []
+      this.newLabelInput = ''
+    },
+    addLabel() {
+      const label = this.newLabelInput.trim()
+      if (!label) return
+      if (this.editingLabels.includes(label)) {
+        this.statusText = `⚠️ 標籤「${label}」已存在`
+        this.statusError = true
+        return
+      }
+      this.editingLabels.push(label)
+      this.newLabelInput = ''
+    },
+    removeLabel(idx) {
+      this.editingLabels.splice(idx, 1)
+    },
+    async saveLabels() {
+      if (!window.electronAPI) return
+      try {
+        const r = await window.electronAPI.recoUpdateLabels({
+          recordingId: this.editingLabelId,
+          labels: this.editingLabels,
+        })
+        if (r.success) {
+          this.statusText = '✅ 標籤已更新'
+          this.closeLabelEditor()
+          await this.loadHistory()
+          await this.loadAllLabels()
+        } else {
+          this.statusText = `❌ 標籤更新失敗: ${r.error}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 標籤更新異常: ${e.message}`
+        this.statusError = true
+      }
+    },
+
+    // ── 搜尋結果跳轉 ──
+    async jumpToSearchResult(r) {
+      if (!window.electronAPI) return
+      // 載入逐字稿
+      await this.reviewRecording(r.recordingId)
+      // 載入音檔 URL（從 meta 中取得 audioPath）
+      try {
+        const meta = await window.electronAPI.recoLoadMeta({ recordingId: r.recordingId })
+        if (meta.success && meta.meta && meta.meta.audioPath) {
+          await this.loadAudioUrl(meta.meta.audioPath)
+        }
+      } catch (e) { console.warn('載入音檔 URL 失敗:', e) }
+      // 找到對應的 segment index 並播放
+      if (this.currentAudioUrl && this.transcriptionResults.length > 0) {
+        const idx = this.transcriptionResults.findIndex(s => Math.abs(s.start - r.start) < 0.1)
+        if (idx >= 0) {
+          this.$nextTick(() => { this.playSegment(idx) })
+        }
+      }
+    },
+
     // ── 音檔播放 ──
     async loadAudioUrl(audioPath) {
       if (!window.electronAPI || !audioPath) {
@@ -948,7 +1059,6 @@ export default {
       const audio = this.$refs.audioPlayer
       if (!audio) return
       const seekAndPlay = () => {
-        // 若已在目標位置且正在播放，不需操作
         if (Math.abs(audio.currentTime - seg.start) < 0.05 && !audio.paused) {
           return
         }
@@ -968,10 +1078,8 @@ export default {
           audio.currentTime = seg.start
         }
         if (audio.paused) {
-          // 已暫停，直接 seek + play
           doSeekAndPlay()
         } else {
-          // 正在播放中：先 pause，等待 pause 事件後再 seek + play
           const onPaused = () => {
             audio.removeEventListener('pause', onPaused)
             doSeekAndPlay()
@@ -980,12 +1088,10 @@ export default {
           audio.pause()
         }
       }
-      // 音檔已載入中繼資料 → 直接 seek，不重設 src（避免重載造成開頭重複）
       if (audio.readyState >= 1) {
         seekAndPlay()
         return
       }
-      // 首次載入：設定 src 並等待 loadedmetadata
       const onLoaded = () => {
         audio.removeEventListener('loadedmetadata', onLoaded)
         seekAndPlay()
@@ -997,7 +1103,6 @@ export default {
       const audio = this.$refs.audioPlayer
       if (!audio || !this.nowPlaying) return
       const currentTime = audio.currentTime
-      // 更新高亮：根據 currentTime 找到對應的句子
       for (let i = 0; i < this.transcriptionResults.length; i++) {
         const s = this.transcriptionResults[i]
         if (currentTime >= s.start && currentTime < s.end) {
@@ -1005,8 +1110,6 @@ export default {
           break
         }
       }
-      // 不再自動跳句（避免 whisper 時間戳不精確造成重複播放）
-      // 只有超過最後一句的 end 才停止
       const lastSeg = this.transcriptionResults[this.transcriptionResults.length - 1]
       if (lastSeg && currentTime >= lastSeg.end + 0.5) {
         this.onAudioEnded()
@@ -1034,6 +1137,7 @@ export default {
         if (r.success) {
           this.statusText = '✅ 記錄已刪除'
           await this.loadHistory()
+          await this.loadAllLabels()
         } else {
           this.statusText = `❌ 刪除失敗: ${r.error}`
           this.statusError = true
@@ -1075,7 +1179,6 @@ export default {
       this.stopPlayback()
       await this.loadAudioUrl(item.audioPath)
       if (this.currentAudioUrl) {
-        // 載入逐字稿並切換到逐字稿 tab，由使用者自行點擊句子播放
         await this.reviewRecording(item.id)
       }
     },
@@ -1182,7 +1285,7 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .search-results { flex:1; display: flex; flex-direction: column; min-height: 100px; }
 .recording-list { flex:1; display: flex; flex-direction: column; min-height: 100px; }
 .history-item { padding: 6px 0; border-bottom: 1px solid #eee; }
-.history-info { display: flex; gap: 10px; align-items: center; font-size: 12px; }
+.history-info { display: flex; gap: 10px; align-items: center; font-size: 12px; flex-wrap: wrap; }
 .history-date { color: #555; font-weight: bold; }
 .history-mode { color: #666; }
 .history-duration { color: #888; }
@@ -1203,4 +1306,32 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .segment:hover[title] { background: #f5f5f5; border-radius: 4px; }
 .play-indicator { margin-left: 6px; font-size: 11px; color: #1565C0; }
 .playing-badge { margin-left: 8px; font-size: 11px; color: #e53935; font-weight: bold; animation: blink 1s infinite; }
+
+/* Label 相關樣式 */
+.label-filter-bar { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
+.label-filter-label { font-size: 12px; font-weight: bold; color: #555; white-space: nowrap; }
+.label-filter-select { padding: 3px 6px; border: 1px solid #FF8F00; border-radius: 4px; font-size: 12px; background: white; }
+.btn-label { background: #FF8F00; }
+.btn-label:hover:not(:disabled) { background: #E65100; }
+.history-labels { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; padding-left: 2px; }
+.label-tag { display: inline-block; background: #fff3e0; color: #e65100; padding: 1px 8px; border-radius: 10px; font-size: 10px; font-weight: bold; border: 1px solid #ffe0b2; }
+.label-tag-sm { font-size: 9px; padding: 0 5px; }
+.search-labels { display: inline-flex; gap: 2px; margin-left: 4px; }
+.search-result-item { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.btn-jump { background: #1565C0; padding: 2px 6px; font-size: 10px; border: none; border-radius: 3px; cursor: pointer; color: white; white-space: nowrap; }
+.btn-jump:hover { background: #0D47A1; }
+.btn-tiny { padding: 2px 6px; font-size: 10px; border: none; border-radius: 3px; cursor: pointer; color: white; white-space: nowrap; }
+
+/* Label 編輯彈窗 */
+.label-editor-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.label-editor-panel { width: 400px; max-height: 80vh; display: flex; flex-direction: column; background: white; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+.label-editor-input-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.label-input { flex: 1; padding: 6px 10px; border: 1px solid #FF8F00; border-radius: 4px; font-size: 12px; }
+.btn-add-label { background: #FF8F00; }
+.btn-add-label:hover { background: #E65100; }
+.label-editor-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; max-height: 200px; overflow-y: auto; }
+.label-editor-item { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
+.btn-remove-label { background: #e53935; padding: 1px 5px; font-size: 10px; border: none; border-radius: 3px; cursor: pointer; color: white; }
+.btn-remove-label:hover { background: #c62828; }
+.label-editor-actions { display: flex; gap: 6px; justify-content: flex-end; }
 </style>

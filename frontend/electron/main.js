@@ -391,11 +391,11 @@ ipcMain.handle('transcribe:segment', async (event, { audioPath, modelSize, useGp
 
 // ── 錄音歷史與全文檢索 ──
 
-ipcMain.handle('reco:saveMeta', async (event, { recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, llmResults, audioPath }) => {
+ipcMain.handle('reco:saveMeta', async (event, { recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, llmResults, audioPath, labels }) => {
   appLog('INFO', 'reco', `儲存 metadata: ${recordingId}`)
   try {
     const fullText = segments.map(s => s.text).join(' ')
-    const meta = { id: recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, fullText, llmResults: llmResults || {}, audioPath: audioPath || '' }
+    const meta = { id: recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, fullText, llmResults: llmResults || {}, audioPath: audioPath || '', labels: labels || [] }
     const metaPath = recoDataPath(`${recordingId}.json`)
     fs.mkdirSync(path.dirname(metaPath), { recursive: true })
     fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
@@ -403,19 +403,25 @@ ipcMain.handle('reco:saveMeta', async (event, { recordingId, filename, recording
   } catch (e) { return { success: false, error: e.message } }
 })
 
-ipcMain.handle('reco:list', async () => {
+ipcMain.handle('reco:list', async (event, { labelFilter } = {}) => {
   try {
     const dir = recoDataPath()
     if (!fs.existsSync(dir)) return { success: true, list: [] }
     const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'))
-    const list = files.map(f => {
+    let list = files.map(f => {
       try {
         const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'))
         const audioPath = data.audioPath || ''
         const hasAudio = audioPath ? fs.existsSync(audioPath) : false
-        return { id: data.id, filename: data.filename, recordingMode: data.recordingMode, recordedAt: data.recordedAt, duration: data.duration, modelSize: data.modelSize, segmentCount: data.segments?.length || 0, hasAudio, audioPath }
+        const labels = data.labels || []
+        return { id: data.id, filename: data.filename, recordingMode: data.recordingMode, recordedAt: data.recordedAt, duration: data.duration, modelSize: data.modelSize, segmentCount: data.segments?.length || 0, hasAudio, audioPath, labels }
       } catch { return null }
     }).filter(Boolean)
+    // 依 label 篩選
+    if (labelFilter && labelFilter.trim()) {
+      const lf = labelFilter.trim().toLowerCase()
+      list = list.filter(item => item.labels.some(l => l.toLowerCase() === lf))
+    }
     list.sort((a, b) => (b.recordedAt || '').localeCompare(a.recordedAt || ''))
     return { success: true, list }
   } catch (e) { return { success: false, error: e.message } }
@@ -432,12 +438,15 @@ ipcMain.handle('reco:search', async (event, { keyword }) => {
       try {
         const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'))
         const lowerKw = keyword.toLowerCase()
+        const labels = data.labels || []
+        // 搜尋 label（若 keyword 匹配任一 label，回傳該錄音的所有 segment）
+        const labelMatch = labels.some(l => l.toLowerCase().includes(lowerKw))
         // 搜尋原始逐字稿
         const lowerFull = data.fullText.toLowerCase()
-        if (lowerFull.includes(lowerKw)) {
+        if (lowerFull.includes(lowerKw) || labelMatch) {
           for (const seg of data.segments) {
-            if (seg.text.toLowerCase().includes(lowerKw)) {
-              results.push({ recordingId: data.id, filename: data.filename, recordedAt: data.recordedAt, start: seg.start, end: seg.end, text: seg.text, source: 'original' })
+            if (labelMatch || seg.text.toLowerCase().includes(lowerKw)) {
+              results.push({ recordingId: data.id, filename: data.filename, recordedAt: data.recordedAt, start: seg.start, end: seg.end, text: seg.text, source: 'original', labels })
             }
           }
         }
@@ -445,8 +454,8 @@ ipcMain.handle('reco:search', async (event, { keyword }) => {
         if (data.llmResults) {
           for (const [type, text] of Object.entries(data.llmResults)) {
             if (text && text.toLowerCase().includes(lowerKw)) {
-              const labels = { optimized: '✨ 優化', translated: '🌐 翻譯', summary: '📋 重點整理' }
-              results.push({ recordingId: data.id, filename: data.filename, recordedAt: data.recordedAt, start: 0, end: 0, text: text.substring(0, 200) + (text.length > 200 ? '...' : ''), source: labels[type] || type })
+              const typeLabels = { optimized: '✨ 優化', translated: '🌐 翻譯', summary: '📋 重點整理' }
+              results.push({ recordingId: data.id, filename: data.filename, recordedAt: data.recordedAt, start: 0, end: 0, text: text.substring(0, 200) + (text.length > 200 ? '...' : ''), source: typeLabels[type] || type, labels })
             }
           }
         }
@@ -466,13 +475,47 @@ ipcMain.handle('reco:aiQuery', async (event, { provider, apiKey, model, question
     for (const f of files) {
       try {
         const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'))
-        context += `--- 錄音: ${data.filename} (${data.recordedAt}) ---\n${data.fullText}\n\n`
+        const labels = data.labels || []
+        const labelStr = labels.length > 0 ? ` (標籤: ${labels.join(', ')})` : ''
+        context += `--- 錄音: ${data.filename}${labelStr} (${data.recordedAt}) ---\n${data.fullText}\n\n`
       } catch {}
     }
     const prompt = `以下是多筆會議錄音的逐字稿內容：\n\n${context}\n\n請根據以上內容回答使用者的問題。請引用來源錄音檔名和時間戳。\n\n問題：${question}`
     const result = await callLLM(provider, apiKey, model, prompt,
       '你是一個專業的會議記錄分析師。根據提供的逐字稿內容回答問題，並標註資訊來源（錄音檔名、時間戳）。使用繁體中文。')
     return { success: true, result }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── Label 管理 ──
+
+ipcMain.handle('reco:updateLabels', async (event, { recordingId, labels }) => {
+  appLog('INFO', 'reco', `更新標籤: ${recordingId} labels=${JSON.stringify(labels)}`)
+  try {
+    const metaPath = recoDataPath(`${recordingId}.json`)
+    if (!fs.existsSync(metaPath)) return { success: false, error: `找不到記錄: ${recordingId}` }
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+    meta.labels = labels || []
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('reco:listLabels', async () => {
+  try {
+    const dir = recoDataPath()
+    if (!fs.existsSync(dir)) return { success: true, labels: [] }
+    const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'))
+    const labelSet = new Set()
+    for (const f of files) {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'))
+        const labels = data.labels || []
+        for (const l of labels) labelSet.add(l)
+      } catch {}
+    }
+    const sorted = Array.from(labelSet).sort()
+    return { success: true, labels: sorted }
   } catch (e) { return { success: false, error: e.message } }
 })
 
