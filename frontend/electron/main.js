@@ -385,11 +385,11 @@ ipcMain.handle('transcribe:segment', async (event, { audioPath, modelSize, useGp
 
 // ── 錄音歷史與全文檢索 ──
 
-ipcMain.handle('reco:saveMeta', async (event, { recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, llmResults }) => {
+ipcMain.handle('reco:saveMeta', async (event, { recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, llmResults, audioPath }) => {
   appLog('INFO', 'reco', `儲存 metadata: ${recordingId}`)
   try {
     const fullText = segments.map(s => s.text).join(' ')
-    const meta = { id: recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, fullText, llmResults: llmResults || {} }
+    const meta = { id: recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, fullText, llmResults: llmResults || {}, audioPath: audioPath || '' }
     const metaPath = recoDataPath(`${recordingId}.json`)
     fs.mkdirSync(path.dirname(metaPath), { recursive: true })
     fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
@@ -405,7 +405,9 @@ ipcMain.handle('reco:list', async () => {
     const list = files.map(f => {
       try {
         const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'))
-        return { id: data.id, filename: data.filename, recordingMode: data.recordingMode, recordedAt: data.recordedAt, duration: data.duration, modelSize: data.modelSize, segmentCount: data.segments?.length || 0 }
+        const audioPath = data.audioPath || ''
+        const hasAudio = audioPath ? fs.existsSync(audioPath) : false
+        return { id: data.id, filename: data.filename, recordingMode: data.recordingMode, recordedAt: data.recordedAt, duration: data.duration, modelSize: data.modelSize, segmentCount: data.segments?.length || 0, hasAudio, audioPath }
       } catch { return null }
     }).filter(Boolean)
     list.sort((a, b) => (b.recordedAt || '').localeCompare(a.recordedAt || ''))
@@ -602,6 +604,58 @@ ipcMain.handle('reco:batchTranscribeNew', async (event, { modelSize, useGpu, gpu
   } catch (e) { return { success: false, error: e.message } }
 })
 
+// ── 刪除錄音記錄 ──
+
+ipcMain.handle('reco:deleteMeta', async (event, { recordingId }) => {
+  appLog('INFO', 'reco', `刪除 metadata: ${recordingId}`)
+  try {
+    const metaPath = recoDataPath(`${recordingId}.json`)
+    if (!fs.existsSync(metaPath)) return { success: false, error: `找不到記錄: ${recordingId}` }
+    fs.unlinkSync(metaPath)
+    appLog('INFO', 'reco', `metadata 已刪除: ${recordingId}`)
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── 刪除音檔（安全檢查：僅允許 recoDataPath 下的檔案） ──
+
+ipcMain.handle('reco:deleteAudio', async (event, { audioPath }) => {
+  appLog('INFO', 'reco', `刪除音檔: ${audioPath}`)
+  try {
+    if (!audioPath) return { success: false, error: '未指定音檔路徑' }
+    const recoDir = recoDataPath()
+    const resolved = path.resolve(audioPath)
+    // 安全檢查：確保路徑在 recoDataPath 下
+    if (!resolved.startsWith(path.resolve(recoDir))) {
+      appLog('WARN', 'reco', `嘗試刪除目錄外的檔案: ${audioPath}`)
+      return { success: false, error: '不允許刪除目錄外的檔案' }
+    }
+    if (!fs.existsSync(resolved)) return { success: false, error: '音檔不存在' }
+    fs.unlinkSync(resolved)
+    appLog('INFO', 'reco', `音檔已刪除: ${audioPath}`)
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── 取得音檔 URL（透過自訂 protocol 安全提供本機音檔） ──
+
+ipcMain.handle('reco:getAudioUrl', async (event, { audioPath }) => {
+  try {
+    if (!audioPath) return { success: false, error: '未指定音檔路徑' }
+    const recoDir = recoDataPath()
+    const resolved = path.resolve(audioPath)
+    // 安全檢查：確保路徑在 recoDataPath 下
+    if (!resolved.startsWith(path.resolve(recoDir))) {
+      return { success: false, error: '不允許存取目錄外的檔案' }
+    }
+    if (!fs.existsSync(resolved)) return { success: false, error: '音檔不存在' }
+    // 回傳自訂 protocol URL
+    const relativePath = path.relative(recoDir, resolved)
+    const url = `reco-file:///${relativePath.replace(/\\/g, '/')}`
+    return { success: true, url }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
 // ── 批次轉 txt ──
 
 ipcMain.handle('batch:transcribe', async (event, { modelSize, useGpu, gpuDevice }) => {
@@ -651,8 +705,31 @@ function formatTime(seconds) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
+// ── 自訂 protocol：安全提供本機音檔給 renderer ──
+
+function registerRecoFileProtocol() {
+  const recoDir = recoDataPath()
+  try { fs.mkdirSync(recoDir, { recursive: true }) } catch {}
+  session.defaultSession.protocol.registerFileProtocol('reco-file', (request, callback) => {
+    try {
+      // 解析路徑：reco-file:///relative/path → 完整路徑
+      const relativePath = decodeURIComponent(request.url.replace('reco-file:///', ''))
+      const fullPath = path.resolve(recoDir, relativePath)
+      // 安全檢查：確保在 recoDir 下
+      if (!fullPath.startsWith(path.resolve(recoDir))) {
+        callback({ statusCode: 403 })
+        return
+      }
+      callback({ path: fullPath })
+    } catch (e) {
+      callback({ statusCode: 404 })
+    }
+  })
+}
+
 function createWindow() {
   const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev')
+  registerRecoFileProtocol()
     mainWindow = new BrowserWindow({
     width: 1100, height: 800, minWidth: 720, minHeight: 500,
     title: `Recoder v${app.getVersion()} — AI 會議記錄`,

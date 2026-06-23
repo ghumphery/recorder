@@ -34,4 +34,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onBatchNewProgress: (callback) => {
     ipcRenderer.on('reco:batch-progress', (event, data) => callback(data))
   },
+  // 刪除錄音記錄
+  recoDeleteMeta: (p) => ipcRenderer.invoke('reco:deleteMeta', p),
+  // 刪除音檔
+  recoDeleteAudio: (p) => ipcRenderer.invoke('reco:deleteAudio', p),
+  // 取得音檔 URL（自訂 protocol）
+  recoGetAudioUrl: (p) => ipcRenderer.invoke('reco:getAudioUrl', p),
 })

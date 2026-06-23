@@ -112,14 +112,18 @@
       <button class="tab-btn" :class="{ active: activeTab === 'history' }" @click="activeTab = 'history'; loadHistory()">📚 歷史記錄</button>
     </div>
 
+    <!-- 隱藏音訊播放器 -->
+    <audio ref="audioPlayer" style="display:none" @timeupdate="onAudioTimeUpdate" @ended="onAudioEnded"></audio>
+
     <!-- 主要內容區：逐字稿 -->
     <div class="content-area" v-if="activeTab === 'transcript'">
       <div class="panel" v-if="hasResult && activeSource === 'original'">
-        <div class="panel-header">📝 原始逐字稿（{{ transcriptionResults.length }} 句）</div>
+        <div class="panel-header">📝 原始逐字稿（{{ transcriptionResults.length }} 句）<span v-if="nowPlaying" class="playing-badge">▶️ 播放中</span></div>
         <div class="panel-body">
-          <div v-for="(seg, idx) in transcriptionResults" :key="idx" class="segment">
+          <div v-for="(seg, idx) in transcriptionResults" :key="idx" class="segment" :class="{ 'segment-playing': playingSegmentIdx === idx }" @click="playSegment(idx)" :title="currentAudioUrl ? '點擊播放此句' : ''">
             <span class="timestamp">[{{ formatTime(seg.start) }} - {{ formatTime(seg.end) }}]</span>
             <span class="text">{{ seg.text }}</span>
+            <span v-if="playingSegmentIdx === idx" class="play-indicator">▶️</span>
           </div>
         </div>
       </div>
@@ -182,10 +186,13 @@
                 <span class="history-mode">{{ item.recordingMode === 'mix' ? '🖥️ 混音' : '🎙️ 麥克風' }}</span>
                 <span class="history-duration">{{ formatTime(item.duration) }}</span>
                 <span class="history-segments">{{ item.segmentCount }} 句</span>
+                <span class="audio-status" :class="item.hasAudio ? 'audio-ok' : 'audio-missing'">{{ item.hasAudio ? '🟢 有音檔' : '🔴 無音檔' }}</span>
+                <button class="btn btn-small btn-play" @click="playRecordingAudio(item)" :disabled="busy || !item.hasAudio" :title="item.hasAudio ? '播放音檔' : '無對應音檔'">▶️ 播放</button>
                 <button class="btn btn-small btn-review" @click="reviewRecording(item.id)" :disabled="busy">📖 Review</button>
                 <button class="btn btn-small btn-llm-sm" @click="llmProcessRecording(item.id, 'optimize')" :disabled="llmBusy">✨ 優化</button>
                 <button class="btn btn-small btn-llm-sm" @click="llmProcessRecording(item.id, 'translate')" :disabled="llmBusy">🌐 翻譯</button>
                 <button class="btn btn-small btn-llm-sm" @click="llmProcessRecording(item.id, 'summary')" :disabled="llmBusy">📋 摘要</button>
+                <button class="btn btn-small btn-delete" @click="deleteRecording(item)" :disabled="busy">🗑️</button>
               </div>
             </div>
             <div v-if="historyList.length === 0" class="empty-hint">尚無錄音記錄</div>
@@ -206,6 +213,7 @@
                 <span class="history-duration">{{ f.ext }}</span>
                 <span class="history-segments">{{ f.mtime.slice(0, 19).replace('T', ' ') }}</span>
                 <button class="btn btn-small btn-transcribe-audio" @click="transcribeAudioFile(f.path)" :disabled="busy">🤖 辨識</button>
+                <button class="btn btn-small btn-delete" @click="deleteAudioFile(f)" :disabled="busy">🗑️</button>
               </div>
             </div>
             <div v-if="audioFiles.length === 0" class="empty-hint">尚無音檔</div>
@@ -260,6 +268,10 @@ export default {
       historySubTab: 'records',
       audioFiles: [],
       batchNewBusy: false,
+      // 音檔播放
+      currentAudioUrl: '',
+      nowPlaying: false,
+      playingSegmentIdx: -1,
     }
   },
   computed: {
@@ -761,6 +773,7 @@ export default {
         modelSize: this.selectedModel,
         segments,
         llmResults: llmResults ? { ...llmResults } : { ...this.llmResults },
+        audioPath: this.currentAudioPath || '',
       })
     },
 
@@ -891,6 +904,130 @@ export default {
       } catch (e) { this.statusText = `❌ AI 查詢失敗: ${e.message}` }
       finally { this.aiBusy = false; this.statusText = '就緒' }
     },
+
+    // ── 音檔播放 ──
+    async loadAudioUrl(audioPath) {
+      if (!window.electronAPI || !audioPath) {
+        this.currentAudioUrl = ''
+        return
+      }
+      try {
+        const r = await window.electronAPI.recoGetAudioUrl({ audioPath })
+        if (r.success) {
+          this.currentAudioUrl = r.url
+        } else {
+          this.currentAudioUrl = ''
+          this.statusText = `❌ 無法載入音檔: ${r.error}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.currentAudioUrl = ''
+        console.warn('載入音檔 URL 失敗:', e)
+      }
+    },
+    playSegment(idx) {
+      if (!this.currentAudioUrl || !this.transcriptionResults[idx]) return
+      const seg = this.transcriptionResults[idx]
+      const audio = this.$refs.audioPlayer
+      if (!audio) return
+      audio.src = this.currentAudioUrl
+      audio.currentTime = seg.start
+      audio.play().then(() => {
+        this.nowPlaying = true
+        this.playingSegmentIdx = idx
+      }).catch(e => {
+        console.warn('播放失敗:', e)
+        this.statusText = '❌ 播放失敗，音檔可能不支援此格式'
+        this.statusError = true
+      })
+    },
+    onAudioTimeUpdate() {
+      const audio = this.$refs.audioPlayer
+      if (!audio || !this.nowPlaying) return
+      const currentTime = audio.currentTime
+      const seg = this.transcriptionResults[this.playingSegmentIdx]
+      if (seg && currentTime >= seg.end) {
+        // 自動跳到下一句
+        const nextIdx = this.playingSegmentIdx + 1
+        if (nextIdx < this.transcriptionResults.length) {
+          this.playSegment(nextIdx)
+        } else {
+          this.onAudioEnded()
+        }
+      }
+    },
+    onAudioEnded() {
+      this.nowPlaying = false
+      this.playingSegmentIdx = -1
+    },
+    stopPlayback() {
+      const audio = this.$refs.audioPlayer
+      if (audio) { audio.pause(); audio.src = '' }
+      this.nowPlaying = false
+      this.playingSegmentIdx = -1
+    },
+
+    // ── 刪除錄音記錄 ──
+    async deleteRecording(item) {
+      if (!window.electronAPI) return
+      if (!confirm(`確定要刪除錄音記錄「${item.filename || item.id}」嗎？\n此操作無法復原。`)) return
+      this.statusText = `🗑️ 刪除記錄 ${item.id}...`
+      this.statusError = false
+      try {
+        const r = await window.electronAPI.recoDeleteMeta({ recordingId: item.id })
+        if (r.success) {
+          this.statusText = '✅ 記錄已刪除'
+          await this.loadHistory()
+        } else {
+          this.statusText = `❌ 刪除失敗: ${r.error}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 刪除異常: ${e.message}`
+        this.statusError = true
+      }
+    },
+
+    // ── 刪除音檔 ──
+    async deleteAudioFile(file) {
+      if (!window.electronAPI) return
+      if (!confirm(`確定要刪除音檔「${file.name}」嗎？\n此操作無法復原。`)) return
+      this.statusText = `🗑️ 刪除音檔 ${file.name}...`
+      this.statusError = false
+      try {
+        const r = await window.electronAPI.recoDeleteAudio({ audioPath: file.path })
+        if (r.success) {
+          this.statusText = '✅ 音檔已刪除'
+          await this.loadAudioFiles()
+        } else {
+          this.statusText = `❌ 刪除失敗: ${r.error}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 刪除異常: ${e.message}`
+        this.statusError = true
+      }
+    },
+
+    // ── 從歷史記錄播放音檔 ──
+    async playRecordingAudio(item) {
+      if (!item.audioPath || !item.hasAudio) {
+        this.statusText = '❌ 無對應音檔可播放'
+        this.statusError = true
+        return
+      }
+      await this.loadAudioUrl(item.audioPath)
+      if (this.currentAudioUrl) {
+        // 先載入逐字稿
+        await this.reviewRecording(item.id)
+        // 播放第一句
+        this.$nextTick(() => {
+          if (this.transcriptionResults.length > 0) {
+            this.playSegment(0)
+          }
+        })
+      }
+    },
   },
 }
 </script>
@@ -999,4 +1136,18 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .history-mode { color: #666; }
 .history-duration { color: #888; }
 .history-segments { color: #1565C0; }
+.audio-status { font-size: 11px; font-weight: bold; white-space: nowrap; }
+.audio-ok { color: #2e7d32; }
+.audio-missing { color: #c62828; }
+.btn-play { background: #43A047; }
+.btn-play:hover:not(:disabled) { background: #2E7D32; }
+.btn-delete { background: #e53935; }
+.btn-delete:hover:not(:disabled) { background: #c62828; }
+.segment-playing { background: #e3f2fd; border-radius: 4px; padding: 2px 4px; cursor: pointer; }
+.segment-playing:hover { background: #bbdefb; }
+.segment { cursor: default; }
+.segment[title] { cursor: pointer; }
+.segment:hover[title] { background: #f5f5f5; border-radius: 4px; }
+.play-indicator { margin-left: 6px; font-size: 11px; color: #1565C0; }
+.playing-badge { margin-left: 8px; font-size: 11px; color: #e53935; font-weight: bold; animation: blink 1s infinite; }
 </style>

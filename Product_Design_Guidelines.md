@@ -1,6 +1,6 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.3.6
+> **版本**: 1.4.0
 > **最後更新日期**: 2026-06-23
 
 ## 產品核心願景與哲學 (Product Vision & Philosophy)
@@ -132,7 +132,26 @@
 - **實作方式**：`callLLM(provider, apiKey, model, prompt, systemPrompt)` 依提供商路由至對應 API
 - **三個功能按鈕**：✨語句優化 / 🌐翻譯（含目標語言選擇） / 📋重點整理，僅在有辨識結果時顯示
 
-### 5. 前端 Vue.js 元件 (`frontend/src/App.vue`)
+### 5. 音檔播放與逐句點擊播放 (`frontend/src/App.vue` + `frontend/electron/main.js`)
+- **功能**：支援逐字稿句子點擊播放對應時段的原始錄音內容
+- **實作方式**：
+  - Electron 註冊自訂 protocol `reco-file://`，安全地將本機音檔提供給 renderer 進程
+  - IPC `reco:getAudioUrl` 接收音檔路徑，回傳 `reco-file://` URL
+  - 前端隱藏 `<audio>` 元素，點擊句子時設定 `audio.currentTime = seg.start` 並播放
+  - `timeupdate` 事件監聽播放進度，自動跳至下一句（`currentTime >= seg.end` 時）
+  - 播放中的句子高亮顯示（`.segment-playing` 藍色背景 + ▶️ 指示器）
+- **安全限制**：自訂 protocol 僅允許讀取 `recoDataPath()` 下的檔案，防止路徑遍歷攻擊
+
+### 6. 刪除管理 (`frontend/electron/main.js` + `frontend/src/App.vue`)
+- **刪除錄音記錄**：IPC `reco:deleteMeta` 刪除 `{recordingId}.json`，前端 confirm 確認後執行
+- **刪除音檔**：IPC `reco:deleteAudio` 刪除指定音檔，含安全檢查（僅允許 `recoDataPath()` 下的檔案）
+- **前端 UI**：
+  - 錄音記錄列表每筆顯示 🟢 有音檔 / 🔴 無音檔 狀態標示
+  - ▶️ 播放按鈕（僅在有音檔時可點擊）
+  - 🗑️ 刪除按鈕（紅色，點擊後彈出 confirm 對話框）
+  - 音檔列表每筆也有 🗑️ 刪除按鈕
+
+### 7. 前端 Vue.js 元件 (`frontend/src/App.vue`)
 - **框架**：Vue 3 + Vite 6
 - **通訊方式**：透過 `window.electronAPI` (preload script 暴露的 contextBridge) 呼叫 Electron IPC
 - **主介面元素**：

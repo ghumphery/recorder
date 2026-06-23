@@ -622,3 +622,32 @@
   - electron-builder 產出 `Recoder-1.9.3-portable.exe`（127 MB）
   - Git commit `601eb85`
   - 備份檔名: backup-202606231308.zip
+
+## [2026-06-23 14:02]
+- **version**: 1.10.0
+- **修改要求**：
+  1. 支援刪除特定錄音記錄
+  2. 支援刪除特定錄音檔
+  3. 支援針對逐字稿指定句子(時段)播放對應的原始錄音檔相對錄音內容
+  4. 於錄音記錄標示是否在在原始錄音檔，並可選擇播放對應錄音檔
+- **修改規劃**：
+  1. `frontend/electron/main.js`：
+     - `reco:saveMeta` 新增 `audioPath` 參數寫入 JSON
+     - `reco:list` 回傳 `hasAudio`（檢查 audioPath 是否存在）與 `audioPath`
+     - 新增 `reco:deleteMeta` IPC（刪除 JSON）
+     - 新增 `reco:deleteAudio` IPC（安全檢查：僅允許 recoDataPath 下的檔案）
+     - 新增 `reco:getAudioUrl` IPC（回傳自訂 protocol URL）
+     - 註冊自訂 protocol `reco-file://` 安全提供本機音檔給 renderer
+  2. `frontend/electron/preload.js`：新增 `recoDeleteMeta`、`recoDeleteAudio`、`recoGetAudioUrl`
+  3. `frontend/src/App.vue`：
+     - 新增隱藏 `<audio>` 播放器
+     - 逐字稿區每句可點擊播放對應時段
+     - 歷史記錄列表顯示 🟢 有音檔 / 🔴 無音檔 狀態 + ▶️ 播放按鈕 + 🗑️ 刪除按鈕
+     - 音檔列表每筆加入 🗑️ 刪除按鈕
+     - `saveRecordingMeta()` 傳入 `audioPath`
+- **修改結果**：
+  - `frontend/electron/main.js`：修改 `reco:saveMeta`、`reco:list`；新增 `reco:deleteMeta`、`reco:deleteAudio`、`reco:getAudioUrl`、`registerRecoFileProtocol()`
+  - `frontend/electron/preload.js`：新增 3 個 bridge 方法
+  - `frontend/src/App.vue`：新增音檔播放（逐句點擊播放、自動跳下一句）、刪除記錄/音檔、音檔狀態標示
+  - `frontend/package.json`：版本號更新為 `1.10.0`
+  - 備份檔名: backup-202606231402.zip
