@@ -393,7 +393,9 @@ export default {
     },
     async reviewRecording(id) {
       if (!window.electronAPI) return
-      this.stopPlayback()
+      // 僅重置播放狀態旗標，不觸碰 audio.src（避免清除已載入的音檔 URL）
+      this.nowPlaying = false
+      this.playingSegmentIdx = -1
       this.busy = true
       this.statusText = `📖 載入 ${id}...`
       this.statusError = false
@@ -946,6 +948,8 @@ export default {
       const audio = this.$refs.audioPlayer
       if (!audio) return
       const seekAndPlay = () => {
+        // 先暫停，避免舊緩衝區內容在 seek 完成前洩漏
+        audio.pause()
         audio.currentTime = seg.start
         audio.play().then(() => {
           this.nowPlaying = true
