@@ -37,14 +37,14 @@ npm run electron:dev
 
 ### 下載打包版
 
-從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.10.6-portable.exe`，直接執行即可。
+從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.10.7-portable.exe`，直接執行即可。
 
 ### 自行打包
 
 ```bash
 cd frontend
 npm run electron:build
-# 產出：frontend/dist-electron/Recorder-1.10.6-portable.exe
+# 產出：frontend/dist-electron/Recorder-1.10.7-portable.exe
 ```
 
 ### 直接運行打包版
@@ -55,7 +55,7 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ### 音檔播放注意事項
 
-- 點擊逐字稿句子會從該句的起始時間開始播放
+- 點擊逐字稿句子會從該句的起始時間開始播放，播放會自然延續到後續句子（不自動跳句）
 - 播放中可點擊「⏹️ 停止播放」按鈕立即停止
 - 切換到其他錄音記錄或 Review 時會自動停止舊音檔
 - 從「音檔列表」進行辨識時，程式會同時產生一份 16kHz mono WAV 保存到 `reco_data`，確保播放與辨識使用同一份音檔、時間戳對齊
@@ -94,6 +94,7 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 版本歷史
 
+- **v1.10.7** — 修正 whisper 時間戳不精確導致播放重複：移除自動跳句機制，改為連續播放僅更新高亮句子。根本原因是 whisper 的 `seg.end` 可能比實際語音結束時間早，自動跳句會導致句子結尾被截斷並重複播放下句開頭
 - **v1.10.6** — 修正下一句開頭重複播放：`seekAndPlay()` 改為事件驅動序列化流程，先等待 `pause` 事件完成暫停，再設定 `currentTime` 並等待 `seeked` 事件完成 seek，最後才呼叫 `play()`，確保舊緩衝區內容不會洩漏造成重複播放
 - **v1.10.5** — 修正播放延遲與開頭重複問題：1) `reviewRecording()` 不再呼叫 `stopPlayback()`，避免清除已載入的音檔 URL，解決點擊播放需等待 10~30 秒的問題；2) `seekAndPlay()` 先 `pause()` 再 seek，避免舊緩衝區內容在 seek 完成前洩漏，解決下一句開頭重複播放的問題
 - **v1.10.4** — 修正特定句子播放時，第二句之後每句開頭會重複播放前幾個字的問題：`playSegment()` 改為檢查 `audio.readyState`，已載入中繼資料時直接 seek 不重設 `src`，避免瀏覽器重載音檔造成開頭重複

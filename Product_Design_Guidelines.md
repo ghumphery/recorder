@@ -1,6 +1,6 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.4.1
+> **版本**: 1.4.2
 > **最後更新日期**: 2026-06-23
 
 ## 產品核心願景與哲學 (Product Vision & Philosophy)
@@ -138,7 +138,7 @@
   - Electron 註冊自訂 protocol `reco-file://`，安全地將本機音檔提供給 renderer 進程
   - IPC `reco:getAudioUrl` 接收音檔路徑，回傳 `reco-file://` URL；新增 IPC `reco:dataPath` 讓前端取得正確的 `reco_data` 路徑
   - 前端隱藏 `<audio>` 元素；點擊句子時先設定 `audio.src`，待 `loadedmetadata` 事件觸發後再設定 `audio.currentTime = seg.start` 並呼叫 `audio.play()`，確保音檔中繼資料已載入
-  - `timeupdate` 事件監聽播放進度，自動跳至下一句（`currentTime >= seg.end + 0.3` 時，保留 300ms 緩衝避免語音未完就提前跳句）
+  - `timeupdate` 事件監聽播放進度，根據 `currentTime` 更新當前高亮句子（`playingSegmentIdx`），播放自然延續不自動跳句；只有超過最後一句的 `end + 0.5` 秒才停止播放
   - 播放中的句子高亮顯示（`.segment-playing` 藍色背景 + ▶️ 指示器）
   - 面板標題在播放中顯示「▶️ 播放中」與「⏹️ 停止播放」按鈕，點擊可呼叫 `stopPlayback()` 立即停止
   - `playSegment()` 採用事件驅動序列化流程：`audio.pause()` → 等 `pause` 事件 → 設定 `currentTime` → 等 `seeked` 事件 → `play()`，避免舊緩衝區內容在 seek 完成前洩漏造成開頭重複播放

@@ -997,15 +997,19 @@ export default {
       const audio = this.$refs.audioPlayer
       if (!audio || !this.nowPlaying) return
       const currentTime = audio.currentTime
-      const seg = this.transcriptionResults[this.playingSegmentIdx]
-      if (seg && currentTime >= seg.end + 0.3) {
-        // 自動跳到下一句
-        const nextIdx = this.playingSegmentIdx + 1
-        if (nextIdx < this.transcriptionResults.length) {
-          this.playSegment(nextIdx)
-        } else {
-          this.onAudioEnded()
+      // 更新高亮：根據 currentTime 找到對應的句子
+      for (let i = 0; i < this.transcriptionResults.length; i++) {
+        const s = this.transcriptionResults[i]
+        if (currentTime >= s.start && currentTime < s.end) {
+          if (this.playingSegmentIdx !== i) this.playingSegmentIdx = i
+          break
         }
+      }
+      // 不再自動跳句（避免 whisper 時間戳不精確造成重複播放）
+      // 只有超過最後一句的 end 才停止
+      const lastSeg = this.transcriptionResults[this.transcriptionResults.length - 1]
+      if (lastSeg && currentTime >= lastSeg.end + 0.5) {
+        this.onAudioEnded()
       }
     },
     onAudioEnded() {

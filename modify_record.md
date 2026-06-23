@@ -735,3 +735,21 @@
 - 完成原始碼備份: （待補）
 - Git commit `20b7470` 並 push 至 GitHub origin master
 
+## [2026-06-23 22:10]
+- **version**: 1.10.7
+- **修改要求**：修正 whisper 時間戳不精確導致播放重複的問題 — 自動跳句機制會在句子結尾截斷語音並重複播放下句開頭。
+- **修改規劃**：
+   1. 根因分析：whisper 的 `seg.end` 時間戳可能比實際語音結束時間早。當 `onAudioTimeUpdate()` 偵測到 `currentTime >= seg.end` 時自動呼叫 `playSegment(idx+1)` 跳到下一句的 `seg.start`，但此時實際語音仍在播放句子 N 的結尾。跳句後 seek 到 `seg[N+1].start`，導致句子 N 的結尾被截斷，且句子 N+1 的開頭幾個字被播放了兩次（一次是自然連續播放，一次是 seek 後重播）。
+   2. 修復方案：移除自動跳句機制，改為連續播放僅更新高亮句子：
+      - `onAudioTimeUpdate()` 改為根據 `currentTime` 遍歷 `transcriptionResults` 更新 `playingSegmentIdx` 高亮，不再呼叫 `playSegment()`
+      - 只有超過最後一句的 `end + 0.5` 秒才呼叫 `onAudioEnded()` 停止播放
+      - `seekAndPlay()` 保留 v1.10.6 的事件驅動序列化流程（pause 事件 → seek → seeked 事件 → play）
+   3. 版本號 `1.10.6` → `1.10.7`（patch 修復 bug）。
+- **修改結果**：
+   - `frontend/src/App.vue`：`onAudioTimeUpdate()` 移除自動跳句，改為連續播放僅更新高亮
+   - `frontend/package.json`：版本號更新為 `1.10.7`
+   - Vite build 成功（11 modules, ~696ms）
+   - electron-builder 產出 `frontend/dist-electron/Recorder-1.10.7-portable.exe`
+   - `readme.md` 版本歷史新增 v1.10.7 說明，版本號更新為 1.10.7
+   - `Product_Design_Guidelines.md` 音檔播放模組說明更新（移除自動跳句描述）
+
