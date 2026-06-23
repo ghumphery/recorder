@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.spec
+
+# Node
+frontend/node_modules/
+
+# Build outputs
+frontend/dist/
+frontend/dist-electron/
+
+# Logs
+*.log
+
+# Backups
+backup/
+
+# Build artifacts
+build/
+dist/
+dist-electron/
+win-unpacked/
+
+# IDE
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Environment
+.env
+
+# 舊後端（已棄用）
+backend/
+
+# ffmpeg（超過 GitHub 100MB 限制，請自行下載）
+ffmpeg/
