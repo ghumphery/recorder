@@ -74,7 +74,6 @@
 
       <button class="btn btn-transcribe" @click="startTranscribe" :disabled="busy || !audioLoaded || isRecording">🤖 辨識</button>
       <button class="btn btn-export" @click="exportResult" :disabled="busy || !hasResult">💾 匯出</button>
-      <button class="btn btn-batch" @click="startBatchTranscribe" :disabled="busy || batchBusy || isRecording">📂 批次轉 txt</button>
     </div>
 
     <!-- LLM 動作列 -->
@@ -167,8 +166,14 @@
           </div>
         </div>
 
-        <!-- 錄音列表 -->
-        <div v-if="!searchKeyword && !aiQuestion" class="recording-list">
+        <!-- 子 Tab 切換 -->
+        <div v-if="!searchKeyword && !aiQuestion" class="history-sub-tabs">
+          <button class="sub-tab-btn" :class="{ active: historySubTab === 'records' }" @click="historySubTab = 'records'; loadHistory()">📚 錄音記錄</button>
+          <button class="sub-tab-btn" :class="{ active: historySubTab === 'audio' }" @click="historySubTab = 'audio'; loadAudioFiles()">🎵 音檔列表</button>
+        </div>
+
+        <!-- 錄音記錄 -->
+        <div v-if="!searchKeyword && !aiQuestion && historySubTab === 'records'" class="recording-list">
           <div class="panel-header">📚 錄音記錄（{{ historyList.length }} 筆）</div>
           <div class="panel-body">
             <div v-for="(item, idx) in historyList" :key="idx" class="history-item">
@@ -177,9 +182,27 @@
                 <span class="history-mode">{{ item.recordingMode === 'mix' ? '🖥️ 混音' : '🎙️ 麥克風' }}</span>
                 <span class="history-duration">{{ formatTime(item.duration) }}</span>
                 <span class="history-segments">{{ item.segmentCount }} 句</span>
+                <button class="btn btn-small btn-rebuild" @click="rebuildRecording(item.id)" :disabled="busy">🔄 重建</button>
               </div>
             </div>
             <div v-if="historyList.length === 0" class="empty-hint">尚無錄音記錄</div>
+          </div>
+        </div>
+
+        <!-- 音檔列表 -->
+        <div v-if="!searchKeyword && !aiQuestion && historySubTab === 'audio'" class="recording-list">
+          <div class="panel-header">🎵 音檔列表（{{ audioFiles.length }} 筆）</div>
+          <div class="panel-body">
+            <div v-for="(f, idx) in audioFiles" :key="idx" class="history-item">
+              <div class="history-info">
+                <span class="history-date">{{ f.name }}</span>
+                <span class="history-mode">{{ (f.size / 1024).toFixed(1) }} KB</span>
+                <span class="history-duration">{{ f.ext }}</span>
+                <span class="history-segments">{{ f.mtime.slice(0, 19).replace('T', ' ') }}</span>
+                <button class="btn btn-small btn-transcribe-audio" @click="transcribeAudioFile(f.name)" :disabled="busy">🤖 辨識</button>
+              </div>
+            </div>
+            <div v-if="audioFiles.length === 0" class="empty-hint">尚無音檔</div>
           </div>
         </div>
       </div>
@@ -227,9 +250,9 @@ export default {
       currentRecordingId: null,
       // 工作目錄
       recoDir: '',
-      // 批次轉 txt
-      batchBusy: false,
-      batchProgress: { current: 0, total: 0, file: '' },
+      // 歷史記錄子 Tab
+      historySubTab: 'records',
+      audioFiles: [],
     }
   },
   computed: {
@@ -264,11 +287,6 @@ export default {
     if (window.electronAPI && window.electronAPI.onDownloadProgress) {
       window.electronAPI.onDownloadProgress((data) => {
         if (data && data.percent !== undefined) this.progressPercent = data.percent
-      })
-    }
-    if (window.electronAPI && window.electronAPI.onBatchProgress) {
-      window.electronAPI.onBatchProgress((data) => {
-        if (data) this.batchProgress = data
       })
     }
     await this.fetchModels()
@@ -342,32 +360,66 @@ export default {
         this.saveSettings()
       }
     },
-    async startBatchTranscribe() {
+    async loadAudioFiles() {
       if (!window.electronAPI) return
-      this.batchBusy = true
-      this.batchProgress = { current: 0, total: 0, file: '' }
-      this.statusText = '📂 批次轉 txt 開始...'
+      try {
+        const r = await window.electronAPI.recoListAudioFiles()
+        if (r.success) this.audioFiles = r.files
+      } catch (e) { console.warn('載入音檔列表失敗:', e) }
+    },
+    async rebuildRecording(id) {
+      if (!window.electronAPI) return
+      this.busy = true
+      this.statusText = `🔄 重建辨識 ${id}...`
       this.statusError = false
       try {
-        const r = await window.electronAPI.batchTranscribe({
+        const r = await window.electronAPI.recoRebuild({
+          recordingId: id,
           modelSize: this.selectedModel,
           useGpu: this.useGpu,
           gpuDevice: this.gpuDevice,
         })
         if (r.success) {
-          const ok = r.results.filter(x => x.txt).length
-          const fail = r.results.filter(x => x.error).length
-          this.statusText = `✅ 批次完成：${ok} 成功${fail > 0 ? `，${fail} 失敗` : ''}`
+          this.statusText = `✅ 重建完成（${r.segments.length} 句）`
+          await this.loadHistory()
         } else {
-          this.statusText = `❌ 批次失敗: ${r.error}`
+          this.statusText = `❌ 重建失敗: ${r.error}`
           this.statusError = true
         }
       } catch (e) {
-        this.statusText = `❌ 批次異常: ${e.message}`
+        this.statusText = `❌ 重建異常: ${e.message}`
         this.statusError = true
-      } finally {
-        this.batchBusy = false
-      }
+      } finally { this.busy = false }
+    },
+    async transcribeAudioFile(fileName) {
+      if (!window.electronAPI) return
+      this.busy = true
+      this.statusText = `🤖 辨識 ${fileName}...`
+      this.statusError = false
+      try {
+        // 先切到逐字稿 tab 顯示結果
+        this.activeTab = 'transcript'
+        this.audioInfo = { filename: fileName }
+        this.audioLoaded = true
+        this.currentAudioPath = null
+        this.hasResult = false
+        this.transcriptionResults = []
+        // 用 import:audio 取得完整路徑（或直接從 reco_data 讀取）
+        const dir = this.recoDir || ''
+        // 直接呼叫 transcribe:start 需要完整路徑，透過 import:audio 取得
+        const importResult = await window.electronAPI.importAudio(fileName)
+        if (importResult.success) {
+          this.currentAudioPath = importResult.path
+          this.audioInfo = importResult
+          await this.startTranscribe()
+        } else {
+          this.statusText = `❌ 無法載入音檔: ${importResult.error}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 辨識異常: ${e.message}`
+        this.statusError = true
+      } finally { this.busy = false }
     },
     async saveSettings() {
       if (!window.electronAPI) {
@@ -859,6 +911,15 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .text { font-size: 13px; }
 .llm-content { white-space: pre-wrap; font-family: inherit; font-size: 13px; line-height: 1.8; }
 .empty-hint { flex:1; display: flex; align-items: center; justify-content: center; color: #999; font-size: 14px; padding: 20px; }
+
+.history-sub-tabs { display: flex; gap: 0; background: #f5f5f5; border-radius: 6px; padding: 2px; }
+.sub-tab-btn { padding: 5px 14px; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; background: transparent; color: #666; transition: all .2s; }
+.sub-tab-btn.active { background: white; color: #1565C0; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.sub-tab-btn:hover:not(.active) { background: #e0e0e0; }
+.btn-rebuild { background: #FF8F00; }
+.btn-rebuild:hover:not(:disabled) { background: #E65100; }
+.btn-transcribe-audio { background: #2196F3; }
+.btn-transcribe-audio:hover:not(:disabled) { background: #1976D2; }
 
 .history-panel { flex:1; display: flex; flex-direction: column; gap: 8px; }
 .history-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }

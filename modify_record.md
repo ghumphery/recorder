@@ -575,3 +575,20 @@
   - 已刪除 12 個檔案 + 2 個目錄（`ui/`、`backend/`）
   - `readme.md` 專案結構已更新
   - GitHub push 成功（`2fb62f7`）
+
+## [2026-06-23 12:17]
+- **version**: 1.9.2
+- **修改要求**：歷史記錄頁面重構 — 移除「📂 批次轉 txt」按鈕，歷史記錄頁面改為兩個子 Tab（📚 錄音記錄 + 🎵 音檔列表），錄音記錄每筆增加「🔄 重建」按鈕，音檔列表每筆有「🤖 辨識」按鈕。
+- **修改規劃**：
+  1. 控制列刪除「📂 批次轉 txt」按鈕
+  2. 後端 main.js 新增 `reco:listAudioFiles`（掃描 reco_data 中所有音檔）與 `reco:rebuild`（讀取 JSON → 找對應 WAV → runWhisper → 更新 JSON）IPC
+  3. preload.js 新增 `recoListAudioFiles`、`recoRebuild`；移除 `batchTranscribe`、`onBatchProgress`
+  4. 前端 App.vue 歷史記錄區塊改為子 Tab 切換（historySubTab），錄音記錄每筆加入「🔄 重建」按鈕，音檔列表顯示檔名/大小/日期 +「🤖 辨識」按鈕
+  5. 移除 batchBusy/batchProgress data、startBatchTranscribe 方法、onBatchProgress 監聽器
+  6. 版本號 1.9.1 → 1.9.2
+- **修改結果**：
+  - `frontend/electron/main.js`：新增 `reco:listAudioFiles` 與 `reco:rebuild` IPC handler
+  - `frontend/electron/preload.js`：新增 `recoListAudioFiles`、`recoRebuild`；移除 `batchTranscribe`、`onBatchProgress`
+  - `frontend/src/App.vue`：移除批次轉 txt 按鈕/方法/data/監聽器；歷史記錄區塊新增子 Tab 切換、重建按鈕、音檔列表
+  - `frontend/package.json`：版本號更新為 `1.9.2`
+  - 備份檔名: backup-202606231217.zip

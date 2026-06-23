@@ -489,6 +489,57 @@ ipcMain.handle('export:save', async (event, { format, results, filePath }) => {
   } catch (e) { return { success: false, error: e.message } }
 })
 
+// ── 音檔列表與重建 ──
+
+ipcMain.handle('reco:listAudioFiles', async () => {
+  try {
+    const dir = recoDataPath()
+    if (!fs.existsSync(dir)) return { success: true, files: [] }
+    const audioExts = ['.wav', '.mp3', '.opus', '.ogg', '.flac', '.m4a', '.webm']
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+    const files = entries
+      .filter(e => e.isFile() && audioExts.includes(path.extname(e.name).toLowerCase()))
+      .map(e => {
+        const stat = fs.statSync(path.join(dir, e.name))
+        return { name: e.name, size: stat.size, ext: path.extname(e.name).toLowerCase(), mtime: stat.mtime.toISOString() }
+      })
+    files.sort((a, b) => b.mtime.localeCompare(a.mtime))
+    return { success: true, files }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('reco:rebuild', async (event, { recordingId, modelSize, useGpu, gpuDevice }) => {
+  appLog('INFO', 'reco', `重建辨識: ${recordingId} (model=${modelSize})`)
+  try {
+    const metaPath = recoDataPath(`${recordingId}.json`)
+    if (!fs.existsSync(metaPath)) return { success: false, error: `找不到記錄: ${recordingId}` }
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+    // 找對應的 WAV 音檔
+    const dir = recoDataPath()
+    const wavName = meta.filename ? path.basename(meta.filename, path.extname(meta.filename)) + '.wav' : null
+    let audioPath = wavName ? path.join(dir, wavName) : null
+    if (!audioPath || !fs.existsSync(audioPath)) {
+      // 嘗試用 recordingId 找
+      audioPath = path.join(dir, `${recordingId}.wav`)
+      if (!fs.existsSync(audioPath)) {
+        // 掃描目錄找可能的 WAV
+        const files = fs.readdirSync(dir).filter(f => f.endsWith('.wav'))
+        if (files.length > 0) audioPath = path.join(dir, files[0])
+        else return { success: false, error: '找不到對應的音檔' }
+      }
+    }
+    const result = await runWhisper(audioPath, modelSize, useGpu, gpuDevice)
+    if (!result.success) return result
+    // 更新 JSON
+    meta.segments = result.segments
+    meta.fullText = result.segments.map(s => s.text).join(' ')
+    meta.modelSize = modelSize
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
+    appLog('INFO', 'reco', `重建完成: ${recordingId} (${result.segments.length} 句)`)
+    return { success: true, segments: result.segments }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
 // ── 批次轉 txt ──
 
 ipcMain.handle('batch:transcribe', async (event, { modelSize, useGpu, gpuDevice }) => {
