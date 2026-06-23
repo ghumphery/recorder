@@ -934,16 +934,20 @@ export default {
       const seg = this.transcriptionResults[idx]
       const audio = this.$refs.audioPlayer
       if (!audio) return
+      const onLoaded = () => {
+        audio.removeEventListener('loadedmetadata', onLoaded)
+        audio.currentTime = seg.start
+        audio.play().then(() => {
+          this.nowPlaying = true
+          this.playingSegmentIdx = idx
+        }).catch(e => {
+          console.warn('播放失敗:', e)
+          this.statusText = '❌ 播放失敗，音檔可能不支援此格式'
+          this.statusError = true
+        })
+      }
+      audio.addEventListener('loadedmetadata', onLoaded)
       audio.src = this.currentAudioUrl
-      audio.currentTime = seg.start
-      audio.play().then(() => {
-        this.nowPlaying = true
-        this.playingSegmentIdx = idx
-      }).catch(e => {
-        console.warn('播放失敗:', e)
-        this.statusText = '❌ 播放失敗，音檔可能不支援此格式'
-        this.statusError = true
-      })
     },
     onAudioTimeUpdate() {
       const audio = this.$refs.audioPlayer
@@ -1022,14 +1026,8 @@ export default {
       }
       await this.loadAudioUrl(item.audioPath)
       if (this.currentAudioUrl) {
-        // 先載入逐字稿
+        // 載入逐字稿並切換到逐字稿 tab，由使用者自行點擊句子播放
         await this.reviewRecording(item.id)
-        // 播放第一句
-        this.$nextTick(() => {
-          if (this.transcriptionResults.length > 0) {
-            this.playSegment(0)
-          }
-        })
       }
     },
   },

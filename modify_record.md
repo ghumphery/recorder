@@ -9,6 +9,21 @@
 - **修改結果**：...
 -->
 
+## [2026-06-23 15:13]
+- **version**: 1.10.2
+- **修改要求**：修正音檔播放相關 bug：1) 點擊句子播放時經常失敗或只播一小段；2) 從歷史記錄播放時總是自動從第 0 句開始，無法讓使用者選擇起始句子。
+- **修改規劃**：
+  1. `frontend/src/App.vue` 的 `playSegment(idx)`：將 `audio.currentTime = seg.start` 與 `audio.play()` 移到 `loadedmetadata` 事件回調中執行，避免在音檔中繼資料尚未載入時操作 currentTime 與播放。
+  2. `frontend/src/App.vue` 的 `playRecordingAudio(item)`：移除 `this.$nextTick(() => { this.playSegment(0) })` 自動播放邏輯，僅呼叫 `loadAudioUrl()` 載入音檔 URL，再呼叫 `reviewRecording()` 載入逐字稿並切換到逐字稿 tab。
+  3. 版本號 `1.10.1` → `1.10.2`（patch 修復 bug）。
+  4. 更新 `readme.md`、`Product_Design_Guidelines.md`、`modify_record.md`。
+- **修改結果**：
+  - `frontend/src/App.vue`：`playSegment()` 已改為在 `loadedmetadata` 回調中設定 currentTime 並播放；`playRecordingAudio()` 已移除自動播放，僅載入音檔與逐字稿。
+  - `frontend/package.json`：版本號更新為 `1.10.2`。
+  - Vite build 成功（11 modules, ~736ms）。
+  - electron-builder 產出 `frontend/dist-electron/Recorder-1.10.2-portable.exe`。
+  - 完成原始碼備份: backup-202606231513.zip
+
 ## [2026-06-16 00:57]
 - **version**: 1.0.0
 - **修改要求**：初始版本 — 建立 AI 會議記錄程式，支援離線錄音轉文字、說話者標註、單檔限制防過大。

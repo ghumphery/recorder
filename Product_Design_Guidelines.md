@@ -1,6 +1,6 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.4.0
+> **版本**: 1.4.1
 > **最後更新日期**: 2026-06-23
 
 ## 產品核心願景與哲學 (Product Vision & Philosophy)
@@ -133,13 +133,14 @@
 - **三個功能按鈕**：✨語句優化 / 🌐翻譯（含目標語言選擇） / 📋重點整理，僅在有辨識結果時顯示
 
 ### 5. 音檔播放與逐句點擊播放 (`frontend/src/App.vue` + `frontend/electron/main.js`)
-- **功能**：支援逐字稿句子點擊播放對應時段的原始錄音內容
+- **功能**：支援逐字稿句子點擊播放對應時段的原始錄音內容；從歷史記錄載入音檔後不自動播放，由使用者自行選擇起始句子
 - **實作方式**：
   - Electron 註冊自訂 protocol `reco-file://`，安全地將本機音檔提供給 renderer 進程
   - IPC `reco:getAudioUrl` 接收音檔路徑，回傳 `reco-file://` URL
-  - 前端隱藏 `<audio>` 元素，點擊句子時設定 `audio.currentTime = seg.start` 並播放
+  - 前端隱藏 `<audio>` 元素；點擊句子時先設定 `audio.src`，待 `loadedmetadata` 事件觸發後再設定 `audio.currentTime = seg.start` 並呼叫 `audio.play()`，確保音檔中繼資料已載入
   - `timeupdate` 事件監聽播放進度，自動跳至下一句（`currentTime >= seg.end` 時）
   - 播放中的句子高亮顯示（`.segment-playing` 藍色背景 + ▶️ 指示器）
+  - `playRecordingAudio()` 從歷史記錄載入音檔 URL 與逐字稿後，切換到逐字稿 tab，不再自動呼叫 `playSegment(0)`
 - **安全限制**：自訂 protocol 僅允許讀取 `recoDataPath()` 下的檔案，防止路徑遍歷攻擊
 
 ### 6. 刪除管理 (`frontend/electron/main.js` + `frontend/src/App.vue`)

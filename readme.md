@@ -37,14 +37,14 @@ npm run electron:dev
 
 ### 下載打包版
 
-從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.10.1-portable.exe`，直接執行即可。
+從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.10.2-portable.exe`，直接執行即可。
 
 ### 自行打包
 
 ```bash
 cd frontend
 npm run electron:build
-# 產出：frontend/dist-electron/Recorder-1.10.1-portable.exe
+# 產出：frontend/dist-electron/Recorder-1.10.2-portable.exe
 ```
 
 ### 直接運行打包版
@@ -87,6 +87,7 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 版本歷史
 
+- **v1.10.2** — 修正音檔播放相關 bug：1) 點擊句子播放時，改在音檔 `loadedmetadata` 完成後才設定 `currentTime` 並播放，解決播放失敗或只播一小段的問題；2) 從歷史記錄播放時不再自動從第 0 句開始，改為僅載入音檔與逐字稿，讓使用者自行選擇起始句子
 - **v1.10.0** — 新增音檔播放功能（逐字稿句子點擊播放對應時段）、刪除管理（錄音記錄/音檔）、錄音記錄標示音檔存在狀態
 - **v1.8.9** — 修正長音訊辨識時 whisper 模型產生 hallucination 重複文字的 bug：加入 whisper-cli 反幻覺參數（`-ml 60`/`-nth 0.7`/`-wt 0.03`/`-bs 1`/`--suppress-nst`/`--no-fallback`）與 Python 端 `_deduplicate_repeats()` 後處理去重邏輯
 - **v1.8.4** — 修正「混音 + 分段錄音」模式下語音轉文字只進行第一段的 bug：將分段索引作為參數傳入 `transcribeBlob`，避免非同步競態條件
