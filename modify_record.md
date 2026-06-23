@@ -685,3 +685,18 @@
   - electron-builder 產出 `frontend/dist-electron/Recorder-1.10.3-portable.exe`（127,478,541 bytes）
 - 完成原始碼備份: backup-202606231548.zip
 
+## [2026-06-23 16:25]
+- **version**: 1.10.4
+- **修改要求**：修正特定句子播放時，第一句正常，但第二句之後每句開頭會重複播放前幾個字的問題。
+- **修改規劃**：
+  1. 根因分析：`playSegment()` 每次被呼叫時都重新設定 `audio.src = this.currentAudioUrl`，即使音檔早已載入且正在播放。瀏覽器偵測到 `src` 變更（即使 URL 相同）會重新載入音檔元素，短暫從頭播放，直到 `loadedmetadata` 事件觸發後才 seek 到正確位置。
+  2. 修復方案：在 `playSegment()` 中檢查 `audio.readyState >= 1`（中繼資料已載入），若已載入則直接 seek + play，不重新設定 `src`，避免重載造成的開頭重複。
+  3. 版本號 `1.10.3` → `1.10.4`（patch 修復 bug）。
+- **修改結果**：
+  - `frontend/src/App.vue`：`playSegment()` 已改為先檢查 `readyState`，已載入時直接 seek，不重設 `src`
+  - `frontend/package.json`：版本號更新為 `1.10.4`
+  - Vite build 成功（11 modules, ~738ms）
+  - electron-builder 產出 `frontend/dist-electron/Recorder-1.10.4-portable.exe`（127,477,709 bytes）
+- 完成原始碼備份: backup-202606231629.zip
+- Git commit `591bf3c..` 並 push 至 GitHub origin master
+

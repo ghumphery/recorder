@@ -945,8 +945,7 @@ export default {
       const seg = this.transcriptionResults[idx]
       const audio = this.$refs.audioPlayer
       if (!audio) return
-      const onLoaded = () => {
-        audio.removeEventListener('loadedmetadata', onLoaded)
+      const seekAndPlay = () => {
         audio.currentTime = seg.start
         audio.play().then(() => {
           this.nowPlaying = true
@@ -956,6 +955,16 @@ export default {
           this.statusText = '❌ 播放失敗，音檔可能不支援此格式'
           this.statusError = true
         })
+      }
+      // 音檔已載入中繼資料 → 直接 seek，不重設 src（避免重載造成開頭重複）
+      if (audio.readyState >= 1) {
+        seekAndPlay()
+        return
+      }
+      // 首次載入：設定 src 並等待 loadedmetadata
+      const onLoaded = () => {
+        audio.removeEventListener('loadedmetadata', onLoaded)
+        seekAndPlay()
       }
       audio.addEventListener('loadedmetadata', onLoaded)
       audio.src = this.currentAudioUrl
