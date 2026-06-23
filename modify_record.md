@@ -592,3 +592,33 @@
   - `frontend/src/App.vue`：移除批次轉 txt 按鈕/方法/data/監聽器；歷史記錄區塊新增子 Tab 切換、重建按鈕、音檔列表
   - `frontend/package.json`：版本號更新為 `1.9.2`
   - 備份檔名: backup-202606231217.zip
+
+## [2026-06-23 12:17] (hotfix)
+- **version**: 1.9.2
+- **修改要求**：修正音檔列表辨識傳完整路徑而非僅檔名 — `transcribeAudioFile()` 傳入 `f.name`（僅檔名）給 `import:audio` IPC，後端需要完整路徑才能 stat 檔案。
+- **修改規劃**：
+  1. `reco:listAudioFiles` 回傳的每個 file 物件新增 `path: path.join(dir, e.name)`
+  2. 前端 template 中 `transcribeAudioFile(f.name)` → `transcribeAudioFile(f.path)`
+- **修改結果**：
+  - `frontend/electron/main.js`：`reco:listAudioFiles` 回傳新增 `path` 欄位
+  - `frontend/src/App.vue`：音檔列表按鈕傳入 `f.path` 而非 `f.name`
+  - Git commit `508dde3`
+
+## [2026-06-23 13:08]
+- **version**: 1.9.3
+- **修改要求**：1) 錄音記錄移除重建，增加 Review/語句優化/翻譯/重點整理功能 2) 音檔列表提供全部辨識，僅針對沒有 metadata 檔案的音檔
+- **修改規劃**：
+  1. 後端 main.js 新增 `reco:loadMeta`（載入完整 JSON）、`reco:llmProcess`（LLM 處理並存回 JSON）、`reco:batchTranscribeNew`（批次辨識無 metadata 的新音檔）
+  2. preload.js 新增對應 API；移除 `recoRebuild`
+  3. 前端錄音記錄列表移除「🔄 重建」按鈕，新增「📖 Review」「✨ 優化」「🌐 翻譯」「📋 摘要」四個按鈕
+  4. 前端音檔列表 header 新增「🤖 全部辨識」按鈕，僅辨識無對應 JSON 的音檔
+  5. 版本號 1.9.2 → 1.9.3
+- **修改結果**：
+  - `frontend/electron/main.js`：新增 `reco:loadMeta`、`reco:llmProcess`、`reco:batchTranscribeNew` IPC handler
+  - `frontend/electron/preload.js`：新增 `recoLoadMeta`、`recoLlmProcess`、`recoBatchTranscribeNew`、`onBatchNewProgress`；移除 `recoRebuild`
+  - `frontend/src/App.vue`：錄音記錄移除重建按鈕，新增 Review/優化/翻譯/摘要按鈕；音檔列表新增全部辨識按鈕
+  - `frontend/package.json`：版本號更新為 `1.9.3`
+  - Vite build 成功（11 modules, 623ms）
+  - electron-builder 產出 `Recoder-1.9.3-portable.exe`（127 MB）
+  - Git commit `601eb85`
+  - 備份檔名: backup-202606231308.zip

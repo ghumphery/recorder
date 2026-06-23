@@ -35,14 +35,14 @@ npm run electron:dev
 
 ### 下載打包版
 
-從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recoder-1.8.10-portable.exe`，直接執行即可。
+從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recoder-1.9.3-portable.exe`，直接執行即可。
 
 ### 自行打包
 
 ```bash
 cd frontend
 npm run electron:build
-# 產出：frontend/dist-electron/Recoder-1.8.10-portable.exe
+# 產出：frontend/dist-electron/Recoder-1.9.3-portable.exe
 ```
 
 ### 直接運行打包版
