@@ -23,6 +23,13 @@ dist/
 dist-electron/
 win-unpacked/
 
+# 點開頭的目錄與檔案
+.*
+!.gitignore
+
+# 資安檢查清單（僅供開發參考）
+security.md
+
 # IDE
 .vscode/
 
