@@ -1,6 +1,6 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.5.3
+> **版本**: 1.5.4
 > **最後更新日期**: 2026-06-24
 
 ## 產品核心願景與哲學 (Product Vision & Philosophy)

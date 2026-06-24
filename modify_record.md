@@ -891,3 +891,15 @@
   - 因 Windows Defender 鎖定 `dist-electron-build`，改用 `dist-electron-build2` 輸出目錄
 - 完成原始碼備份: backup-202606241044.zip
 
+## [2026-06-24 11:35]
+- **version**: 1.13.2
+- **修改要求**：修正多語言重構造成的介面 bug — 設定中的 AI 供應商選單與 whisper 模型選單空白。
+- **修改規劃**：
+  1. 根因分析：i18n 多語言重構時，`App.vue` 的 `mounted()` 生命週期鉤子被意外移除，導致 `fetchModels()`、`fetchLlmProviders()`、`loadSettings()` 三個初始化方法從未被呼叫
+  2. 修復方案：在 `computed` 區塊與 `methods` 區塊之間補回 `async mounted()` 鉤子
+  3. 版本號 1.13.1 → 1.13.2（patch 修復 bug）
+- **修改結果**：
+  - `frontend/src/App.vue`：補回 `async mounted()` 生命週期鉤子，依序呼叫 `fetchModels()`、`fetchLlmProviders()`、`loadSettings()`
+  - `frontend/package.json`：版本號更新為 1.13.2
+- 完成原始碼備份: backup-202606241135.zip
+

@@ -438,6 +438,11 @@ export default {
       return parts.map((name, i) => ({ name, path: parts.slice(0, i + 1).join('/') }))
     },
   },
+  async mounted() {
+    await this.fetchModels()
+    await this.fetchLlmProviders()
+    await this.loadSettings()
+  },
   methods: {
     $t(key, params) {
       let text = t(key, this.uiLanguage)

@@ -96,6 +96,7 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 版本歷史
 
+- **v1.13.2** — 修正多語言重構造成的介面 bug：`mounted()` 生命週期鉤子被意外移除，導致設定中的 AI 供應商選單與 whisper 模型選單空白；補回 `mounted()` 依序呼叫 `fetchModels()`、`fetchLlmProviders()`、`loadSettings()`
 - **v1.13.1** — 編譯產出最新版 portable exe（127 MB），修正 Windows Defender 鎖定 `app.asar` 的編譯問題
 - **v1.13.0** — 多語言 UI 支援（繁體中文/English/日本語）：i18n 語言檔（zh-TW.js/en.js/ja.js），首次啟動顯示語言選擇對話框，設定面板可切換介面語言；多語言文件（readme_en.md、readme_ja.md、modify_record_en.md、modify_record_ja.md）；更新 workrule.md 加入多語言文件維護規範
 - **v1.12.2** — 修正「移動所選」對話框無法顯示子目錄的問題：`loadAllFolders()` 從未被呼叫導致 `allFolders` 永遠為空；新增後端 `reco:listAllFolders` IPC 遞迴掃描所有子目錄；點擊「移動所選」時先載入 folder 列表再顯示彈窗
