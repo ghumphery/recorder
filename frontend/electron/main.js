@@ -831,6 +831,30 @@ ipcMain.handle('reco:renameFolder', async (event, { folderPath, newName }) => {
   } catch (e) { return { success: false, error: e.message } }
 })
 
+ipcMain.handle('reco:listAllFolders', async () => {
+  appLog('INFO', 'reco', '列出所有子目錄')
+  try {
+    const dir = recoDataPath()
+    if (!fs.existsSync(dir)) return { success: true, folders: [] }
+    const folders = []
+    function scanDirs(currentPath, relativePath) {
+      try {
+        const entries = fs.readdirSync(currentPath, { withFileTypes: true })
+        for (const e of entries) {
+          if (e.isDirectory()) {
+            const subRel = relativePath ? `${relativePath}/${e.name}` : e.name
+            folders.push(subRel)
+            scanDirs(path.join(currentPath, e.name), subRel)
+          }
+        }
+      } catch {}
+    }
+    scanDirs(dir, '')
+    folders.sort()
+    return { success: true, folders }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
 ipcMain.handle('reco:moveRecordings', async (event, { recordingIds, targetFolder }) => {
   appLog('INFO', 'reco', `移動 ${recordingIds.length} 筆記錄到: ${targetFolder || '根目錄'}`)
   try {

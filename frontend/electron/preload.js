@@ -52,4 +52,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   recoDeleteFolder: (p) => ipcRenderer.invoke('reco:deleteFolder', p),
   recoRenameFolder: (p) => ipcRenderer.invoke('reco:renameFolder', p),
   recoMoveRecordings: (p) => ipcRenderer.invoke('reco:moveRecordings', p),
+  recoListAllFolders: () => ipcRenderer.invoke('reco:listAllFolders'),
 })

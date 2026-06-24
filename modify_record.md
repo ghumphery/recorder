@@ -818,3 +818,40 @@
    - `readme.md` 版本歷史新增 v1.12.0 說明，版本號更新為 1.12.0
 - Git commit `309cb5d` 並 push 至 GitHub origin master
 
+## [2026-06-24 09:46]
+- **version**: 1.12.1
+- **修改要求**：編譯產出最新版 portable exe。
+- **修改規劃**：
+  1. 遞增版本號 1.12.0 → 1.12.1（patch）
+  2. 執行 `npm run electron:build` 編譯 portable exe
+  3. 更新 modify_record.md、readme.md、Product_Design_Guidelines.md
+  4. 備份原始碼
+- **修改結果**：
+  - `frontend/package.json`：版本號更新為 `1.12.1`
+  - Vite build 成功（11 modules, ~683ms）
+  - electron-builder 產出 `frontend/dist-electron-build/Recorder-1.12.1-portable.exe`（127,483,206 bytes）
+  - 編譯過程中遇到 Windows Defender 鎖定 `app.asar` 問題，透過切換輸出路徑（`dist-electron-build2`）繞過
+  - `readme.md` 版本號更新為 1.12.1
+  - `Product_Design_Guidelines.md` 版本更新至 1.5.1
+- 完成原始碼備份: backup-202606240946.zip
+
+## [2026-06-24 10:03]
+- **version**: 1.12.2
+- **修改要求**：修正「移動所選」對話框無法顯示子目錄的問題 — 點擊「📁 移動所選」時，彈窗只顯示「📁 根目錄」，無法選取在根目錄下建立的子目錄。
+- **修改規劃**：
+  1. 根因分析：`loadAllFolders()` 方法從未被呼叫，導致 `allFolders` 永遠是空陣列 `[]`
+  2. 修復方案：
+     - 後端 `electron/main.js`：新增 `reco:listAllFolders` IPC handler，使用遞迴掃描一次回傳所有子目錄
+     - `preload.js`：新增 `recoListAllFolders` bridge
+     - `App.vue`：`loadAllFolders()` 改為呼叫後端 `recoListAllFolders`（取代前端多次 IPC 遞迴）
+     - `App.vue`：新增 `openMoveDialog()` 方法，點擊「移動所選」時先呼叫 `loadAllFolders()` 再顯示彈窗
+  3. 版本號 1.12.1 → 1.12.2（patch 修復 bug）
+- **修改結果**：
+  - `frontend/electron/main.js`：新增 `reco:listAllFolders` IPC handler（遞迴掃描所有子目錄）
+  - `frontend/electron/preload.js`：新增 `recoListAllFolders` bridge
+  - `frontend/src/App.vue`：`loadAllFolders()` 改為呼叫後端 API；新增 `openMoveDialog()` 方法；模板按鈕改為 `@click="openMoveDialog"`
+  - `frontend/package.json`：版本號更新為 `1.12.2`
+  - `readme.md` 版本號更新為 1.12.2
+  - `Product_Design_Guidelines.md` 版本更新至 1.5.2
+- 完成原始碼備份: backup-202606241003.zip
+

@@ -37,14 +37,14 @@ npm run electron:dev
 
 ### 下載打包版
 
-從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.12.0-portable.exe`，直接執行即可。
+從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.12.2-portable.exe`，直接執行即可。
 
 ### 自行打包
 
 ```bash
 cd frontend
 npm run electron:build
-# 產出：frontend/dist-electron/Recorder-1.12.0-portable.exe
+# 產出：frontend/dist-electron-build/Recorder-1.12.2-portable.exe
 ```
 
 ### 直接運行打包版
@@ -94,6 +94,8 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 版本歷史
 
+- **v1.12.2** — 修正「移動所選」對話框無法顯示子目錄的問題：`loadAllFolders()` 從未被呼叫導致 `allFolders` 永遠為空；新增後端 `reco:listAllFolders` IPC 遞迴掃描所有子目錄；點擊「移動所選」時先載入 folder 列表再顯示彈窗
+- **v1.12.1** — 編譯產出最新版 portable exe（127 MB），修正 Windows Defender 鎖定 `app.asar` 的編譯問題
 - **v1.12.0** — 樹狀目錄管理：錄音記錄改為樹狀檢視（folder create/delete/rename），支援多選批次移動/刪除；移除錄音記錄列表的 LLM 按鈕（優化/翻譯/摘要）；修復 label 儲存（遞迴掃描子目錄）
 - **v1.11.0** — 新增 Label 管理功能：錄音記錄可新增/修改/刪除標籤（🏷️ 按鈕），支援依 label 篩選記錄列表；搜尋結果顯示 labels 並支援「📖 跳轉」到真實錄音記錄的相對句子位置；AI 查詢 context 加入 labels 資訊
 - **v1.10.7** — 修正 whisper 時間戳不精確導致播放重複：移除自動跳句機制，改為連續播放僅更新高亮句子。根本原因是 whisper 的 `seg.end` 可能比實際語音結束時間早，自動跳句會導致句子結尾被截斷並重複播放下句開頭

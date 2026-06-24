@@ -198,7 +198,7 @@
             <button v-if="currentFolder" class="btn btn-small btn-folder-rename" @click="showRenameFolderDialog = true">✏️ 重新命名</button>
             <button v-if="currentFolder" class="btn btn-small btn-folder-delete" @click="deleteCurrentFolder">🗑️ 刪除目錄</button>
             <span class="sep"></span>
-            <button v-if="selectedRecordings.size > 0" class="btn btn-small btn-move" @click="showMoveDialog = true">📁 移動所選 ({{ selectedRecordings.size }})</button>
+            <button v-if="selectedRecordings.size > 0" class="btn btn-small btn-move" @click="openMoveDialog">📁 移動所選 ({{ selectedRecordings.size }})</button>
             <button v-if="selectedRecordings.size > 0" class="btn btn-small btn-batch-delete" @click="batchDeleteSelected">🗑️ 批次刪除 ({{ selectedRecordings.size }})</button>
             <button v-if="historyList.length > 0" class="btn btn-small" @click="selectAll" style="background:#888">☑️ 全選</button>
             <button v-if="selectedRecordings.size > 0" class="btn btn-small" @click="deselectAll" style="background:#888">⬜ 取消全選</button>
@@ -763,17 +763,13 @@ export default {
     async loadAllFolders() {
       if (!window.electronAPI) return
       try {
-        const r = await window.electronAPI.recoList({})
-        if (r.success) {
-          const folders = new Set(r.folders || [])
-          // 遞迴取得所有子目錄
-          for (const f of r.folders || []) {
-            const sub = await window.electronAPI.recoList({ folder: f })
-            if (sub.success && sub.folders) { for (const sf of sub.folders) folders.add(f + '/' + sf) }
-          }
-          this.allFolders = Array.from(folders).sort()
-        }
+        const r = await window.electronAPI.recoListAllFolders()
+        if (r.success) { this.allFolders = r.folders || [] }
       } catch (e) {}
+    },
+    async openMoveDialog() {
+      await this.loadAllFolders()
+      this.showMoveDialog = true
     },
     navigateToFolder(folderPath) {
       this.currentFolder = folderPath
@@ -863,7 +859,7 @@ export default {
     async saveLabels() {
       if (!window.electronAPI) return
       try {
-        const r = await window.electronAPI.recoUpdateLabels({ recordingId: this.editingLabelId, labels: this.editingLabels })
+        const r = await window.electronAPI.recoUpdateLabels({ recordingId: this.editingLabelId, labels: [...this.editingLabels] })
         if (r.success) { this.statusText = '✅ 標籤已更新'; this.closeLabelEditor(); await this.loadHistory(); await this.loadAllLabels() }
         else { this.statusText = `❌ 標籤更新失敗: ${r.error}`; this.statusError = true }
       } catch (e) { this.statusText = `❌ 標籤更新異常: ${e.message}`; this.statusError = true }
