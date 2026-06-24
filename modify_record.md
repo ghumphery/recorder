@@ -901,5 +901,6 @@
 - **修改結果**：
   - `frontend/src/App.vue`：補回 `async mounted()` 生命週期鉤子，依序呼叫 `fetchModels()`、`fetchLlmProviders()`、`loadSettings()`
   - `frontend/package.json`：版本號更新為 1.13.2
+  - 編譯輸出：`frontend/dist-electron-build2/Recorder-1.13.2-portable.exe` (127 MB)
 - 完成原始碼備份: backup-202606241135.zip
 
