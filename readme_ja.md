@@ -39,14 +39,14 @@ npm run electron:dev
 
 ### リリース版のダウンロード
 
-[GitHub Releases](https://github.com/ghumphery/recorder/releases) から最新の `Recorder-1.13.0-portable.exe` をダウンロード。
+[GitHub Releases](https://github.com/ghumphery/recorder/releases) から最新の `Recorder-1.13.2-portable.exe` をダウンロード。
 
 ### ソースからビルド
 
 ```bash
 cd frontend
 npm run electron:build
-# 出力: frontend/dist-electron-build/Recorder-1.13.0-portable.exe
+# 出力: frontend/dist-electron-build/Recorder-1.13.2-portable.exe
 ```
 
 ### パッケージ版の実行
@@ -96,6 +96,8 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 バージョン履歴
 
+- **v1.13.2** — i18n リファクタリングによる UI バグを修正：`mounted()` ライフサイクルフックが誤って削除され、AI プロバイダーと whisper モデルのドロップダウンが空になる問題を修正；`mounted()` を復元して `fetchModels()`、`fetchLlmProviders()`、`loadSettings()` を呼び出す
+- **v1.13.1** — 最新 portable exe をビルド（127 MB）、Windows Defender の `app.asar` ロック問題を回避
 - **v1.13.0** — 多言語 UI 対応（zh-TW/en/ja）：i18n 言語ファイル、初回起動時と設定パネルでの言語選択；多言語ドキュメント（readme_en.md, readme_ja.md, modify_record_en.md, modify_record_ja.md）
 - **v1.12.2** — 移動ダイアログでサブフォルダが表示されない問題を修正
 - **v1.12.1** — 最新 portable exe をビルド（127 MB）

@@ -39,14 +39,14 @@ npm run electron:dev
 
 ### Download Release
 
-Download the latest `Recorder-1.13.0-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
+Download the latest `Recorder-1.13.2-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
 
 ### Build from Source
 
 ```bash
 cd frontend
 npm run electron:build
-# Output: frontend/dist-electron-build/Recorder-1.13.0-portable.exe
+# Output: frontend/dist-electron-build/Recorder-1.13.2-portable.exe
 ```
 
 ### Run Packaged Version
@@ -96,6 +96,8 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 Version History
 
+- **v1.13.2** — Fix UI bug caused by i18n refactoring: `mounted()` lifecycle hook was accidentally removed, causing AI provider and whisper model dropdowns to be empty; restored `mounted()` to call `fetchModels()`, `fetchLlmProviders()`, `loadSettings()`
+- **v1.13.1** — Build latest portable exe (127 MB), fix Windows Defender `app.asar` lock issue
 - **v1.13.0** — Multi-language UI support (zh-TW/en/ja): i18n language files, language selector on first launch and in settings panel; multi-language documentation (readme_en.md, readme_ja.md, modify_record_en.md, modify_record_ja.md)
 - **v1.12.2** — Fix move dialog not showing subfolders: `loadAllFolders()` was never called; add `reco:listAllFolders` IPC for recursive folder scanning
 - **v1.12.1** — Build latest portable exe (127 MB), fix Windows Defender `app.asar` lock issue
