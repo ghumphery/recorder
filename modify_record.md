@@ -878,3 +878,16 @@
   - `frontend/package.json` — 版本號更新為 1.13.0
 - 完成原始碼備份: backup-202606241025.zip
 
+## [2026-06-24 10:44]
+- **version**: 1.13.1
+- **修改要求**：編譯專案，產出 portable exe。
+- **修改規劃**：
+  1. 遞增版本號 1.13.0 → 1.13.1
+  2. 執行 electron-builder 編譯
+  3. 更新文件與備份
+- **修改結果**：
+  - `frontend/package.json`：版本號更新為 1.13.1
+  - 編譯輸出：`frontend/dist-electron-build2/Recorder-1.13.1-portable.exe` (127 MB)
+  - 因 Windows Defender 鎖定 `dist-electron-build`，改用 `dist-electron-build2` 輸出目錄
+- 完成原始碼備份: backup-202606241044.zip
+

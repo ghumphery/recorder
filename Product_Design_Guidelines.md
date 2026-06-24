@@ -1,6 +1,6 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.5.2
+> **版本**: 1.5.3
 > **最後更新日期**: 2026-06-24
 
 ## 產品核心願景與哲學 (Product Vision & Philosophy)
@@ -75,6 +75,7 @@
 - **編譯工具**：electron-builder 25.1.8 (portable 模式)
 - **編譯命令**：`cd frontend && npm run electron:build`（= `vite build && electron-builder --win portable`）
 - **編譯輸出**：`frontend/dist-electron/Recorder-{version}-portable.exe` (含 Electron + Vue + whisper-cli + ffmpeg)
+- **Windows Defender 注意**：若編譯時遇到 `app.asar` 被鎖定，可將 `directories.output` 改為 `dist-electron-build2` 繞過
 - **開發模式**：`cd frontend && npm run electron:dev`（啟動 Vite dev server + Electron）
 - **排除項目**：`files` 中排除 `node_modules/electron`，避免干擾 Electron 內建模組
 
@@ -229,6 +230,6 @@
 - **進度回饋**：模型下載和辨識期間顯示進度條
 - **錄音授權**：首次點擊錄音時瀏覽器自動請求麥克風/畫面權限，拒絕時顯示明確錯誤訊息
 - **視窗標題**：格式為 `Recoder v{版本號} — AI 會議記錄`，動態讀取 `frontend/package.json` 的 `version` 欄位
-- **介面語言**：繁體中文
+- **介面語言**：支援繁體中文 (zh-TW)、English (en)、日本語 (ja)，可在設定面板切換或首次啟動時選擇
 - **色彩**：麥克風錄音紅色 (#e53935)、混音錄音橙色 (#FF6F00)、匯入灰色 (#607D8B)、辨識藍色 (#2196F3)、匯出綠色 (#4CAF50)
 - **Electron 視窗**：最小尺寸 720x500，預設 960x720
