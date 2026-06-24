@@ -46,7 +46,7 @@ function appLog(level, module, msg) {
   } catch (e) {}
 }
 
-// ffmpeg 序列化佇列 — 確保同一時間只有一個 ffmpeg 進程在啟動
+// ffmpeg 序列化佇列
 let ffmpegQueue = Promise.resolve()
 
 function convertAudio(inputPath, outputPath) {
@@ -57,7 +57,6 @@ function convertAudio(inputPath, outputPath) {
     const out = outputPath || path.join(os.tmpdir(), `recoder_${Date.now()}_converted.wav`)
     const args = ['-y', '-i', inputPath, '-ar', '16000', '-ac', '1', '-sample_fmt', 's16', out]
     appLog('INFO', 'ffmpeg', `轉換開始: ${inputPath} → ${out}`)
-    // 透過佇列序列化，避免並行 spawn 造成 ENOENT
     ffmpegQueue = ffmpegQueue.then(() => {
       return new Promise((resolveSpawn, rejectSpawn) => {
         const doSpawn = (attempt) => {
@@ -260,6 +259,31 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
   })
 }
 
+// ── 安全檢查輔助函式 ──
+
+function isPathSafe(targetPath) {
+  const recoDir = path.resolve(recoDataPath())
+  const resolved = path.resolve(targetPath)
+  return resolved.startsWith(recoDir)
+}
+
+// ── 遞迴掃描 JSON 檔案（支援子目錄） ──
+
+function scanJsonFiles(dir) {
+  const results = []
+  if (!fs.existsSync(dir)) return results
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+  for (const e of entries) {
+    const fullPath = path.join(dir, e.name)
+    if (e.isDirectory()) {
+      results.push(...scanJsonFiles(fullPath))
+    } else if (e.isFile() && e.name.endsWith('.json')) {
+      results.push(fullPath)
+    }
+  }
+  return results
+}
+
 // ── IPC Handler ──
 
 ipcMain.handle('get:version', () => app.getVersion())
@@ -389,41 +413,45 @@ ipcMain.handle('transcribe:segment', async (event, { audioPath, modelSize, useGp
   } catch (e) { return { success: false, error: e.message } }
 })
 
-// ── 錄音歷史與全文檢索 ──
+// ── 錄音歷史與全文檢索（支援樹狀目錄） ──
 
-ipcMain.handle('reco:saveMeta', async (event, { recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, llmResults, audioPath, labels }) => {
+ipcMain.handle('reco:saveMeta', async (event, { recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, llmResults, audioPath, labels, folder }) => {
   appLog('INFO', 'reco', `儲存 metadata: ${recordingId}`)
   try {
     const fullText = segments.map(s => s.text).join(' ')
     const meta = { id: recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, fullText, llmResults: llmResults || {}, audioPath: audioPath || '', labels: labels || [] }
-    const metaPath = recoDataPath(`${recordingId}.json`)
-    fs.mkdirSync(path.dirname(metaPath), { recursive: true })
+    const baseDir = folder ? recoDataPath(folder) : recoDataPath()
+    fs.mkdirSync(baseDir, { recursive: true })
+    const metaPath = path.join(baseDir, `${recordingId}.json`)
     fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
     return { success: true }
   } catch (e) { return { success: false, error: e.message } }
 })
 
-ipcMain.handle('reco:list', async (event, { labelFilter } = {}) => {
+ipcMain.handle('reco:list', async (event, { labelFilter, folder } = {}) => {
   try {
-    const dir = recoDataPath()
-    if (!fs.existsSync(dir)) return { success: true, list: [] }
-    const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'))
-    let list = files.map(f => {
-      try {
-        const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'))
-        const audioPath = data.audioPath || ''
-        const hasAudio = audioPath ? fs.existsSync(audioPath) : false
-        const labels = data.labels || []
-        return { id: data.id, filename: data.filename, recordingMode: data.recordingMode, recordedAt: data.recordedAt, duration: data.duration, modelSize: data.modelSize, segmentCount: data.segments?.length || 0, hasAudio, audioPath, labels }
-      } catch { return null }
-    }).filter(Boolean)
-    // 依 label 篩選
+    const baseDir = folder ? recoDataPath(folder) : recoDataPath()
+    if (!fs.existsSync(baseDir)) return { success: true, folders: [], recordings: [] }
+    const entries = fs.readdirSync(baseDir, { withFileTypes: true })
+    const folders = entries.filter(e => e.isDirectory()).map(e => e.name).sort()
+    const recordings = entries
+      .filter(e => e.isFile() && e.name.endsWith('.json'))
+      .map(f => {
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(baseDir, f.name), 'utf-8'))
+          const audioPath = data.audioPath || ''
+          const hasAudio = audioPath ? fs.existsSync(audioPath) : false
+          const labels = data.labels || []
+          return { id: data.id, filename: data.filename, recordingMode: data.recordingMode, recordedAt: data.recordedAt, duration: data.duration, modelSize: data.modelSize, segmentCount: data.segments?.length || 0, hasAudio, audioPath, labels, folder: folder || '' }
+        } catch { return null }
+      }).filter(Boolean)
+    let filtered = recordings
     if (labelFilter && labelFilter.trim()) {
       const lf = labelFilter.trim().toLowerCase()
-      list = list.filter(item => item.labels.some(l => l.toLowerCase() === lf))
+      filtered = filtered.filter(item => item.labels.some(l => l.toLowerCase() === lf))
     }
-    list.sort((a, b) => (b.recordedAt || '').localeCompare(a.recordedAt || ''))
-    return { success: true, list }
+    filtered.sort((a, b) => (b.recordedAt || '').localeCompare(a.recordedAt || ''))
+    return { success: true, folders, recordings: filtered }
   } catch (e) { return { success: false, error: e.message } }
 })
 
@@ -432,16 +460,14 @@ ipcMain.handle('reco:search', async (event, { keyword }) => {
   try {
     const dir = recoDataPath()
     if (!fs.existsSync(dir)) return { success: true, results: [] }
-    const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'))
+    const files = scanJsonFiles(dir)
     const results = []
-    for (const f of files) {
+    for (const metaPath of files) {
       try {
-        const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'))
+        const data = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
         const lowerKw = keyword.toLowerCase()
         const labels = data.labels || []
-        // 搜尋 label（若 keyword 匹配任一 label，回傳該錄音的所有 segment）
         const labelMatch = labels.some(l => l.toLowerCase().includes(lowerKw))
-        // 搜尋原始逐字稿
         const lowerFull = data.fullText.toLowerCase()
         if (lowerFull.includes(lowerKw) || labelMatch) {
           for (const seg of data.segments) {
@@ -450,7 +476,6 @@ ipcMain.handle('reco:search', async (event, { keyword }) => {
             }
           }
         }
-        // 搜尋 LLM 結果（優化、翻譯、重點整理）
         if (data.llmResults) {
           for (const [type, text] of Object.entries(data.llmResults)) {
             if (text && text.toLowerCase().includes(lowerKw)) {
@@ -470,11 +495,11 @@ ipcMain.handle('reco:aiQuery', async (event, { provider, apiKey, model, question
   try {
     const dir = recoDataPath()
     if (!fs.existsSync(dir)) return { success: true, result: '尚無任何錄音記錄。' }
-    const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'))
+    const files = scanJsonFiles(dir)
     let context = ''
-    for (const f of files) {
+    for (const metaPath of files) {
       try {
-        const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'))
+        const data = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
         const labels = data.labels || []
         const labelStr = labels.length > 0 ? ` (標籤: ${labels.join(', ')})` : ''
         context += `--- 錄音: ${data.filename}${labelStr} (${data.recordedAt}) ---\n${data.fullText}\n\n`
@@ -492,11 +517,21 @@ ipcMain.handle('reco:aiQuery', async (event, { provider, apiKey, model, question
 ipcMain.handle('reco:updateLabels', async (event, { recordingId, labels }) => {
   appLog('INFO', 'reco', `更新標籤: ${recordingId} labels=${JSON.stringify(labels)}`)
   try {
-    const metaPath = recoDataPath(`${recordingId}.json`)
-    if (!fs.existsSync(metaPath)) return { success: false, error: `找不到記錄: ${recordingId}` }
-    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
-    meta.labels = labels || []
-    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
+    const dir = recoDataPath()
+    const files = scanJsonFiles(dir)
+    let found = false
+    for (const metaPath of files) {
+      try {
+        const data = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+        if (data.id === recordingId) {
+          data.labels = labels || []
+          fs.writeFileSync(metaPath, JSON.stringify(data, null, 2), 'utf-8')
+          found = true
+          break
+        }
+      } catch {}
+    }
+    if (!found) return { success: false, error: `找不到記錄: ${recordingId}` }
     return { success: true }
   } catch (e) { return { success: false, error: e.message } }
 })
@@ -505,11 +540,11 @@ ipcMain.handle('reco:listLabels', async () => {
   try {
     const dir = recoDataPath()
     if (!fs.existsSync(dir)) return { success: true, labels: [] }
-    const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'))
+    const files = scanJsonFiles(dir)
     const labelSet = new Set()
-    for (const f of files) {
+    for (const metaPath of files) {
       try {
-        const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'))
+        const data = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
         const labels = data.labels || []
         for (const l of labels) labelSet.add(l)
       } catch {}
@@ -562,19 +597,31 @@ ipcMain.handle('reco:listAudioFiles', async () => {
 
 ipcMain.handle('reco:loadMeta', async (event, { recordingId }) => {
   try {
-    const metaPath = recoDataPath(`${recordingId}.json`)
-    if (!fs.existsSync(metaPath)) return { success: false, error: `找不到記錄: ${recordingId}` }
-    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
-    return { success: true, meta }
+    const dir = recoDataPath()
+    const files = scanJsonFiles(dir)
+    for (const metaPath of files) {
+      try {
+        const data = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+        if (data.id === recordingId) return { success: true, meta: data }
+      } catch {}
+    }
+    return { success: false, error: `找不到記錄: ${recordingId}` }
   } catch (e) { return { success: false, error: e.message } }
 })
 
 ipcMain.handle('reco:llmProcess', async (event, { recordingId, provider, apiKey, model, type }) => {
   appLog('INFO', 'reco', `LLM 處理: ${recordingId} type=${type}`)
   try {
-    const metaPath = recoDataPath(`${recordingId}.json`)
-    if (!fs.existsSync(metaPath)) return { success: false, error: `找不到記錄: ${recordingId}` }
-    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+    const dir = recoDataPath()
+    const files = scanJsonFiles(dir)
+    let metaPath = null, meta = null
+    for (const mp of files) {
+      try {
+        const d = JSON.parse(fs.readFileSync(mp, 'utf-8'))
+        if (d.id === recordingId) { metaPath = mp; meta = d; break }
+      } catch {}
+    }
+    if (!meta) return { success: false, error: `找不到記錄: ${recordingId}` }
     const text = meta.fullText || meta.segments.map(s => s.text).join(' ')
     if (!text) return { success: false, error: '無逐字稿內容' }
     let systemPrompt, result
@@ -609,7 +656,6 @@ ipcMain.handle('reco:batchTranscribeNew', async (event, { modelSize, useGpu, gpu
     if (!fs.existsSync(dir)) return { success: true, results: [] }
     const audioExts = ['.wav', '.mp3', '.opus', '.ogg', '.flac', '.m4a', '.webm']
     const allFiles = fs.readdirSync(dir).filter(f => audioExts.includes(path.extname(f).toLowerCase()))
-    // 過濾已有 JSON metadata 的音檔
     const existingJson = new Set(fs.readdirSync(dir).filter(f => f.endsWith('.json')).map(f => path.basename(f, '.json')))
     const newFiles = allFiles.filter(f => {
       const baseName = path.basename(f, path.extname(f))
@@ -659,29 +705,60 @@ ipcMain.handle('reco:batchTranscribeNew', async (event, { modelSize, useGpu, gpu
 ipcMain.handle('reco:deleteMeta', async (event, { recordingId }) => {
   appLog('INFO', 'reco', `刪除 metadata: ${recordingId}`)
   try {
-    const metaPath = recoDataPath(`${recordingId}.json`)
-    if (!fs.existsSync(metaPath)) return { success: false, error: `找不到記錄: ${recordingId}` }
-    fs.unlinkSync(metaPath)
-    appLog('INFO', 'reco', `metadata 已刪除: ${recordingId}`)
-    return { success: true }
+    const dir = recoDataPath()
+    const files = scanJsonFiles(dir)
+    for (const metaPath of files) {
+      try {
+        const data = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+        if (data.id === recordingId) {
+          fs.unlinkSync(metaPath)
+          appLog('INFO', 'reco', `metadata 已刪除: ${recordingId}`)
+          return { success: true }
+        }
+      } catch {}
+    }
+    return { success: false, error: `找不到記錄: ${recordingId}` }
   } catch (e) { return { success: false, error: e.message } }
 })
 
-// ── 刪除音檔（安全檢查：僅允許 recoDataPath 下的檔案） ──
+// ── 批次刪除錄音記錄 ──
+
+ipcMain.handle('reco:batchDelete', async (event, { recordingIds }) => {
+  appLog('INFO', 'reco', `批次刪除: ${recordingIds.length} 筆`)
+  try {
+    const dir = recoDataPath()
+    const files = scanJsonFiles(dir)
+    let deleted = 0
+    for (const metaPath of files) {
+      try {
+        const data = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+        if (recordingIds.includes(data.id)) {
+          // 刪除音檔
+          if (data.audioPath && fs.existsSync(data.audioPath) && isPathSafe(data.audioPath)) {
+            try { fs.unlinkSync(data.audioPath) } catch {}
+          }
+          fs.unlinkSync(metaPath)
+          deleted++
+        }
+      } catch {}
+    }
+    appLog('INFO', 'reco', `批次刪除完成: ${deleted} 筆`)
+    return { success: true, deleted }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── 刪除音檔（安全檢查） ──
 
 ipcMain.handle('reco:deleteAudio', async (event, { audioPath }) => {
   appLog('INFO', 'reco', `刪除音檔: ${audioPath}`)
   try {
     if (!audioPath) return { success: false, error: '未指定音檔路徑' }
-    const recoDir = recoDataPath()
-    const resolved = path.resolve(audioPath)
-    // 安全檢查：確保路徑在 recoDataPath 下
-    if (!resolved.startsWith(path.resolve(recoDir))) {
+    if (!isPathSafe(audioPath)) {
       appLog('WARN', 'reco', `嘗試刪除目錄外的檔案: ${audioPath}`)
       return { success: false, error: '不允許刪除目錄外的檔案' }
     }
-    if (!fs.existsSync(resolved)) return { success: false, error: '音檔不存在' }
-    fs.unlinkSync(resolved)
+    if (!fs.existsSync(audioPath)) return { success: false, error: '音檔不存在' }
+    fs.unlinkSync(audioPath)
     appLog('INFO', 'reco', `音檔已刪除: ${audioPath}`)
     return { success: true }
   } catch (e) { return { success: false, error: e.message } }
@@ -697,22 +774,93 @@ ipcMain.handle('reco:dataPath', () => {
   } catch (e) { return { success: false, error: e.message } }
 })
 
-// ── 取得音檔 URL（透過自訂 protocol 安全提供本機音檔） ──
+// ── 取得音檔 URL ──
 
 ipcMain.handle('reco:getAudioUrl', async (event, { audioPath }) => {
   try {
     if (!audioPath) return { success: false, error: '未指定音檔路徑' }
     const recoDir = recoDataPath()
     const resolved = path.resolve(audioPath)
-    // 安全檢查：確保路徑在 recoDataPath 下
     if (!resolved.startsWith(path.resolve(recoDir))) {
       return { success: false, error: '不允許存取目錄外的檔案' }
     }
     if (!fs.existsSync(resolved)) return { success: false, error: '音檔不存在' }
-    // 回傳自訂 protocol URL
     const relativePath = path.relative(recoDir, resolved)
     const url = `reco-file:///${relativePath.replace(/\\/g, '/')}`
     return { success: true, url }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── 樹狀目錄管理 ──
+
+ipcMain.handle('reco:createFolder', async (event, { folderName, parentFolder }) => {
+  appLog('INFO', 'reco', `建立目錄: ${parentFolder || ''}/${folderName}`)
+  try {
+    const baseDir = parentFolder ? recoDataPath(parentFolder) : recoDataPath()
+    const newDir = path.join(baseDir, folderName)
+    if (!isPathSafe(newDir)) return { success: false, error: '不允許的路徑' }
+    if (fs.existsSync(newDir)) return { success: false, error: '目錄已存在' }
+    fs.mkdirSync(newDir, { recursive: true })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('reco:deleteFolder', async (event, { folderPath }) => {
+  appLog('INFO', 'reco', `刪除目錄: ${folderPath}`)
+  try {
+    const targetDir = recoDataPath(folderPath)
+    if (!isPathSafe(targetDir)) return { success: false, error: '不允許的路徑' }
+    if (!fs.existsSync(targetDir)) return { success: false, error: '目錄不存在' }
+    // 遞迴刪除（含所有內容）
+    fs.rmSync(targetDir, { recursive: true, force: true })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('reco:renameFolder', async (event, { folderPath, newName }) => {
+  appLog('INFO', 'reco', `重新命名目錄: ${folderPath} → ${newName}`)
+  try {
+    const parentDir = path.dirname(recoDataPath(folderPath))
+    const oldDir = recoDataPath(folderPath)
+    const newDir = path.join(parentDir, newName)
+    if (!isPathSafe(oldDir) || !isPathSafe(newDir)) return { success: false, error: '不允許的路徑' }
+    if (!fs.existsSync(oldDir)) return { success: false, error: '目錄不存在' }
+    if (fs.existsSync(newDir)) return { success: false, error: '新名稱已存在' }
+    fs.renameSync(oldDir, newDir)
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('reco:moveRecordings', async (event, { recordingIds, targetFolder }) => {
+  appLog('INFO', 'reco', `移動 ${recordingIds.length} 筆記錄到: ${targetFolder || '根目錄'}`)
+  try {
+    const targetDir = targetFolder ? recoDataPath(targetFolder) : recoDataPath()
+    fs.mkdirSync(targetDir, { recursive: true })
+    if (!isPathSafe(targetDir)) return { success: false, error: '不允許的路徑' }
+    const dir = recoDataPath()
+    const files = scanJsonFiles(dir)
+    let moved = 0
+    for (const metaPath of files) {
+      try {
+        const data = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+        if (recordingIds.includes(data.id)) {
+          // 移動 JSON
+          const newMetaPath = path.join(targetDir, path.basename(metaPath))
+          fs.renameSync(metaPath, newMetaPath)
+          // 移動音檔
+          if (data.audioPath && fs.existsSync(data.audioPath) && isPathSafe(data.audioPath)) {
+            const newAudioPath = path.join(targetDir, path.basename(data.audioPath))
+            try { fs.renameSync(data.audioPath, newAudioPath) } catch {}
+            // 更新 JSON 中的 audioPath
+            data.audioPath = newAudioPath
+            fs.writeFileSync(newMetaPath, JSON.stringify(data, null, 2), 'utf-8')
+          }
+          moved++
+        }
+      } catch {}
+    }
+    appLog('INFO', 'reco', `移動完成: ${moved} 筆`)
+    return { success: true, moved }
   } catch (e) { return { success: false, error: e.message } }
 })
 
@@ -765,17 +913,15 @@ function formatTime(seconds) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
-// ── 自訂 protocol：安全提供本機音檔給 renderer ──
+// ── 自訂 protocol ──
 
 function registerRecoFileProtocol() {
   const recoDir = recoDataPath()
   try { fs.mkdirSync(recoDir, { recursive: true }) } catch {}
   session.defaultSession.protocol.registerFileProtocol('reco-file', (request, callback) => {
     try {
-      // 解析路徑：reco-file:///relative/path → 完整路徑
       const relativePath = decodeURIComponent(request.url.replace('reco-file:///', ''))
       const fullPath = path.resolve(recoDir, relativePath)
-      // 安全檢查：確保在 recoDir 下
       if (!fullPath.startsWith(path.resolve(recoDir))) {
         callback({ statusCode: 403 })
         return

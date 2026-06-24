@@ -23,7 +23,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // 錄音歷史與全文檢索
   recoSaveMeta: (p) => ipcRenderer.invoke('reco:saveMeta', p),
-  recoList: () => ipcRenderer.invoke('reco:list'),
+  recoList: (p) => ipcRenderer.invoke('reco:list', p || {}),
   recoSearch: (p) => ipcRenderer.invoke('reco:search', p),
   recoAiQuery: (p) => ipcRenderer.invoke('reco:aiQuery', p),
   // 音檔列表、載入 Meta、LLM 處理、批次辨識新音檔
@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // 刪除錄音記錄
   recoDeleteMeta: (p) => ipcRenderer.invoke('reco:deleteMeta', p),
+  // 批次刪除
+  recoBatchDelete: (p) => ipcRenderer.invoke('reco:batchDelete', p),
   // 刪除音檔
   recoDeleteAudio: (p) => ipcRenderer.invoke('reco:deleteAudio', p),
   // 取得音檔 URL（自訂 protocol）
@@ -45,4 +47,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Label 管理
   recoUpdateLabels: (p) => ipcRenderer.invoke('reco:updateLabels', p),
   recoListLabels: () => ipcRenderer.invoke('reco:listLabels'),
+  // 樹狀目錄管理
+  recoCreateFolder: (p) => ipcRenderer.invoke('reco:createFolder', p),
+  recoDeleteFolder: (p) => ipcRenderer.invoke('reco:deleteFolder', p),
+  recoRenameFolder: (p) => ipcRenderer.invoke('reco:renameFolder', p),
+  recoMoveRecordings: (p) => ipcRenderer.invoke('reco:moveRecordings', p),
 })
