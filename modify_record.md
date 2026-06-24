@@ -786,3 +786,35 @@
 - 完成原始碼備份: backup-202606240003.zip
 - Git commit `802801d` 並 push 至 GitHub origin master
 
+## [2026-06-24 08:12]
+- **version**: 1.12.0
+- **修改要求**：1) 錄音記錄改為樹狀目錄管理（folder create/delete/rename/move），解決未來太多錄音記錄在一層的效能問題；2) 支援多個錄音記錄一起移動/刪除；3) 修復 label 可以新增但不能儲存的問題；4) 移除錄音記錄列表的優化/翻譯/摘要按鈕，改為顯示 label 資訊。
+- **修改規劃**：
+   1. `frontend/electron/main.js`：
+      - 新增 `scanJsonFiles()` 遞迴掃描函式，支援子目錄
+      - `reco:saveMeta` 新增 `folder` 參數，寫入指定子目錄
+      - `reco:list` 改為接收 `{ folder }` 參數，回傳 `{ folders, recordings }` 樹狀結構
+      - `reco:search`、`reco:aiQuery`、`reco:listLabels`、`reco:loadMeta`、`reco:llmProcess`、`reco:deleteMeta`、`reco:updateLabels` 全部改為遞迴掃描子目錄
+      - 新增 `reco:createFolder` IPC（建立子目錄）
+      - 新增 `reco:deleteFolder` IPC（遞迴刪除目錄）
+      - 新增 `reco:renameFolder` IPC（重新命名目錄）
+      - 新增 `reco:moveRecordings` IPC（移動多筆 JSON + 音檔到目標目錄）
+      - 新增 `reco:batchDelete` IPC（批次刪除多筆記錄含音檔）
+   2. `frontend/electron/preload.js`：新增 `recoCreateFolder`、`recoDeleteFolder`、`recoRenameFolder`、`recoMoveRecordings`、`recoBatchDelete` bridge
+   3. `frontend/src/App.vue`：
+      - 錄音記錄列表改為樹狀檢視：breadcrumb 導覽列 + folder 列表 + 錄音記錄
+      - Folder 管理按鈕：📁 新增目錄 / ✏️ 重新命名 / 🗑️ 刪除目錄
+      - 每筆錄音記錄新增 checkbox（多選模式）
+      - 底部工具列：📁 移動所選 / 🗑️ 批次刪除 / ☑️ 全選 / ⬜ 取消全選
+      - 移動操作彈窗：選擇目標 folder
+      - 移除錄音記錄列表的 ✨優化 / 🌐翻譯 / 📋摘要 按鈕
+   4. 版本號 `1.11.0` → `1.12.0`（次版號新增功能）。
+- **修改結果**：
+   - `frontend/electron/main.js`：修改 7 個 IPC + 新增 5 個 IPC，全部支援子目錄遞迴掃描
+   - `frontend/electron/preload.js`：新增 5 個 bridge
+   - `frontend/src/App.vue`：大幅重構歷史記錄區塊，新增樹狀檢視、folder 管理、多選批次操作
+   - `frontend/package.json`：版本號更新為 `1.12.0`
+   - Vite build 成功（11 modules, 884ms）
+   - `readme.md` 版本歷史新增 v1.12.0 說明，版本號更新為 1.12.0
+- Git commit `309cb5d` 並 push 至 GitHub origin master
+

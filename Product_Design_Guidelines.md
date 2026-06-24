@@ -1,6 +1,6 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.4.3
+> **版本**: 1.5.0
 > **最後更新日期**: 2026-06-24
 
 ## 產品核心願景與哲學 (Product Vision & Philosophy)
@@ -151,8 +151,9 @@
 - **功能**：錄音記錄可新增/修改/刪除標籤（label），支援依 label 篩選記錄列表；搜尋結果顯示 labels 並支援跳轉到真實錄音記錄的相對句子位置
 - **實作方式**：
   - Metadata JSON 新增 `labels: []` 欄位（向後相容，舊 JSON 無此欄位時預設空陣列）
-  - IPC `reco:updateLabels` 讀取 JSON → 更新 labels → 寫回
-  - IPC `reco:listLabels` 掃描所有 JSON，回傳不重複的 label 清單
+  - 所有 IPC 改為遞迴掃描子目錄（`scanJsonFiles()`），支援樹狀目錄結構
+  - IPC `reco:updateLabels` 遞迴掃描所有 JSON → 找到對應 recordingId → 更新 labels → 寫回
+  - IPC `reco:listLabels` 遞迴掃描所有 JSON，回傳不重複的 label 清單
   - `reco:list` 支援 `labelFilter` 參數，僅回傳含該 label 的記錄
   - `reco:search` 搜尋結果附加 `labels`，keyword 匹配 label 時回傳該錄音的所有 segment
   - `reco:aiQuery` context 中加入 labels 資訊（`--- 錄音: xxx (標籤: A, B) ---`）
@@ -162,6 +163,25 @@
   - 歷史記錄區上方新增 label 篩選下拉選單
   - 搜尋結果每筆顯示 labels 與「📖 跳轉」按鈕
   - `jumpToSearchResult()` 方法：載入逐字稿 → 載入音檔 URL → 找到對應 segment → 播放
+
+### 7. 樹狀目錄管理 (`frontend/electron/main.js` + `frontend/src/App.vue`)
+- **功能**：錄音記錄改為樹狀目錄管理，支援 folder 建立/刪除/重新命名/移動，以及多選批次移動/刪除
+- **資料模型**：使用實際檔案系統目錄作為 folder 結構，`reco_data/` 下可建立多層子目錄
+- **後端 IPC**：
+  - `reco:saveMeta` 新增 `folder` 參數，寫入指定子目錄
+  - `reco:list` 改為接收 `{ folder }` 參數，回傳 `{ folders, recordings }` 樹狀結構
+  - `reco:createFolder` 建立子目錄（含安全檢查 `isPathSafe()`）
+  - `reco:deleteFolder` 遞迴刪除目錄（`fs.rmSync` recursive）
+  - `reco:renameFolder` 重新命名目錄（`fs.renameSync`）
+  - `reco:moveRecordings` 移動多筆 JSON + 音檔到目標目錄
+  - `reco:batchDelete` 批次刪除多筆記錄含音檔
+- **前端 UI**：
+  - Breadcrumb 導覽列顯示目前路徑，可點擊回到上層
+  - Folder 管理按鈕：📁 新增目錄 / ✏️ 重新命名 / 🗑️ 刪除目錄
+  - Folder 列表：點擊進入子目錄
+  - 每筆錄音記錄新增 checkbox（多選模式）
+  - 底部工具列：📁 移動所選 / 🗑️ 批次刪除 / ☑️ 全選 / ⬜ 取消全選
+  - 移動操作彈窗：選擇目標 folder
 
 ### 7. 刪除管理 (`frontend/electron/main.js` + `frontend/src/App.vue`)
 - **刪除錄音記錄**：IPC `reco:deleteMeta` 刪除 `{recordingId}.json`，前端 confirm 確認後執行
