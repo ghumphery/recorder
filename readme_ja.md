@@ -3,6 +3,8 @@
 [![GitHub release](https://img.shields.io/github/v/release/ghumphery/recorder)](https://github.com/ghumphery/recorder/releases)
 [![GitHub](https://img.shields.io/github/license/ghumphery/recorder)](https://github.com/ghumphery/recorder)
 
+> 🌐 **言語 / Language / 語言**: [繁體中文](readme.md) | [English](readme_en.md) | [日本語](readme_ja.md)
+
 ## 📝 機能概要
 
 Recorder は完全**オフライン**の AI 会議記録ツールです：

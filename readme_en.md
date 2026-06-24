@@ -3,6 +3,8 @@
 [![GitHub release](https://img.shields.io/github/v/release/ghumphery/recorder)](https://github.com/ghumphery/recorder/releases)
 [![GitHub](https://img.shields.io/github/license/ghumphery/recorder)](https://github.com/ghumphery/recorder)
 
+> 🌐 **Language / 語言 / 言語**: [繁體中文](readme.md) | [English](readme_en.md) | [日本語](readme_ja.md)
+
 ## 📝 Features
 
 Recorder is a fully **offline** AI meeting notes application:
