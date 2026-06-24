@@ -24,3 +24,30 @@
   - `.clinerules/workrule.md` — Section 4 updated with multi-language documentation requirements
   - `frontend/package.json` — Version updated to 1.13.0
 - Backup: backup-202606241025.zip
+
+## [2026-06-24 10:44]
+- **version**: 1.13.1
+- **Requirement**: Compile project, produce portable exe.
+- **Plan**:
+  1. Increment version 1.13.0 → 1.13.1
+  2. Run electron-builder to compile
+  3. Update documentation and backup
+- **Result**:
+  - `frontend/package.json`: Version updated to 1.13.1
+  - Build output: `frontend/dist-electron-build2/Recorder-1.13.1-portable.exe` (127 MB)
+  - Due to Windows Defender locking `dist-electron-build`, switched to `dist-electron-build2` output directory
+- Backup: backup-202606241044.zip
+
+## [2026-06-24 11:35]
+- **version**: 1.13.2
+- **Requirement**: Fix UI bug caused by i18n refactoring — AI provider and whisper model dropdowns were empty in settings.
+- **Plan**:
+  1. Root cause: `mounted()` lifecycle hook was accidentally removed during i18n refactoring, causing `fetchModels()`, `fetchLlmProviders()`, `loadSettings()` to never be called
+  2. Fix: Restore `async mounted()` hook between `computed` and `methods` blocks
+  3. Version 1.13.1 → 1.13.2 (patch: bug fix)
+- **Result**:
+  - `frontend/src/App.vue`: Restored `async mounted()` lifecycle hook, calling `fetchModels()`, `fetchLlmProviders()`, `loadSettings()` in sequence
+  - `frontend/package.json`: Version updated to 1.13.2
+  - Build output: `frontend/dist-electron-build2/Recorder-1.13.2-portable.exe` (127 MB)
+  - Multi-language documentation: `Product_Design_Guidelines_en.md`, `Product_Design_Guidelines_ja.md` created; `readme_en.md`, `readme_ja.md` updated
+- Backup: backup-202606241135.zip

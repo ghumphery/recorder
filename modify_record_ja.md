@@ -24,3 +24,30 @@
   - `.clinerules/workrule.md` — セクション 4 を多言語ドキュメント要件で更新
   - `frontend/package.json` — バージョンを 1.13.0 に更新
 - バックアップ: backup-202606241025.zip
+
+## [2026-06-24 10:44]
+- **version**: 1.13.1
+- **要件**: プロジェクトをコンパイルし、portable exe を生成する。
+- **計画**:
+  1. バージョン 1.13.0 → 1.13.1 に増加
+  2. electron-builder を実行してコンパイル
+  3. ドキュメントとバックアップを更新
+- **結果**:
+  - `frontend/package.json`: バージョンを 1.13.1 に更新
+  - ビルド出力: `frontend/dist-electron-build2/Recorder-1.13.1-portable.exe` (127 MB)
+  - Windows Defender が `dist-electron-build` をロックするため、`dist-electron-build2` 出力ディレクトリに切り替え
+- バックアップ: backup-202606241044.zip
+
+## [2026-06-24 11:35]
+- **version**: 1.13.2
+- **要件**: i18n リファクタリングによる UI バグを修正 — 設定の AI プロバイダーと whisper モデルのドロップダウンが空になる。
+- **計画**:
+  1. 根本原因: i18n リファクタリング中に `mounted()` ライフサイクルフックが誤って削除され、`fetchModels()`、`fetchLlmProviders()`、`loadSettings()` が呼び出されなかった
+  2. 修正: `computed` ブロックと `methods` ブロックの間に `async mounted()` フックを復元
+  3. バージョン 1.13.1 → 1.13.2 (パッチ: バグ修正)
+- **結果**:
+  - `frontend/src/App.vue`: `async mounted()` ライフサイクルフックを復元、`fetchModels()`、`fetchLlmProviders()`、`loadSettings()` を順次呼び出し
+  - `frontend/package.json`: バージョンを 1.13.2 に更新
+  - ビルド出力: `frontend/dist-electron-build2/Recorder-1.13.2-portable.exe` (127 MB)
+  - 多言語ドキュメント: `Product_Design_Guidelines_en.md`、`Product_Design_Guidelines_ja.md` を作成；`readme_en.md`、`readme_ja.md` を更新
+- バックアップ: backup-202606241135.zip
