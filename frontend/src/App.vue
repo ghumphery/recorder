@@ -1,95 +1,117 @@
 <template>
   <div class="app">
+    <!-- 首次啟動語言選擇 -->
+    <div v-if="showLangSelect" class="label-editor-overlay">
+      <div class="label-editor-panel" style="width:420px">
+        <div class="panel-header">{{ $t('langSelect.title') }}</div>
+        <div class="panel-body" style="text-align:center">
+          <p style="margin-bottom:12px;font-size:13px">{{ $t('langSelect.desc') }}</p>
+          <div class="lang-select-buttons">
+            <button v-for="l in languages" :key="l.key" class="btn btn-lang" :class="{ selected: uiLanguage === l.key }" @click="uiLanguage = l.key">{{ l.label }}</button>
+          </div>
+          <div class="label-editor-actions" style="margin-top:16px">
+            <button class="btn btn-save" @click="confirmLangSelect">💾 {{ $t('langSelect.start') }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 設定列 -->
     <div class="settings-bar" v-if="showSettings">
       <div class="setting-row">
-        <label>AI 提供商：</label>
+        <label>{{ $t('settings.uiLanguage') }}</label>
+        <select v-model="uiLanguage" @change="onLangChange" class="lang-select-small">
+          <option v-for="l in languages" :key="l.key" :value="l.key">{{ l.label }}</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <label>{{ $t('settings.aiProvider') }}</label>
         <select v-model="llmProvider" @change="onProviderChange">
           <option v-for="p in llmProviders" :key="p.key" :value="p.key">{{ p.name }}</option>
         </select>
-        <input v-model="llmModel" placeholder="模型名稱（留空用預設）" class="model-input" />
+        <input v-model="llmModel" :placeholder="$t('settings.modelName')" class="model-input" />
       </div>
       <div class="setting-row" v-for="p in llmProviders" :key="p.key">
-        <label v-if="p.key !== 'ollama'" style="min-width:140px">{{ p.name }} API Key：</label>
-        <input v-if="p.key !== 'ollama'" v-model="apiKeys[p.key]" :type="showApiKey[p.key] ? 'text' : 'password'" :placeholder="`輸入 ${p.name} API Key`" class="api-key-input" />
-        <button v-if="p.key !== 'ollama' && p.key === llmProvider" class="btn btn-small" @click="showApiKey[p.key] = !showApiKey[p.key]" style="min-width:50px">{{ showApiKey[p.key] ? '隱藏' : '顯示' }}</button>
+        <label v-if="p.key !== 'ollama'" style="min-width:140px">{{ p.name }} {{ $t('settings.apiKey') }}</label>
+        <input v-if="p.key !== 'ollama'" v-model="apiKeys[p.key]" :type="showApiKey[p.key] ? 'text' : 'password'" :placeholder="$t('settings.apiKeyPlaceholder', { name: p.name })" class="api-key-input" />
+        <button v-if="p.key !== 'ollama' && p.key === llmProvider" class="btn btn-small" @click="showApiKey[p.key] = !showApiKey[p.key]" style="min-width:50px">{{ showApiKey[p.key] ? $t('settings.hide') : $t('settings.show') }}</button>
       </div>
       <div class="setting-row">
-        <label>分段錄音（分鐘）：</label>
+        <label>{{ $t('settings.segmentMinutes') }}</label>
         <select v-model="segmentMinutes">
-          <option :value="0">不分段</option>
-          <option :value="5">5 分鐘</option>
-          <option :value="10">10 分鐘</option>
-          <option :value="15">15 分鐘</option>
-          <option :value="30">30 分鐘</option>
+          <option :value="0">{{ $t('settings.noSegment') }}</option>
+          <option :value="5">{{ $t('settings.min5') }}</option>
+          <option :value="10">{{ $t('settings.min10') }}</option>
+          <option :value="15">{{ $t('settings.min15') }}</option>
+          <option :value="30">{{ $t('settings.min30') }}</option>
         </select>
       </div>
       <div class="setting-row">
-        <label>GPU 加速：</label>
+        <label>{{ $t('settings.gpuAccel') }}</label>
         <label class="toggle-label">
           <input type="checkbox" v-model="useGpu" />
-          <span class="toggle-text">{{ useGpu ? '啟用 (Vulkan)' : '停用 (CPU)' }}</span>
+          <span class="toggle-text">{{ useGpu ? $t('settings.gpuEnabled') : $t('settings.gpuDisabled') }}</span>
         </label>
-        <label v-if="useGpu" style="font-size:12px;white-space:nowrap">GPU 編號：</label>
+        <label v-if="useGpu" style="font-size:12px;white-space:nowrap">{{ $t('settings.gpuDevice') }}</label>
         <input v-if="useGpu" v-model="gpuDevice" type="number" min="0" max="9" step="1" placeholder="0" class="device-input" />
       </div>
       <div class="setting-row">
-        <label>工作目錄（reco_data）：</label>
-        <span class="reco-dir-path">{{ recoDir || '預設: C:\\Users\\...\\recoder\\reco_data' }}</span>
-        <button class="btn btn-small" @click="selectRecoDir" style="background:#1565C0">📁 選擇目錄</button>
+        <label>{{ $t('settings.workDir') }}</label>
+        <span class="reco-dir-path">{{ recoDir || $t('settings.workDirDefault') }}</span>
+        <button class="btn btn-small" @click="selectRecoDir" style="background:#1565C0">{{ $t('settings.selectDir') }}</button>
       </div>
       <div class="setting-row" style="justify-content:flex-end;gap:6px">
-        <button class="btn btn-small btn-save" @click="saveSettings">💾 儲存設定</button>
-        <button class="btn btn-small" @click="showSettings = false">關閉</button>
+        <button class="btn btn-small btn-save" @click="saveSettings">{{ $t('settings.save') }}</button>
+        <button class="btn btn-small" @click="showSettings = false">{{ $t('settings.close') }}</button>
       </div>
     </div>
 
     <!-- 控制列 -->
     <div class="control-bar">
       <button class="btn btn-settings" @click="showSettings = !showSettings">⚙️</button>
-      <button v-if="isRecording && recordingMode === 'mic'" class="btn btn-record" @click="stopRecording">⏹️ 停止錄音</button>
-      <button v-else class="btn btn-record" @click="toggleRecording('mic')" :disabled="busy || (isRecording && recordingMode !== 'mic')">🎙️ 麥克風錄音</button>
-      <button v-if="isRecording && recordingMode === 'mix'" class="btn btn-mix" @click="stopRecording">⏹️ 停止錄音</button>
-      <button v-else class="btn btn-mix" @click="toggleRecording('mix')" :disabled="busy || (isRecording && recordingMode !== 'mix')">🖥️ 混音</button>
+      <button v-if="isRecording && recordingMode === 'mic'" class="btn btn-record" @click="stopRecording">{{ $t('control.stopRecording') }}</button>
+      <button v-else class="btn btn-record" @click="toggleRecording('mic')" :disabled="busy || (isRecording && recordingMode !== 'mic')">{{ $t('control.micRecord') }}</button>
+      <button v-if="isRecording && recordingMode === 'mix'" class="btn btn-mix" @click="stopRecording">{{ $t('control.stopRecording') }}</button>
+      <button v-else class="btn btn-mix" @click="toggleRecording('mix')" :disabled="busy || (isRecording && recordingMode !== 'mix')">{{ $t('control.mixRecord') }}</button>
       <span v-if="isRecording" class="recording-indicator">
         <span class="rec-dot"></span>
-        {{ recordingMode === 'mix' ? '混音' : '麥克風' }} {{ recordingTime }}
-        <span v-if="segmentMinutes > 0" class="seg-badge">分段{{ currentSegment }}/{{ segmentMinutes }}分</span>
+        {{ recordingMode === 'mix' ? $t('control.mix') : $t('control.mic') }} {{ recordingTime }}
+        <span v-if="segmentMinutes > 0" class="seg-badge">{{ $t('control.segment', { num: currentSegment, min: segmentMinutes }) }}</span>
       </span>
-      <button class="btn btn-import" @click="importAudio" :disabled="busy || isRecording">📂 匯入</button>
+      <button class="btn btn-import" @click="importAudio" :disabled="busy || isRecording">{{ $t('control.import') }}</button>
       <div class="model-select">
         <select v-model="selectedModel" :disabled="busy || isRecording">
-          <option v-for="m in models" :key="m.name" :value="m.name">{{ m.name }} {{ m.cached ? '✅' : '⬇️' }}</option>
+          <option v-for="m in models" :key="m.name" :value="m.name">{{ m.name }} {{ m.cached ? $t('control.modelDownloaded') : $t('control.modelNotDownloaded') }}</option>
         </select>
       </div>
-      <button class="btn btn-download" @click="downloadModel" :disabled="busy || isRecording || selectedModelCached" :title="selectedModelCached ? '模型已下載' : '手動下載模型'">
-        {{ selectedModelCached ? '✅ 已下載' : '⬇️ 下載' }}
+      <button class="btn btn-download" @click="downloadModel" :disabled="busy || isRecording || selectedModelCached" :title="selectedModelCached ? $t('control.downloadTitle') : $t('control.downloadTitleAlt')">
+        {{ selectedModelCached ? $t('control.downloadBtn') : $t('control.downloadBtnAlt') }}
       </button>
-      <button class="btn btn-transcribe" @click="startTranscribe" :disabled="busy || !audioLoaded || isRecording">🤖 辨識</button>
-      <button class="btn btn-export" @click="exportResult" :disabled="busy || !hasResult">💾 匯出</button>
+      <button class="btn btn-transcribe" @click="startTranscribe" :disabled="busy || !audioLoaded || isRecording">{{ $t('control.transcribe') }}</button>
+      <button class="btn btn-export" @click="exportResult" :disabled="busy || !hasResult">{{ $t('control.export') }}</button>
     </div>
 
     <!-- LLM 動作列 -->
     <div class="llm-bar" v-if="hasResult">
-      <span class="source-label">來源：</span>
+      <span class="source-label">{{ $t('llm.source') }}</span>
       <select v-model="activeSource" class="source-select" :disabled="llmBusy">
-        <option value="original">📝 原始逐字稿</option>
-        <option value="optimized" v-if="llmResults.optimized">✨ 優化結果</option>
-        <option value="translated" v-if="llmResults.translated">🌐 翻譯結果</option>
-        <option value="summary" v-if="llmResults.summary">📋 重點整理</option>
+        <option value="original">{{ $t('llm.original') }}</option>
+        <option value="optimized" v-if="llmResults.optimized">{{ $t('llm.optimized') }}</option>
+        <option value="translated" v-if="llmResults.translated">{{ $t('llm.translated') }}</option>
+        <option value="summary" v-if="llmResults.summary">{{ $t('llm.summary') }}</option>
       </select>
-      <button class="btn btn-llm" @click="doOptimize" :disabled="llmBusy">✨ 語句優化</button>
-      <button class="btn btn-llm" @click="doTranslate" :disabled="llmBusy">🌐 翻譯</button>
+      <button class="btn btn-llm" @click="doOptimize" :disabled="llmBusy">{{ $t('llm.optimize') }}</button>
+      <button class="btn btn-llm" @click="doTranslate" :disabled="llmBusy">{{ $t('llm.translate') }}</button>
       <select v-model="translateTarget" class="lang-select" :disabled="llmBusy">
-        <option value="ja">🇯🇵 日文</option>
-        <option value="en">🇺🇸 英文</option>
+        <option value="ja">🇯🇵 日本語</option>
+        <option value="en">🇺🇸 English</option>
         <option value="zh">🇨🇳 中文</option>
       </select>
-      <button class="btn btn-llm" @click="doSummary" :disabled="llmBusy">📋 重點整理</button>
+      <button class="btn btn-llm" @click="doSummary" :disabled="llmBusy">{{ $t('llm.summarize') }}</button>
       <span class="sep"></span>
-      <button class="btn btn-undo" @click="undo" :disabled="llmBusy || !canUndo" title="復原">↩️</button>
-      <button class="btn btn-undo" @click="redo" :disabled="llmBusy || !canRedo" title="取消復原">↪️</button>
-      <span v-if="llmBusy" class="llm-spinner">⏳ LLM 處理中...</span>
+      <button class="btn btn-undo" @click="undo" :disabled="llmBusy || !canUndo" :title="$t('llm.undoTitle')">{{ $t('llm.undo') }}</button>
+      <button class="btn btn-undo" @click="redo" :disabled="llmBusy || !canRedo" :title="$t('llm.redoTitle')">{{ $t('llm.redo') }}</button>
+      <span v-if="llmBusy" class="llm-spinner">{{ $t('llm.processing') }}</span>
     </div>
 
     <div class="status-bar" :class="{ error: statusError }">{{ statusText }}</div>
@@ -101,8 +123,8 @@
 
     <!-- Tab 切換 -->
     <div class="tab-bar">
-      <button class="tab-btn" :class="{ active: activeTab === 'transcript' }" @click="activeTab = 'transcript'">📝 逐字稿</button>
-      <button class="tab-btn" :class="{ active: activeTab === 'history' }" @click="activeTab = 'history'; loadHistory(); loadAllLabels()">📚 歷史記錄</button>
+      <button class="tab-btn" :class="{ active: activeTab === 'transcript' }" @click="activeTab = 'transcript'">{{ $t('tab.transcript') }}</button>
+      <button class="tab-btn" :class="{ active: activeTab === 'history' }" @click="activeTab = 'history'; loadHistory(); loadAllLabels()">{{ $t('tab.history') }}</button>
     </div>
 
     <!-- 隱藏音訊播放器 -->
@@ -112,12 +134,12 @@
     <div class="content-area" v-if="activeTab === 'transcript'">
       <div class="panel" v-if="hasResult && activeSource === 'original'">
         <div class="panel-header">
-          📝 原始逐字稿（{{ transcriptionResults.length }} 句）
-          <span v-if="nowPlaying" class="playing-badge">▶️ 播放中</span>
-          <button v-if="nowPlaying" class="btn btn-small btn-stop-playback" @click="stopPlayback" title="停止播放">⏹️ 停止播放</button>
+          {{ $t('transcript.header', { count: transcriptionResults.length }) }}
+          <span v-if="nowPlaying" class="playing-badge">{{ $t('transcript.playing') }}</span>
+          <button v-if="nowPlaying" class="btn btn-small btn-stop-playback" @click="stopPlayback" :title="$t('transcript.stopPlayback')">{{ $t('transcript.stopPlayback') }}</button>
         </div>
         <div class="panel-body">
-          <div v-for="(seg, idx) in transcriptionResults" :key="idx" class="segment" :class="{ 'segment-playing': playingSegmentIdx === idx }" @click="playSegment(idx)" :title="currentAudioUrl ? '點擊播放此句' : ''">
+          <div v-for="(seg, idx) in transcriptionResults" :key="idx" class="segment" :class="{ 'segment-playing': playingSegmentIdx === idx }" @click="playSegment(idx)" :title="currentAudioUrl ? $t('transcript.clickToPlay') : ''">
             <span class="timestamp">[{{ formatTime(seg.start) }} - {{ formatTime(seg.end) }}]</span>
             <span class="text">{{ seg.text }}</span>
             <span v-if="playingSegmentIdx === idx" class="play-indicator">▶️</span>
@@ -129,7 +151,7 @@
         <div class="panel-body"><pre class="llm-content">{{ activeSourceContent }}</pre></div>
       </div>
       <div v-if="!hasResult && !busy && !isRecording" class="empty-hint">
-        🎙️ 麥克風錄音 / 🖥️ 混音錄音 / 📂 匯入音檔 → 🤖 開始辨識
+        {{ $t('transcript.empty') }}
       </div>
     </div>
 
@@ -137,16 +159,16 @@
     <div class="content-area" v-if="activeTab === 'history'">
       <div class="history-panel">
         <div class="history-toolbar">
-          <input v-model="searchKeyword" placeholder="🔍 搜尋關鍵字..." class="search-input" @keyup.enter="doSearch" />
-          <button class="btn btn-small btn-search" @click="doSearch">搜尋</button>
+          <input v-model="searchKeyword" :placeholder="$t('history.searchPlaceholder')" class="search-input" @keyup.enter="doSearch" />
+          <button class="btn btn-small btn-search" @click="doSearch">{{ $t('history.search') }}</button>
           <span class="sep"></span>
-          <input v-model="aiQuestion" placeholder="🤖 用 AI 查詢（如：上週討論了什麼？）" class="ai-input" @keyup.enter="doAiQuery" />
-          <button class="btn btn-small btn-ai" @click="doAiQuery" :disabled="aiBusy">查詢</button>
+          <input v-model="aiQuestion" :placeholder="$t('history.aiPlaceholder')" class="ai-input" @keyup.enter="doAiQuery" />
+          <button class="btn btn-small btn-ai" @click="doAiQuery" :disabled="aiBusy">{{ $t('history.aiQuery') }}</button>
         </div>
 
         <!-- 搜尋結果 -->
         <div v-if="searchResults.length > 0" class="search-results">
-          <div class="panel-header">🔍 搜尋結果（{{ searchResults.length }} 筆）</div>
+          <div class="panel-header">{{ $t('history.searchResults', { count: searchResults.length }) }}</div>
           <div class="panel-body">
             <div v-for="(r, idx) in searchResults" :key="idx" class="segment search-result-item">
               <span class="timestamp">[{{ r.filename }}] [{{ formatTime(r.start) }} - {{ formatTime(r.end) }}]</span>
@@ -154,38 +176,38 @@
               <span v-if="r.labels && r.labels.length > 0" class="search-labels">
                 <span v-for="l in r.labels" :key="l" class="label-tag label-tag-sm">{{ l }}</span>
               </span>
-              <button class="btn btn-tiny btn-jump" @click="jumpToSearchResult(r)" :title="'跳轉到 ' + r.filename">📖 跳轉</button>
+              <button class="btn btn-tiny btn-jump" @click="jumpToSearchResult(r)" :title="'📖 ' + r.filename">{{ $t('history.jumpTo') }}</button>
             </div>
           </div>
         </div>
 
         <!-- AI 查詢結果 -->
         <div v-if="aiResult" class="search-results">
-          <div class="panel-header">🤖 AI 查詢結果</div>
+          <div class="panel-header">{{ $t('history.aiResult') }}</div>
           <div class="panel-body"><pre class="llm-content">{{ aiResult }}</pre></div>
         </div>
 
         <!-- Label 篩選列 -->
         <div v-if="!searchKeyword && !aiQuestion" class="label-filter-bar">
-          <span class="label-filter-label">🏷️ 篩選標籤：</span>
+          <span class="label-filter-label">{{ $t('history.labelFilter') }}</span>
           <select v-model="labelFilter" @change="loadHistory" class="label-filter-select">
-            <option value="">全部</option>
+            <option value="">{{ $t('history.all') }}</option>
             <option v-for="l in allLabels" :key="l" :value="l">{{ l }}</option>
           </select>
-          <button class="btn btn-small btn-refresh" @click="loadHistory" style="margin-left:4px">🔄</button>
+          <button class="btn btn-small btn-refresh" @click="loadHistory" style="margin-left:4px">{{ $t('history.refresh') }}</button>
         </div>
 
         <!-- 子 Tab 切換 -->
         <div v-if="!searchKeyword && !aiQuestion" class="history-sub-tabs">
-          <button class="sub-tab-btn" :class="{ active: historySubTab === 'records' }" @click="historySubTab = 'records'; loadHistory()">📚 錄音記錄</button>
-          <button class="sub-tab-btn" :class="{ active: historySubTab === 'audio' }" @click="historySubTab = 'audio'; loadAudioFiles()">🎵 音檔列表</button>
+          <button class="sub-tab-btn" :class="{ active: historySubTab === 'records' }" @click="historySubTab = 'records'; loadHistory()">{{ $t('history.subTabRecords') }}</button>
+          <button class="sub-tab-btn" :class="{ active: historySubTab === 'audio' }" @click="historySubTab = 'audio'; loadAudioFiles()">{{ $t('history.subTabAudio') }}</button>
         </div>
 
         <!-- 錄音記錄（樹狀檢視） -->
         <div v-if="!searchKeyword && !aiQuestion && historySubTab === 'records'" class="recording-list">
           <!-- Breadcrumb 導覽列 -->
           <div class="folder-breadcrumb">
-            <span class="breadcrumb-item" @click="navigateToFolder('')" :class="{ active: currentFolder === '' }">📁 根目錄</span>
+            <span class="breadcrumb-item" @click="navigateToFolder('')" :class="{ active: currentFolder === '' }">{{ $t('history.root') }}</span>
             <template v-for="(part, i) in folderBreadcrumbs" :key="i">
               <span class="breadcrumb-sep">/</span>
               <span class="breadcrumb-item" @click="navigateToFolder(part.path)" :class="{ active: currentFolder === part.path }">{{ part.name }}</span>
@@ -194,14 +216,14 @@
 
           <!-- Folder 管理工具列 -->
           <div class="folder-toolbar">
-            <button class="btn btn-small btn-folder-new" @click="showNewFolderDialog = true">📁 新增目錄</button>
-            <button v-if="currentFolder" class="btn btn-small btn-folder-rename" @click="showRenameFolderDialog = true">✏️ 重新命名</button>
-            <button v-if="currentFolder" class="btn btn-small btn-folder-delete" @click="deleteCurrentFolder">🗑️ 刪除目錄</button>
+            <button class="btn btn-small btn-folder-new" @click="showNewFolderDialog = true">{{ $t('history.newFolder') }}</button>
+            <button v-if="currentFolder" class="btn btn-small btn-folder-rename" @click="showRenameFolderDialog = true">{{ $t('history.renameFolder') }}</button>
+            <button v-if="currentFolder" class="btn btn-small btn-folder-delete" @click="deleteCurrentFolder">{{ $t('history.deleteFolder') }}</button>
             <span class="sep"></span>
-            <button v-if="selectedRecordings.size > 0" class="btn btn-small btn-move" @click="openMoveDialog">📁 移動所選 ({{ selectedRecordings.size }})</button>
-            <button v-if="selectedRecordings.size > 0" class="btn btn-small btn-batch-delete" @click="batchDeleteSelected">🗑️ 批次刪除 ({{ selectedRecordings.size }})</button>
-            <button v-if="historyList.length > 0" class="btn btn-small" @click="selectAll" style="background:#888">☑️ 全選</button>
-            <button v-if="selectedRecordings.size > 0" class="btn btn-small" @click="deselectAll" style="background:#888">⬜ 取消全選</button>
+            <button v-if="selectedRecordings.size > 0" class="btn btn-small btn-move" @click="openMoveDialog">{{ $t('history.moveSelected', { count: selectedRecordings.size }) }}</button>
+            <button v-if="selectedRecordings.size > 0" class="btn btn-small btn-batch-delete" @click="batchDeleteSelected">{{ $t('history.batchDelete', { count: selectedRecordings.size }) }}</button>
+            <button v-if="historyList.length > 0" class="btn btn-small" @click="selectAll" style="background:#888">{{ $t('history.selectAll') }}</button>
+            <button v-if="selectedRecordings.size > 0" class="btn btn-small" @click="deselectAll" style="background:#888">{{ $t('history.deselectAll') }}</button>
           </div>
 
           <!-- Folder 列表 -->
@@ -212,48 +234,48 @@
           </div>
 
           <!-- 錄音記錄列表 -->
-          <div class="panel-header">📚 錄音記錄（{{ historyList.length }} 筆）</div>
+          <div class="panel-header">{{ $t('history.recordings', { count: historyList.length }) }}</div>
           <div class="panel-body">
             <div v-for="(item, idx) in historyList" :key="idx" class="history-item">
               <div class="history-info">
                 <input type="checkbox" :checked="selectedRecordings.has(item.id)" @change="toggleSelectRecording(item.id)" class="recording-checkbox" />
                 <span class="history-date">{{ item.recordedAt }}</span>
-                <span class="history-mode">{{ item.recordingMode === 'mix' ? '🖥️ 混音' : '🎙️ 麥克風' }}</span>
+                <span class="history-mode">{{ item.recordingMode === 'mix' ? $t('history.mix') : $t('history.mic') }}</span>
                 <span class="history-duration">{{ formatTime(item.duration) }}</span>
                 <span class="history-segments">{{ item.segmentCount }} 句</span>
-                <span class="audio-status" :class="item.hasAudio ? 'audio-ok' : 'audio-missing'">{{ item.hasAudio ? '🟢 有音檔' : '🔴 無音檔' }}</span>
-                <button class="btn btn-small btn-play" @click="playRecordingAudio(item)" :disabled="busy || !item.hasAudio" :title="item.hasAudio ? '播放音檔' : '無對應音檔'">▶️ 播放</button>
-                <button class="btn btn-small btn-review" @click="reviewRecording(item.id)" :disabled="busy">📖 Review</button>
-                <button class="btn btn-small btn-label" @click="editLabels(item)" :disabled="busy">🏷️</button>
-                <button class="btn btn-small btn-delete" @click="deleteRecording(item)" :disabled="busy">🗑️</button>
+                <span class="audio-status" :class="item.hasAudio ? 'audio-ok' : 'audio-missing'">{{ item.hasAudio ? $t('history.hasAudio') : $t('history.noAudio') }}</span>
+                <button class="btn btn-small btn-play" @click="playRecordingAudio(item)" :disabled="busy || !item.hasAudio" :title="item.hasAudio ? $t('history.play') : $t('history.noAudio')">{{ $t('history.play') }}</button>
+                <button class="btn btn-small btn-review" @click="reviewRecording(item.id)" :disabled="busy">{{ $t('history.review') }}</button>
+                <button class="btn btn-small btn-label" @click="editLabels(item)" :disabled="busy">{{ $t('history.label') }}</button>
+                <button class="btn btn-small btn-delete" @click="deleteRecording(item)" :disabled="busy">{{ $t('history.delete') }}</button>
               </div>
               <div class="history-labels" v-if="item.labels && item.labels.length > 0">
                 <span v-for="l in item.labels" :key="l" class="label-tag">{{ l }}</span>
               </div>
             </div>
-            <div v-if="historyList.length === 0" class="empty-hint">尚無錄音記錄</div>
+            <div v-if="historyList.length === 0" class="empty-hint">{{ $t('history.empty') }}</div>
           </div>
         </div>
 
         <!-- Label 編輯彈窗 -->
         <div v-if="showLabelEditor" class="label-editor-overlay" @click.self="closeLabelEditor">
           <div class="label-editor-panel">
-            <div class="panel-header">🏷️ 編輯標籤 — {{ editingLabelId }}</div>
+            <div class="panel-header">{{ $t('labelEditor.title', { id: editingLabelId }) }}</div>
             <div class="panel-body">
               <div class="label-editor-input-row">
-                <input v-model="newLabelInput" placeholder="輸入新標籤..." class="label-input" @keyup.enter="addLabel" />
-                <button class="btn btn-small btn-add-label" @click="addLabel">＋ 新增</button>
+                <input v-model="newLabelInput" :placeholder="$t('labelEditor.placeholder')" class="label-input" @keyup.enter="addLabel" />
+                <button class="btn btn-small btn-add-label" @click="addLabel">{{ $t('labelEditor.add') }}</button>
               </div>
               <div class="label-editor-list">
                 <div v-for="(l, i) in editingLabels" :key="i" class="label-editor-item">
                   <span class="label-tag">{{ l }}</span>
                   <button class="btn btn-tiny btn-remove-label" @click="removeLabel(i)">✕</button>
                 </div>
-                <div v-if="editingLabels.length === 0" class="empty-hint">尚無標籤</div>
+                <div v-if="editingLabels.length === 0" class="empty-hint">{{ $t('labelEditor.empty') }}</div>
               </div>
               <div class="label-editor-actions">
-                <button class="btn btn-small btn-save" @click="saveLabels">💾 儲存</button>
-                <button class="btn btn-small" @click="closeLabelEditor">取消</button>
+                <button class="btn btn-small btn-save" @click="saveLabels">{{ $t('labelEditor.save') }}</button>
+                <button class="btn btn-small" @click="closeLabelEditor">{{ $t('labelEditor.cancel') }}</button>
               </div>
             </div>
           </div>
@@ -262,12 +284,12 @@
         <!-- 新增目錄彈窗 -->
         <div v-if="showNewFolderDialog" class="label-editor-overlay" @click.self="showNewFolderDialog = false">
           <div class="label-editor-panel" style="width:350px">
-            <div class="panel-header">📁 新增目錄</div>
+            <div class="panel-header">{{ $t('folderNew.title') }}</div>
             <div class="panel-body">
-              <input v-model="newFolderName" placeholder="目錄名稱..." class="label-input" @keyup.enter="createFolder" />
+              <input v-model="newFolderName" :placeholder="$t('folderNew.placeholder')" class="label-input" @keyup.enter="createFolder" />
               <div class="label-editor-actions" style="margin-top:8px">
-                <button class="btn btn-small btn-save" @click="createFolder">💾 建立</button>
-                <button class="btn btn-small" @click="showNewFolderDialog = false; newFolderName = ''">取消</button>
+                <button class="btn btn-small btn-save" @click="createFolder">{{ $t('folderNew.create') }}</button>
+                <button class="btn btn-small" @click="showNewFolderDialog = false; newFolderName = ''">{{ $t('folderNew.cancel') }}</button>
               </div>
             </div>
           </div>
@@ -276,12 +298,12 @@
         <!-- 重新命名目錄彈窗 -->
         <div v-if="showRenameFolderDialog" class="label-editor-overlay" @click.self="showRenameFolderDialog = false">
           <div class="label-editor-panel" style="width:350px">
-            <div class="panel-header">✏️ 重新命名目錄</div>
+            <div class="panel-header">{{ $t('folderRename.title') }}</div>
             <div class="panel-body">
-              <input v-model="renameFolderName" placeholder="新名稱..." class="label-input" @keyup.enter="renameFolder" />
+              <input v-model="renameFolderName" :placeholder="$t('folderRename.placeholder')" class="label-input" @keyup.enter="renameFolder" />
               <div class="label-editor-actions" style="margin-top:8px">
-                <button class="btn btn-small btn-save" @click="renameFolder">💾 儲存</button>
-                <button class="btn btn-small" @click="showRenameFolderDialog = false; renameFolderName = ''">取消</button>
+                <button class="btn btn-small btn-save" @click="renameFolder">{{ $t('folderRename.save') }}</button>
+                <button class="btn btn-small" @click="showRenameFolderDialog = false; renameFolderName = ''">{{ $t('folderRename.cancel') }}</button>
               </div>
             </div>
           </div>
@@ -290,15 +312,15 @@
         <!-- 移動彈窗 -->
         <div v-if="showMoveDialog" class="label-editor-overlay" @click.self="showMoveDialog = false">
           <div class="label-editor-panel" style="width:400px">
-            <div class="panel-header">📁 移動 {{ selectedRecordings.size }} 筆記錄</div>
+            <div class="panel-header">{{ $t('moveDialog.title', { count: selectedRecordings.size }) }}</div>
             <div class="panel-body">
               <div class="move-folder-list">
-                <div class="move-folder-item" @click="moveToFolder('')" :class="{ selected: moveTargetFolder === '' }">📁 根目錄</div>
+                <div class="move-folder-item" @click="moveToFolder('')" :class="{ selected: moveTargetFolder === '' }">{{ $t('moveDialog.root') }}</div>
                 <div v-for="f in allFolders" :key="f" class="move-folder-item" @click="moveToFolder(f)" :class="{ selected: moveTargetFolder === f }">📁 {{ f }}</div>
               </div>
               <div class="label-editor-actions" style="margin-top:8px">
-                <button class="btn btn-small btn-save" @click="executeMove">💾 移動</button>
-                <button class="btn btn-small" @click="showMoveDialog = false; moveTargetFolder = ''">取消</button>
+                <button class="btn btn-small btn-save" @click="executeMove">{{ $t('moveDialog.move') }}</button>
+                <button class="btn btn-small" @click="showMoveDialog = false; moveTargetFolder = ''">{{ $t('moveDialog.cancel') }}</button>
               </div>
             </div>
           </div>
@@ -307,8 +329,8 @@
         <!-- 音檔列表 -->
         <div v-if="!searchKeyword && !aiQuestion && historySubTab === 'audio'" class="recording-list">
           <div class="panel-header">
-            🎵 音檔列表（{{ audioFiles.length }} 筆）
-            <button class="btn btn-small btn-batch-all" @click="batchTranscribeNew" :disabled="busy || batchNewBusy" style="margin-left:8px">🤖 全部辨識</button>
+            {{ $t('history.audioList', { count: audioFiles.length }) }}
+            <button class="btn btn-small btn-batch-all" @click="batchTranscribeNew" :disabled="busy || batchNewBusy" style="margin-left:8px">{{ $t('history.batchTranscribeAll') }}</button>
           </div>
           <div class="panel-body">
             <div v-for="(f, idx) in audioFiles" :key="idx" class="history-item">
@@ -317,11 +339,11 @@
                 <span class="history-mode">{{ (f.size / 1024).toFixed(1) }} KB</span>
                 <span class="history-duration">{{ f.ext }}</span>
                 <span class="history-segments">{{ f.mtime.slice(0, 19).replace('T', ' ') }}</span>
-                <button class="btn btn-small btn-transcribe-audio" @click="transcribeAudioFile(f.path)" :disabled="busy">🤖 辨識</button>
-                <button class="btn btn-small btn-delete" @click="deleteAudioFile(f)" :disabled="busy">🗑️</button>
+                <button class="btn btn-small btn-transcribe-audio" @click="transcribeAudioFile(f.path)" :disabled="busy">{{ $t('history.transcribeAudio') }}</button>
+                <button class="btn btn-small btn-delete" @click="deleteAudioFile(f)" :disabled="busy">{{ $t('history.delete') }}</button>
               </div>
             </div>
-            <div v-if="audioFiles.length === 0" class="empty-hint">尚無音檔</div>
+            <div v-if="audioFiles.length === 0" class="empty-hint">{{ $t('history.audioEmpty') }}</div>
           </div>
         </div>
       </div>
@@ -330,11 +352,16 @@
 </template>
 
 <script>
+import { t, LANGUAGES } from './i18n/index.js'
+
 export default {
   data() {
     return {
       appVersion: '',
       showSettings: false,
+      showLangSelect: false,
+      languages: LANGUAGES,
+      uiLanguage: 'zh-TW',
       models: [], selectedModel: 'tiny',
       audioLoaded: false, hasResult: false, busy: false,
       showProgress: false, progressPercent: 0,
@@ -390,7 +417,7 @@ export default {
       return this.llmResults[this.activeSource] || ''
     },
     activeSourceTitle() {
-      const titles = { optimized: '✨ 語句優化結果', translated: '🌐 翻譯結果', summary: '📋 會議重點整理' }
+      const titles = { optimized: this.$t('llm.optimized'), translated: this.$t('llm.translated'), summary: this.$t('llm.summary') }
       return titles[this.activeSource] || ''
     },
     canUndo() {
@@ -411,19 +438,16 @@ export default {
       return parts.map((name, i) => ({ name, path: parts.slice(0, i + 1).join('/') }))
     },
   },
-  async mounted() {
-    try { if (window.electronAPI) this.appVersion = await window.electronAPI.getVersion() } catch (e) {}
-    if (window.electronAPI && window.electronAPI.onDownloadProgress) {
-      window.electronAPI.onDownloadProgress((data) => {
-        if (data && data.percent !== undefined) this.progressPercent = data.percent
-      })
-    }
-    await this.fetchModels()
-    await this.fetchLlmProviders()
-    await this.loadSettings()
-  },
-  beforeUnmount() { this.cleanupRecording() },
   methods: {
+    $t(key, params) {
+      let text = t(key, this.uiLanguage)
+      if (params) {
+        for (const [k, v] of Object.entries(params)) {
+          text = text.replace(`{${k}}`, v)
+        }
+      }
+      return text
+    },
     formatTime(s) { return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}` },
     async fetchModels() {
       try { if (window.electronAPI) { const d = await window.electronAPI.listModels(); this.models = d.models } }
@@ -432,14 +456,14 @@ export default {
     async downloadModel() {
       if (!window.electronAPI) return
       const model = this.models.find(m => m.name === this.selectedModel)
-      if (model && model.cached) { this.statusText = `✅ ${this.selectedModel} 模型已下載`; this.statusError = false; return }
+      if (model && model.cached) { this.statusText = this.$t('status.modelCached', { model: this.selectedModel }); this.statusError = false; return }
       this.busy = true; this.showProgress = true; this.progressPercent = 0
-      this.statusText = `⬇️ 下載模型 ${this.selectedModel}...`; this.statusError = false
+      this.statusText = this.$t('status.downloading', { model: this.selectedModel }); this.statusError = false
       try {
         const r = await window.electronAPI.downloadModel(this.selectedModel)
-        if (r.success) { this.statusText = `✅ ${this.selectedModel} 模型下載完成`; this.progressPercent = 100; await this.fetchModels() }
-        else { this.statusText = `❌ 下載失敗: ${r.error}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ 下載失敗: ${e.message}`; this.statusError = true }
+        if (r.success) { this.statusText = this.$t('status.downloaded', { model: this.selectedModel }); this.progressPercent = 100; await this.fetchModels() }
+        else { this.statusText = this.$t('status.downloadFail', { error: r.error }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.downloadFail', { error: e.message }); this.statusError = true }
       finally { this.busy = false; setTimeout(() => { if (!this.busy) this.showProgress = false }, 2000) }
     },
     async fetchLlmProviders() {
@@ -457,6 +481,7 @@ export default {
       try {
         if (!window.electronAPI) return
         const s = await window.electronAPI.loadSettings()
+        if (s.uiLanguage) this.uiLanguage = s.uiLanguage
         if (s.llmProvider) this.llmProvider = s.llmProvider
         if (s.apiKeys) this.apiKeys = { ...s.apiKeys }
         if (s.llmModel) this.llmModel = s.llmModel
@@ -465,7 +490,16 @@ export default {
         if (s.gpuDevice !== undefined) this.gpuDevice = s.gpuDevice
         if (s.recoDir) this.recoDir = s.recoDir
         for (const p of this.llmProviders) { if (this.showApiKey[p.key] === undefined) this.showApiKey[p.key] = false }
+        // 首次啟動：無 uiLanguage 設定時顯示語言選擇
+        if (!s.uiLanguage) this.showLangSelect = true
       } catch (e) {}
+    },
+    confirmLangSelect() {
+      this.showLangSelect = false
+      this.saveSettings()
+    },
+    onLangChange() {
+      this.saveSettings()
     },
     async selectRecoDir() {
       if (!window.electronAPI) return
@@ -480,7 +514,7 @@ export default {
     async reviewRecording(id) {
       if (!window.electronAPI) return
       this.nowPlaying = false; this.playingSegmentIdx = -1; this.busy = true
-      this.statusText = `📖 載入 ${id}...`; this.statusError = false
+      this.statusText = this.$t('status.loading', { id }); this.statusError = false
       try {
         const r = await window.electronAPI.recoLoadMeta({ recordingId: id })
         if (r.success && r.meta && r.meta.segments) {
@@ -490,33 +524,33 @@ export default {
           this.llmRedo = { optimized: [], translated: [], summary: [] }
           this.activeSource = 'original'; this.currentAudioPath = null; this.audioLoaded = false
           this.audioInfo = { filename: r.meta.filename || id }; this.activeTab = 'transcript'
-          this.statusText = `✅ 已載入 ${r.meta.segments.length} 句`
-        } else { this.statusText = `❌ 載入失敗: ${r.error || '無資料'}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ 載入異常: ${e.message}`; this.statusError = true }
+          this.statusText = this.$t('status.loaded', { count: r.meta.segments.length })
+        } else { this.statusText = this.$t('status.loadFail', { error: r.error || '無資料' }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.loadError', { message: e.message }); this.statusError = true }
       finally { this.busy = false }
     },
     async llmProcessRecording(id, type) {
       if (!window.electronAPI) return
       this.llmBusy = true
       const labels = { optimize: '✨ 優化', translate: '🌐 翻譯', summary: '📋 摘要' }
-      this.statusText = `${labels[type] || type} ${id}...`; this.statusError = false
+      this.statusText = this.$t('status.llmProcess', { label: labels[type] || type, id }); this.statusError = false
       try {
         const r = await window.electronAPI.recoLlmProcess({ recordingId: id, provider: this.llmProvider, apiKey: this.apiKeys[this.llmProvider] || '', model: this.llmModel, type })
-        if (r.success) { this.statusText = `✅ ${labels[type] || type} 完成` }
-        else { this.statusText = `❌ ${labels[type] || type} 失敗: ${r.error}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ ${labels[type] || type} 異常: ${e.message}`; this.statusError = true }
+        if (r.success) { this.statusText = this.$t('status.llmDone', { label: labels[type] || type }) }
+        else { this.statusText = this.$t('status.llmFail', { label: labels[type] || type, error: r.error }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.llmError', { label: labels[type] || type, message: e.message }); this.statusError = true }
       finally { this.llmBusy = false }
     },
     async batchTranscribeNew() {
       if (!window.electronAPI) return
-      this.batchNewBusy = true; this.statusText = '🤖 批次辨識新音檔...'; this.statusError = false
+      this.batchNewBusy = true; this.statusText = this.$t('status.batchTranscribing'); this.statusError = false
       try {
         const r = await window.electronAPI.recoBatchTranscribeNew({ modelSize: this.selectedModel, useGpu: this.useGpu, gpuDevice: this.gpuDevice })
         if (r.success) {
           const ok = r.results.filter(x => x.id).length; const fail = r.results.filter(x => x.error).length
-          this.statusText = `✅ 批次完成：${ok} 成功${fail > 0 ? `，${fail} 失敗` : ''}`; await this.loadAudioFiles()
-        } else { this.statusText = `❌ 批次失敗: ${r.error}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ 批次異常: ${e.message}`; this.statusError = true }
+          this.statusText = this.$t('status.batchDone', { ok, fail: fail > 0 ? `，${fail} 失敗` : '' }); await this.loadAudioFiles()
+        } else { this.statusText = this.$t('status.batchFail', { error: r.error }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.batchError', { message: e.message }); this.statusError = true }
       finally { this.batchNewBusy = false }
     },
     async transcribeAudioFile(fileName) {
@@ -533,12 +567,12 @@ export default {
       finally { this.busy = false }
     },
     async saveSettings() {
-      if (!window.electronAPI) { this.statusText = '⚠️ 通訊模組未載入，無法儲存設定'; this.statusError = true; return }
+      if (!window.electronAPI) { this.statusText = this.$t('status.commError'); this.statusError = true; return }
       try {
-        const result = await window.electronAPI.saveSettings({ llmProvider: this.llmProvider, apiKeys: { ...this.apiKeys }, llmModel: this.llmModel, segmentMinutes: this.segmentMinutes, useGpu: this.useGpu, gpuDevice: this.gpuDevice })
-        if (result.success) { this.statusText = '✅ 設定已儲存（settings.json）'; this.statusError = false; setTimeout(() => { if (this.statusText === '✅ 設定已儲存（settings.json）') this.statusText = '就緒' }, 2000) }
-        else { this.statusText = `❌ 儲存失敗: ${result.error || '未知錯誤'}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ 儲存失敗: ${e.message}`; this.statusError = true }
+        const result = await window.electronAPI.saveSettings({ uiLanguage: this.uiLanguage, llmProvider: this.llmProvider, apiKeys: { ...this.apiKeys }, llmModel: this.llmModel, segmentMinutes: this.segmentMinutes, useGpu: this.useGpu, gpuDevice: this.gpuDevice })
+        if (result.success) { this.statusText = this.$t('status.saved'); this.statusError = false; setTimeout(() => { if (this.statusText === this.$t('status.saved')) this.statusText = this.$t('status.ready') }, 2000) }
+        else { this.statusText = this.$t('status.saveFail', { error: result.error || '未知錯誤' }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.saveFail', { error: e.message }); this.statusError = true }
     },
     onProviderChange() { const p = this.llmProviders.find(x => x.key === this.llmProvider); if (p) this.llmModel = p.defaultModel; this.saveSettings() },
 
@@ -571,7 +605,7 @@ export default {
           finalStream = s; this.recordingStream = s; this._systemStream = null; this._micStream = null
         }
         this.startMediaRecorder(finalStream, mode)
-      } catch (e) { this.cleanupRecording(); this.isRecording = false; this.recordingMode = null; this.statusText = `❌ ${e.name === 'NotAllowedError' ? '使用者拒絕授權' : e.message}`; this.statusError = true }
+      } catch (e) { this.cleanupRecording(); this.isRecording = false; this.recordingMode = null; this.statusText = e.name === 'NotAllowedError' ? this.$t('status.denied') : `❌ ${e.message}`; this.statusError = true }
     },
     startMediaRecorder(stream, mode) {
       if (this.recordingTimer) clearInterval(this.recordingTimer)
@@ -581,7 +615,7 @@ export default {
       this.mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) this.audioChunks.push(e.data) }
       this.mediaRecorder.onstop = async () => { await this.onRecorderStop(mode) }
       this.mediaRecorder.start(1000); this.isRecording = true
-      this.statusText = mode === 'mix' ? '🔴 混音錄音中...' : '🔴 麥克風錄音中...'
+      this.statusText = this.$t('status.recording', { mode: mode === 'mix' ? this.$t('status.recordingMix') : this.$t('status.recordingMic') })
       this.recordingTimer = setInterval(() => {
         this.recordingSeconds++; this._segmentElapsed++
         const m = Math.floor(this.recordingSeconds / 60); const s = this.recordingSeconds % 60
@@ -595,7 +629,7 @@ export default {
       const blob = new Blob(this.audioChunks, { type: this._segmentMimeType }); this.audioChunks = []
       if (isSegment) {
         const segIdx = this._segmentCount; this._segmentCount++; this.currentSegment = this._segmentCount
-        this.statusText = `🔴 分段 ${this.currentSegment} 儲存中...`
+        this.statusText = this.$t('status.segmentSaving', { num: this.currentSegment })
         await this.transcribeBlob(blob, this._segmentMimeType, segIdx)
         if (this.recordingStream && this.isRecording) { this.startMediaRecorder(this.recordingStream, mode) }
       } else {
@@ -603,18 +637,18 @@ export default {
         try {
           if (this.segmentMinutes > 0) {
             if (blob.size > 0) { const segIdx = this._segmentCount; this._segmentCount++; this.currentSegment = this._segmentCount; await this.transcribeBlob(blob, this._segmentMimeType, segIdx) }
-            this.statusText = `✅ 錄音完成，共 ${this.transcriptionResults.length} 句`; this.currentAudioPath = null; this.audioLoaded = true
+            this.statusText = this.$t('status.recordDoneSeg', { count: this.transcriptionResults.length }); this.currentAudioPath = null; this.audioLoaded = true
             this.audioInfo = { filename: `${mode === 'mix' ? '混音' : '麥克風'}錄音（分段）` }
           } else {
             if (blob.size > 0 && window.electronAPI) {
               const buf = Array.from(new Uint8Array(await blob.arrayBuffer()))
               const label = mode === 'mix' ? '混音' : '麥克風'
               const result = await window.electronAPI.saveRecorded({ buffer: buf, ext: 'webm' })
-              if (result.success) { this.currentAudioPath = result.path; this.audioLoaded = true; this.audioInfo = { filename: `${label}錄音.webm` }; this.hasResult = false; this.transcriptionResults = []; this.statusText = `✅ ${label}錄音完成 (${this.recordingTime})`; await this.startTranscribe() }
-              else { this.statusText = `❌ 處理失敗: ${result.error}`; this.statusError = true }
+              if (result.success) { this.currentAudioPath = result.path; this.audioLoaded = true; this.audioInfo = { filename: `${label}錄音.webm` }; this.hasResult = false; this.transcriptionResults = []; this.statusText = this.$t('status.recordDone', { label, time: this.recordingTime }); await this.startTranscribe() }
+              else { this.statusText = this.$t('status.recordFail', { error: result.error }); this.statusError = true }
             }
           }
-        } catch (e) { console.warn('錄音停止處理失敗:', e); this.statusText = `❌ 處理失敗: ${e.message}`; this.statusError = true }
+        } catch (e) { console.warn('錄音停止處理失敗:', e); this.statusText = this.$t('status.recordFail', { error: e.message }); this.statusError = true }
       }
     },
     async transcribeBlob(blob, mt, segIdx) {
@@ -628,11 +662,11 @@ export default {
             const offsetSec = segIdx * this.segmentMinutes * 60
             const shifted = r.segments.map(s => ({ start: s.start + offsetSec, end: s.end + offsetSec, text: s.text, speaker: '' }))
             this.transcriptionResults.push(...shifted); if (!this.hasResult) this.hasResult = true
-            this.statusText = `✅ 分段 ${segIdx + 1} 辨識完成（${r.segments.length} 句）`
-          } else if (r.success && (!r.segments || r.segments.length === 0)) { this.statusText = `⚠️ 分段 ${segIdx + 1} 無辨識結果` }
-          else { this.statusText = `❌ 分段 ${segIdx + 1} 辨識失敗: ${r.error || '未知錯誤'}`; this.statusError = true }
-        } else { this.statusText = `❌ 分段 ${segIdx + 1} 儲存失敗: ${result.error || '未知錯誤'}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ 分段 ${segIdx + 1} 處理異常: ${e.message}`; this.statusError = true }
+            this.statusText = this.$t('status.segmentDone', { num: segIdx + 1, count: r.segments.length })
+          } else if (r.success && (!r.segments || r.segments.length === 0)) { this.statusText = this.$t('status.segmentNoResult', { num: segIdx + 1 }) }
+          else { this.statusText = this.$t('status.segmentFail', { num: segIdx + 1, error: r.error || '未知錯誤' }); this.statusError = true }
+        } else { this.statusText = this.$t('status.segmentSaveFail', { num: segIdx + 1, error: result.error || '未知錯誤' }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.segmentError', { num: segIdx + 1, message: e.message }); this.statusError = true }
     },
     cleanupStreams(mode) {
       if (this._systemStream) { this._systemStream.getTracks().forEach(t => t.stop()); this._systemStream = null }
@@ -653,14 +687,14 @@ export default {
       if (window.electronAPI) fp = await window.electronAPI.openFileDialog()
       else fp = prompt('請輸入路徑：')
       if (!fp) return
-      this.busy = true; this.statusText = '載入中...'; this.statusError = false
+      this.busy = true; this.statusText = this.$t('status.importing'); this.statusError = false
       try {
         if (!window.electronAPI) return
         const outputDir = this.recoDir || await this.getRecoDataPath()
         const d = await window.electronAPI.importAudio({ filePath: fp, outputDir })
-        if (d.success) { this.audioLoaded = true; this.currentAudioPath = d.path; this.audioInfo = d; this.hasResult = false; this.transcriptionResults = []; this.statusText = `✅ ${d.filename}` }
-        else { this.statusText = `❌ ${d.error}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true }
+        if (d.success) { this.audioLoaded = true; this.currentAudioPath = d.path; this.audioInfo = d; this.hasResult = false; this.transcriptionResults = []; this.statusText = this.$t('status.imported', { name: d.filename }) }
+        else { this.statusText = this.$t('status.importFail', { error: d.error }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.importFail', { error: e.message }); this.statusError = true }
       finally { this.busy = false }
     },
     async getRecoDataPath() {
@@ -674,24 +708,24 @@ export default {
       const model = this.models.find(m => m.name === this.selectedModel)
       if (model && !model.cached) {
         if (!window.electronAPI) return
-        this.statusText = `下載模型 ${this.selectedModel}...`; this.showProgress = true; this.progressPercent = 0; this.busy = true
+        this.statusText = this.$t('status.downloading', { model: this.selectedModel }); this.showProgress = true; this.progressPercent = 0; this.busy = true
         try { const r = await window.electronAPI.downloadModel(this.selectedModel); if (!r.success) throw new Error(r.error) }
-        catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true; this.showProgress = false; this.busy = false; return }
+        catch (e) { this.statusText = this.$t('status.downloadFail', { error: e.message }); this.statusError = true; this.showProgress = false; this.busy = false; return }
         await this.fetchModels()
       }
-      this.busy = true; this.showProgress = true; this.progressPercent = 0; this.statusText = '辨識中...'; this.statusError = false
+      this.busy = true; this.showProgress = true; this.progressPercent = 0; this.statusText = this.$t('status.transcribing'); this.statusError = false
       try {
         if (!window.electronAPI) return
         const r = await window.electronAPI.transcribe({ audioPath: this.currentAudioPath, modelSize: this.selectedModel, useGpu: this.useGpu, gpuDevice: this.gpuDevice })
         if (r.success) {
           this.transcriptionResults = r.segments; this.hasResult = true; this.showProgress = false
-          this.statusText = `✅ 共 ${r.segments.length} 句`; this.progressPercent = 100
+          this.statusText = this.$t('status.transcribed', { count: r.segments.length }); this.progressPercent = 100
           this.llmResults = { optimized: '', translated: '', summary: '' }
           this.llmHistory = { optimized: [], translated: [], summary: [] }
           this.llmRedo = { optimized: [], translated: [], summary: [] }; this.activeSource = 'original'
           await this.saveRecordingMeta(r.segments)
-        } else { this.statusText = `❌ ${r.error}`; this.statusError = true; this.showProgress = false }
-      } catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true; this.showProgress = false }
+        } else { this.statusText = this.$t('status.transcribeFail', { error: r.error }); this.statusError = true; this.showProgress = false }
+      } catch (e) { this.statusText = this.$t('status.transcribeFail', { error: e.message }); this.statusError = true; this.showProgress = false }
       finally { this.busy = false }
     },
     async saveRecordingMeta(segments, llmResults) {
@@ -710,23 +744,23 @@ export default {
     getActiveText() { if (this.activeSource === 'original') { return this.transcriptionResults.map(s => `[${this.formatTime(s.start)}] ${s.text}`).join('\n') }; return this.llmResults[this.activeSource] || '' },
     getLlmParams() { const text = this.getActiveText(); const apiKey = this.apiKeys[this.llmProvider] || ''; return { provider: this.llmProvider, apiKey, model: this.llmModel, text } },
     async doOptimize() {
-      if (!window.electronAPI) return; this.pushHistory('optimized'); this.llmBusy = true; this.statusText = '✨ 正在優化語句...'
-      try { const r = await window.electronAPI.llmOptimize(this.getLlmParams()); if (r.success) { this.llmResults.optimized = r.result; this.activeSource = 'optimized' } else { this.statusText = `❌ ${r.error}`; this.statusError = true } }
-      catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true }
-      finally { this.llmBusy = false; this.statusText = '✅ 語句優化完成'; this.saveRecordingMeta(this.transcriptionResults) }
+      if (!window.electronAPI) return; this.pushHistory('optimized'); this.llmBusy = true; this.statusText = this.$t('status.optimizing')
+      try { const r = await window.electronAPI.llmOptimize(this.getLlmParams()); if (r.success) { this.llmResults.optimized = r.result; this.activeSource = 'optimized' } else { this.statusText = this.$t('status.llmFail', { label: '✨ 優化', error: r.error }); this.statusError = true } }
+      catch (e) { this.statusText = this.$t('status.llmError', { label: '✨ 優化', message: e.message }); this.statusError = true }
+      finally { this.llmBusy = false; this.statusText = this.$t('status.optimized'); this.saveRecordingMeta(this.transcriptionResults) }
     },
     async doTranslate() {
       if (!window.electronAPI) return; this.pushHistory('translated')
-      const labels = { ja: '🇯🇵 日文', en: '🇺🇸 英文', zh: '🇨🇳 中文' }; this.llmBusy = true; this.statusText = `🌐 正在翻譯成 ${labels[this.translateTarget] || this.translateTarget}...`
-      try { const params = this.getLlmParams(); params.target = this.translateTarget; const r = await window.electronAPI.llmTranslate(params); if (r.success) { this.llmResults.translated = r.result; this.activeSource = 'translated' } else { this.statusText = `❌ ${r.error}`; this.statusError = true } }
-      catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true }
-      finally { this.llmBusy = false; this.statusText = '✅ 翻譯完成'; this.saveRecordingMeta(this.transcriptionResults) }
+      const langLabels = { ja: '🇯🇵 日本語', en: '🇺🇸 English', zh: '🇨🇳 中文' }; this.llmBusy = true; this.statusText = this.$t('status.translating', { lang: langLabels[this.translateTarget] || this.translateTarget })
+      try { const params = this.getLlmParams(); params.target = this.translateTarget; const r = await window.electronAPI.llmTranslate(params); if (r.success) { this.llmResults.translated = r.result; this.activeSource = 'translated' } else { this.statusText = this.$t('status.llmFail', { label: '🌐 翻譯', error: r.error }); this.statusError = true } }
+      catch (e) { this.statusText = this.$t('status.llmError', { label: '🌐 翻譯', message: e.message }); this.statusError = true }
+      finally { this.llmBusy = false; this.statusText = this.$t('status.translated'); this.saveRecordingMeta(this.transcriptionResults) }
     },
     async doSummary() {
-      if (!window.electronAPI) return; this.pushHistory('summary'); this.llmBusy = true; this.statusText = '📋 正在提取重點...'
-      try { const r = await window.electronAPI.llmSummary(this.getLlmParams()); if (r.success) { this.llmResults.summary = r.result; this.activeSource = 'summary' } else { this.statusText = `❌ ${r.error}`; this.statusError = true } }
-      catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true }
-      finally { this.llmBusy = false; this.statusText = '✅ 重點整理完成'; this.saveRecordingMeta(this.transcriptionResults) }
+      if (!window.electronAPI) return; this.pushHistory('summary'); this.llmBusy = true; this.statusText = this.$t('status.summarizing')
+      try { const r = await window.electronAPI.llmSummary(this.getLlmParams()); if (r.success) { this.llmResults.summary = r.result; this.activeSource = 'summary' } else { this.statusText = this.$t('status.llmFail', { label: '📋 摘要', error: r.error }); this.statusError = true } }
+      catch (e) { this.statusText = this.$t('status.llmError', { label: '📋 摘要', message: e.message }); this.statusError = true }
+      finally { this.llmBusy = false; this.statusText = this.$t('status.summarized'); this.saveRecordingMeta(this.transcriptionResults) }
     },
 
     // ── 匯出 ──
@@ -735,13 +769,13 @@ export default {
       const defaultName = this.activeSource === 'original' ? '會議記錄.txt' : `${this.activeSource}.txt`
       let fp = null; if (window.electronAPI) fp = await window.electronAPI.saveFileDialog(defaultName); else fp = prompt('請輸入路徑：')
       if (!fp) return
-      this.busy = true; this.statusText = '匯出中...'; this.statusError = false
+      this.busy = true; this.statusText = this.$t('status.exporting'); this.statusError = false
       try {
         if (!window.electronAPI) return; const fmt = fp.endsWith('.md') ? 'md' : 'txt'
         let results; if (this.activeSource === 'original') { results = [...this.transcriptionResults] } else { const text = this.llmResults[this.activeSource] || ''; results = [{ start: 0, end: 0, text }] }
         const r = await window.electronAPI.exportSave({ format: fmt, results, filePath: fp })
-        if (r.success) this.statusText = `✅ ${fp}`; else { this.statusText = `❌ ${r.error}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true }
+        if (r.success) this.statusText = this.$t('status.exported', { path: fp }); else { this.statusText = this.$t('status.exportFail', { error: r.error }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.exportFail', { error: e.message }); this.statusError = true }
       finally { this.busy = false }
     },
 
@@ -780,26 +814,26 @@ export default {
       if (!this.newFolderName.trim() || !window.electronAPI) return
       try {
         const r = await window.electronAPI.recoCreateFolder({ folderName: this.newFolderName.trim(), parentFolder: this.currentFolder || undefined })
-        if (r.success) { this.statusText = '✅ 目錄已建立'; this.showNewFolderDialog = false; this.newFolderName = ''; await this.loadHistory() }
-        else { this.statusText = `❌ ${r.error}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true }
+        if (r.success) { this.statusText = this.$t('status.folderCreated'); this.showNewFolderDialog = false; this.newFolderName = ''; await this.loadHistory() }
+        else { this.statusText = this.$t('status.folderCreateFail', { error: r.error }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.folderCreateFail', { error: e.message }); this.statusError = true }
     },
     async deleteCurrentFolder() {
       if (!this.currentFolder || !window.electronAPI) return
-      if (!confirm(`確定要刪除目錄「${this.currentFolder}」及其所有內容嗎？\n此操作無法復原。`)) return
+      if (!confirm(this.$t('confirm.deleteFolder', { name: this.currentFolder }))) return
       try {
         const r = await window.electronAPI.recoDeleteFolder({ folderPath: this.currentFolder })
-        if (r.success) { this.statusText = '✅ 目錄已刪除'; this.currentFolder = ''; await this.loadHistory(); await this.loadAllLabels() }
-        else { this.statusText = `❌ ${r.error}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true }
+        if (r.success) { this.statusText = this.$t('status.folderDeleted'); this.currentFolder = ''; await this.loadHistory(); await this.loadAllLabels() }
+        else { this.statusText = this.$t('status.folderDeleteFail', { error: r.error }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.folderDeleteFail', { error: e.message }); this.statusError = true }
     },
     async renameFolder() {
       if (!this.renameFolderName.trim() || !this.currentFolder || !window.electronAPI) return
       try {
         const r = await window.electronAPI.recoRenameFolder({ folderPath: this.currentFolder, newName: this.renameFolderName.trim() })
-        if (r.success) { this.statusText = '✅ 目錄已重新命名'; this.showRenameFolderDialog = false; this.renameFolderName = ''; this.currentFolder = ''; await this.loadHistory() }
-        else { this.statusText = `❌ ${r.error}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true }
+        if (r.success) { this.statusText = this.$t('status.folderRenamed'); this.showRenameFolderDialog = false; this.renameFolderName = ''; this.currentFolder = ''; await this.loadHistory() }
+        else { this.statusText = this.$t('status.folderRenameFail', { error: r.error }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.folderRenameFail', { error: e.message }); this.statusError = true }
     },
     // 多選
     toggleSelectRecording(id) {
@@ -816,20 +850,20 @@ export default {
       try {
         const ids = Array.from(this.selectedRecordings)
         const r = await window.electronAPI.recoMoveRecordings({ recordingIds: ids, targetFolder: this.moveTargetFolder || undefined })
-        if (r.success) { this.statusText = `✅ 已移動 ${r.moved} 筆記錄`; this.showMoveDialog = false; this.moveTargetFolder = ''; this.selectedRecordings = new Set(); await this.loadHistory(); await this.loadAllLabels() }
-        else { this.statusText = `❌ ${r.error}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true }
+        if (r.success) { this.statusText = this.$t('status.moved', { count: r.moved }); this.showMoveDialog = false; this.moveTargetFolder = ''; this.selectedRecordings = new Set(); await this.loadHistory(); await this.loadAllLabels() }
+        else { this.statusText = this.$t('status.moveFail', { error: r.error }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.moveFail', { error: e.message }); this.statusError = true }
     },
     // 批次刪除
     async batchDeleteSelected() {
       if (!window.electronAPI || this.selectedRecordings.size === 0) return
-      if (!confirm(`確定要刪除所選的 ${this.selectedRecordings.size} 筆記錄嗎？\n此操作無法復原。`)) return
+      if (!confirm(this.$t('confirm.batchDelete', { count: this.selectedRecordings.size }))) return
       try {
         const ids = Array.from(this.selectedRecordings)
         const r = await window.electronAPI.recoBatchDelete({ recordingIds: ids })
-        if (r.success) { this.statusText = `✅ 已刪除 ${r.deleted} 筆記錄`; this.selectedRecordings = new Set(); await this.loadHistory(); await this.loadAllLabels() }
-        else { this.statusText = `❌ ${r.error}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true }
+        if (r.success) { this.statusText = this.$t('status.batchDeleted', { count: r.deleted }); this.selectedRecordings = new Set(); await this.loadHistory(); await this.loadAllLabels() }
+        else { this.statusText = this.$t('status.batchDeleteFail', { error: r.error }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.batchDeleteFail', { error: e.message }); this.statusError = true }
     },
     async doSearch() {
       if (!this.searchKeyword.trim() || !window.electronAPI) return
@@ -839,12 +873,12 @@ export default {
     },
     async doAiQuery() {
       if (!this.aiQuestion.trim() || !window.electronAPI) return
-      this.aiBusy = true; this.searchResults = []; this.aiResult = ''; this.statusText = '🤖 AI 查詢中...'
+      this.aiBusy = true; this.searchResults = []; this.aiResult = ''; this.statusText = this.$t('status.aiQuerying')
       try {
         const r = await window.electronAPI.recoAiQuery({ provider: this.llmProvider, apiKey: this.apiKeys[this.llmProvider] || '', model: this.llmModel, question: this.aiQuestion.trim() })
-        if (r.success) this.aiResult = r.result; else this.statusText = `❌ AI 查詢失敗: ${r.error}`
-      } catch (e) { this.statusText = `❌ AI 查詢失敗: ${e.message}` }
-      finally { this.aiBusy = false; this.statusText = '就緒' }
+        if (r.success) this.aiResult = r.result; else this.statusText = this.$t('status.aiQueryFail', { error: r.error })
+      } catch (e) { this.statusText = this.$t('status.aiQueryFail', { error: e.message }) }
+      finally { this.aiBusy = false; this.statusText = this.$t('status.ready') }
     },
 
     // ── Label 管理 ──
@@ -852,7 +886,7 @@ export default {
     closeLabelEditor() { this.showLabelEditor = false; this.editingLabelId = ''; this.editingLabels = []; this.newLabelInput = '' },
     addLabel() {
       const label = this.newLabelInput.trim(); if (!label) return
-      if (this.editingLabels.includes(label)) { this.statusText = `⚠️ 標籤「${label}」已存在`; this.statusError = true; return }
+      if (this.editingLabels.includes(label)) { this.statusText = this.$t('status.labelExists', { label }); this.statusError = true; return }
       this.editingLabels.push(label); this.newLabelInput = ''
     },
     removeLabel(idx) { this.editingLabels.splice(idx, 1) },
@@ -860,9 +894,9 @@ export default {
       if (!window.electronAPI) return
       try {
         const r = await window.electronAPI.recoUpdateLabels({ recordingId: this.editingLabelId, labels: [...this.editingLabels] })
-        if (r.success) { this.statusText = '✅ 標籤已更新'; this.closeLabelEditor(); await this.loadHistory(); await this.loadAllLabels() }
-        else { this.statusText = `❌ 標籤更新失敗: ${r.error}`; this.statusError = true }
-      } catch (e) { this.statusText = `❌ 標籤更新異常: ${e.message}`; this.statusError = true }
+        if (r.success) { this.statusText = this.$t('status.labelUpdated'); this.closeLabelEditor(); await this.loadHistory(); await this.loadAllLabels() }
+        else { this.statusText = this.$t('status.labelUpdateFail', { error: r.error }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.labelUpdateError', { message: e.message }); this.statusError = true }
     },
 
     // ── 搜尋結果跳轉 ──
@@ -889,7 +923,7 @@ export default {
       const seekAndPlay = () => {
         if (Math.abs(audio.currentTime - seg.start) < 0.05 && !audio.paused) { return }
         const doSeekAndPlay = () => {
-          const onSeeked = () => { audio.removeEventListener('seeked', onSeeked); audio.play().then(() => { this.nowPlaying = true; this.playingSegmentIdx = idx }).catch(e => { console.warn('播放失敗:', e); this.statusText = '❌ 播放失敗，音檔可能不支援此格式'; this.statusError = true }) }
+          const onSeeked = () => { audio.removeEventListener('seeked', onSeeked); audio.play().then(() => { this.nowPlaying = true; this.playingSegmentIdx = idx }).catch(e => { console.warn('播放失敗:', e); this.statusText = this.$t('status.playFail'); this.statusError = true }) }
           audio.addEventListener('seeked', onSeeked); audio.currentTime = seg.start
         }
         if (audio.paused) { doSeekAndPlay() } else { const onPaused = () => { audio.removeEventListener('pause', onPaused); doSeekAndPlay() }; audio.addEventListener('pause', onPaused); audio.pause() }
@@ -910,24 +944,24 @@ export default {
     // ── 刪除錄音記錄 ──
     async deleteRecording(item) {
       if (!window.electronAPI) return
-      if (!confirm(`確定要刪除錄音記錄「${item.filename || item.id}」嗎？\n此操作無法復原。`)) return
-      this.statusText = `🗑️ 刪除記錄 ${item.id}...`; this.statusError = false
-      try { const r = await window.electronAPI.recoDeleteMeta({ recordingId: item.id }); if (r.success) { this.statusText = '✅ 記錄已刪除'; await this.loadHistory(); await this.loadAllLabels() } else { this.statusText = `❌ 刪除失敗: ${r.error}`; this.statusError = true } }
-      catch (e) { this.statusText = `❌ 刪除異常: ${e.message}`; this.statusError = true }
+      if (!confirm(this.$t('confirm.deleteRecording', { name: item.filename || item.id }))) return
+      this.statusText = this.$t('status.deleting', { id: item.id }); this.statusError = false
+      try { const r = await window.electronAPI.recoDeleteMeta({ recordingId: item.id }); if (r.success) { this.statusText = this.$t('status.deleted'); await this.loadHistory(); await this.loadAllLabels() } else { this.statusText = this.$t('status.deleteFail', { error: r.error }); this.statusError = true } }
+      catch (e) { this.statusText = this.$t('status.deleteError', { message: e.message }); this.statusError = true }
     },
 
     // ── 刪除音檔 ──
     async deleteAudioFile(file) {
       if (!window.electronAPI) return
-      if (!confirm(`確定要刪除音檔「${file.name}」嗎？\n此操作無法復原。`)) return
-      this.statusText = `🗑️ 刪除音檔 ${file.name}...`; this.statusError = false
-      try { const r = await window.electronAPI.recoDeleteAudio({ audioPath: file.path }); if (r.success) { this.statusText = '✅ 音檔已刪除'; await this.loadAudioFiles() } else { this.statusText = `❌ 刪除失敗: ${r.error}`; this.statusError = true } }
-      catch (e) { this.statusText = `❌ 刪除異常: ${e.message}`; this.statusError = true }
+      if (!confirm(this.$t('confirm.deleteAudio', { name: file.name }))) return
+      this.statusText = this.$t('status.audioDeleting', { name: file.name }); this.statusError = false
+      try { const r = await window.electronAPI.recoDeleteAudio({ audioPath: file.path }); if (r.success) { this.statusText = this.$t('status.audioDeleted'); await this.loadAudioFiles() } else { this.statusText = this.$t('status.audioDeleteFail', { error: r.error }); this.statusError = true } }
+      catch (e) { this.statusText = this.$t('status.audioDeleteError', { message: e.message }); this.statusError = true }
     },
 
     // ── 從歷史記錄播放音檔 ──
     async playRecordingAudio(item) {
-      if (!item.audioPath || !item.hasAudio) { this.statusText = '❌ 無對應音檔可播放'; this.statusError = true; return }
+      if (!item.audioPath || !item.hasAudio) { this.statusText = this.$t('status.noAudio'); this.statusError = true; return }
       this.stopPlayback(); await this.loadAudioUrl(item.audioPath)
       if (this.currentAudioUrl) { await this.reviewRecording(item.id) }
     },
@@ -946,6 +980,7 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .api-key-input { width: 200px; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; }
 .model-input { width: 200px; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; }
 .setting-row select { padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; }
+.lang-select-small { padding: 4px 8px; border: 1px solid #1565C0; border-radius: 4px; font-size: 12px; background: white; font-weight: bold; color: #1565C0; }
 
 .control-bar { display: flex; align-items: center; gap: 6px; background: #f5f5f5; border-radius: 6px; padding: 6px 10px; flex-wrap: wrap; }
 .btn { padding: 6px 14px; border: none; border-radius: 5px; font-size: 13px; font-weight: bold; cursor: pointer; color: white; transition: background .2s; white-space: nowrap; }
@@ -1106,4 +1141,10 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .move-folder-item { padding: 6px 10px; cursor: pointer; font-size: 12px; border-radius: 4px; }
 .move-folder-item:hover { background: #f0f0f0; }
 .move-folder-item.selected { background: #e3f2fd; color: #1565C0; font-weight: bold; }
+
+/* 語言選擇按鈕 */
+.lang-select-buttons { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.btn-lang { background: #e0e0e0; color: #333; padding: 8px 20px; font-size: 14px; border: 2px solid transparent; border-radius: 6px; cursor: pointer; transition: all .2s; }
+.btn-lang:hover { background: #bbdefb; }
+.btn-lang.selected { background: #1565C0; color: white; border-color: #0D47A1; }
 </style>

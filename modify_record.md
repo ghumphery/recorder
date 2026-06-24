@@ -855,3 +855,26 @@
   - `Product_Design_Guidelines.md` 版本更新至 1.5.2
 - 完成原始碼備份: backup-202606241003.zip
 
+## [2026-06-24 10:25]
+- **version**: 1.13.0
+- **修改要求**：1) 提供 中/英/日 操作介面，可在第一次啟動（無設定檔）或系統設定介面設定操作介面語言；2) 說明文件提供 中/英/日 版本，更新 workrule.md 未來文件更新須提供多語言版本。
+- **修改規劃**：
+  1. 建立 i18n 基礎架構：`frontend/src/i18n/` 目錄，包含 zh-TW.js、en.js、ja.js 語言檔及 index.js 載入器
+  2. 修改 `App.vue`：所有硬編碼中文文字改為 `$t('key')` 呼叫；設定面板新增語言下拉選單；首次啟動（無 uiLanguage 設定）顯示語言選擇對話框
+  3. 建立多語言文件：`readme_en.md`、`readme_ja.md`、`modify_record_en.md`、`modify_record_ja.md`
+  4. 更新 `workrule.md` 第 4 節，加入多語言文件維護規範
+  5. 版本號 1.12.2 → 1.13.0（次版號新增功能，向下相容）
+- **修改結果**：
+  - `frontend/src/i18n/zh-TW.js` — ~200 條 key-value 繁體中文語言檔
+  - `frontend/src/i18n/en.js` — ~200 條 key-value 英文語言檔
+  - `frontend/src/i18n/ja.js` — ~200 條 key-value 日文語言檔
+  - `frontend/src/i18n/index.js` — `t(key, lang)` 函式 + `LANGUAGES` 匯出
+  - `frontend/src/App.vue` — 所有 UI 文字改為 `$t()` 動態載入；設定面板新增語言選擇；首次啟動語言選擇對話框
+  - `readme_en.md` — readme 英文版
+  - `readme_ja.md` — readme 日文版
+  - `modify_record_en.md` — 修改日誌英文版（僅 v1.13.0 以後）
+  - `modify_record_ja.md` — 修改日誌日文版（僅 v1.13.0 以後）
+  - `.clinerules/workrule.md` — 第 4 節更新，加入多語言文件維護規範
+  - `frontend/package.json` — 版本號更新為 1.13.0
+- 完成原始碼備份: backup-202606241025.zip
+
