@@ -180,6 +180,479 @@ async function callLLM(provider, apiKey, model, prompt, systemPrompt) {
   } finally { clearTimeout(timeout) }
 }
 
+// ── Token 估算與模型 Context Limit ──
+
+const KNOWN_MODEL_CONTEXTS = {
+  // Ollama 常見模型
+  'llama3': 8192,
+  'llama3.2': 8192,
+  'llama3.1': 8192,
+  'llama2': 4096,
+  'mistral': 8192,
+  'mixtral': 32768,
+  'codellama': 16384,
+  'qwen2.5': 32768,
+  'qwen2': 32768,
+  'gemma2': 8192,
+  'gemma': 8192,
+  'phi3': 4096,
+  'phi': 4096,
+  'deepseek': 4096,
+  'nomic-embed-text': 8192,
+  // OpenRouter 常見模型
+  'google/gemma-2-9b-it': 8192,
+  'google/gemma-2-27b-it': 8192,
+  'meta-llama/llama-3.2-3b-instruct': 8192,
+  'meta-llama/llama-3.2-11b-vision-instruct': 8192,
+  'meta-llama/llama-3.1-8b-instruct': 8192,
+  'meta-llama/llama-3.1-70b-instruct': 8192,
+  'mistralai/mistral-7b-instruct': 8192,
+  'mistralai/mixtral-8x7b-instruct': 32768,
+  'qwen/qwen-2.5-7b-instruct': 32768,
+  'qwen/qwen-2.5-72b-instruct': 32768,
+  // SiliconFlow 常見模型
+  'Qwen/Qwen2.5-7B-Instruct': 32768,
+  'Qwen/Qwen2.5-14B-Instruct': 32768,
+  'Qwen/Qwen2.5-72B-Instruct': 32768,
+  'THUDM/glm-4-9b-chat': 8192,
+  '01-ai/Yi-1.5-9B-Chat': 4096,
+  // Gemini
+  'gemini-2.0-flash': 1048576,
+  'gemini-2.0-flash-lite': 1048576,
+  'gemini-1.5-flash': 1048576,
+  'gemini-1.5-pro': 1048576,
+}
+
+function estimateTokens(text) {
+  if (!text) return 0
+  let tokens = 0
+  for (const char of text) {
+    const code = char.charCodeAt(0)
+    if (code > 0x4E00 && code < 0x9FFF) {
+      // CJK Unified Ideographs: ~1.5 tokens per character
+      tokens += 1.5
+    } else if (code >= 0x3040 && code <= 0x30FF) {
+      // Hiragana + Katakana: ~1.5 tokens
+      tokens += 1.5
+    } else if (code >= 0xAC00 && code <= 0xD7AF) {
+      // Hangul: ~1.5 tokens
+      tokens += 1.5
+    } else {
+      // ASCII and others: ~0.25 tokens per character
+      tokens += 0.25
+    }
+  }
+  return Math.ceil(tokens)
+}
+
+async function getModelContextLimit(provider, model) {
+  const modelKey = (model || '').toLowerCase().trim()
+  // 1. Check known model table
+  for (const [key, limit] of Object.entries(KNOWN_MODEL_CONTEXTS)) {
+    if (modelKey.includes(key.toLowerCase())) return limit
+  }
+  // 2. For Ollama, try to query model info
+  if (provider === 'ollama') {
+    try {
+      const res = await fetch(`http://127.0.0.1:11434/api/show`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: model || 'llama3' }),
+        signal: AbortSignal.timeout(5000),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.modelfile) {
+          const match = data.modelfile.match(/num_ctx\s+(\d+)/i)
+          if (match) return parseInt(match[1])
+        }
+        if (data.model_info) {
+          // Try to find context length in model_info
+          for (const [k, v] of Object.entries(data.model_info)) {
+            if (k.includes('context_length') && typeof v === 'number') return v
+          }
+        }
+      }
+    } catch (e) {
+      appLog('WARN', 'llm', `無法查詢 Ollama 模型資訊: ${e.message}`)
+    }
+  }
+  // 3. Fallback
+  return 4096
+}
+
+// ── LLM Job Manager ──
+
+class LlmJobManager {
+  constructor() {
+    this.jobQueue = []
+    this.activeJob = null
+    this.jobHistory = []
+    this.maxHistory = 50
+    this.jobCounter = 0
+  }
+
+  setMainWindow(win) {
+    this.mainWindow = win
+  }
+
+  _generateId() {
+    this.jobCounter++
+    const now = new Date()
+    return `job_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}_${String(this.jobCounter).padStart(3,'0')}`
+  }
+
+  _log(job, message) {
+    const time = new Date().toTimeString().slice(0, 8)
+    job.log.push(`[${time}] ${message}`)
+    appLog('INFO', 'llm-job', `[${job.id}] ${message}`)
+  }
+
+  _sendUpdate(job) {
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('llm:jobUpdate', {
+        id: job.id,
+        type: job.type,
+        status: job.status,
+        progress: job.progress,
+        log: job.log.slice(-20),
+        error: job.error,
+      })
+    }
+  }
+
+  addJob(type, params) {
+    const job = {
+      id: this._generateId(),
+      type,
+      status: 'pending',
+      progress: { batch: 0, totalBatches: 0, percent: 0 },
+      createdAt: new Date().toISOString(),
+      startedAt: null,
+      completedAt: null,
+      error: null,
+      result: null,
+      log: [],
+      params,
+    }
+    this._log(job, `Job created: ${type}`)
+    this.jobQueue.push(job)
+    this._sendUpdate(job)
+    this.processNext()
+    return job.id
+  }
+
+  async processNext() {
+    if (this.activeJob || this.jobQueue.length === 0) return
+    this.activeJob = this.jobQueue.shift()
+    this.activeJob.status = 'running'
+    this.activeJob.startedAt = new Date().toISOString()
+    this._log(this.activeJob, 'Job started')
+    this._sendUpdate(this.activeJob)
+    try {
+      await this._executeJob(this.activeJob)
+      this.activeJob.status = 'completed'
+      this.activeJob.completedAt = new Date().toISOString()
+      this._log(this.activeJob, 'Job completed')
+      this._sendUpdate(this.activeJob)
+    } catch (e) {
+      this.activeJob.status = 'failed'
+      this.activeJob.error = e.message
+      this.activeJob.completedAt = new Date().toISOString()
+      this._log(this.activeJob, `Job failed: ${e.message}`)
+      this._sendUpdate(this.activeJob)
+    }
+    this.jobHistory.unshift(this.activeJob)
+    if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+    this.activeJob = null
+    this.processNext()
+  }
+
+  cancelJob(jobId) {
+    const idx = this.jobQueue.findIndex(j => j.id === jobId)
+    if (idx >= 0) {
+      const job = this.jobQueue.splice(idx, 1)[0]
+      job.status = 'cancelled'
+      job.completedAt = new Date().toISOString()
+      this._log(job, 'Job cancelled')
+      this._sendUpdate(job)
+      this.jobHistory.unshift(job)
+      if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+      return true
+    }
+    if (this.activeJob && this.activeJob.id === jobId) {
+      this.activeJob.status = 'cancelled'
+      this.activeJob.completedAt = new Date().toISOString()
+      this._log(this.activeJob, 'Job cancelled')
+      this._sendUpdate(this.activeJob)
+      this.jobHistory.unshift(this.activeJob)
+      if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+      this.activeJob = null
+      this.processNext()
+      return true
+    }
+    return false
+  }
+
+  getJobStatus(jobId) {
+    // Check active
+    if (this.activeJob && this.activeJob.id === jobId) {
+      return { ...this.activeJob, log: this.activeJob.log.slice(-20) }
+    }
+    // Check queue
+    const queued = this.jobQueue.find(j => j.id === jobId)
+    if (queued) return { ...queued, log: queued.log.slice(-20) }
+    // Check history
+    const hist = this.jobHistory.find(j => j.id === jobId)
+    if (hist) return { ...hist, log: hist.log.slice(-20) }
+    return null
+  }
+
+  listJobs() {
+    const all = [
+      ...(this.activeJob ? [{ ...this.activeJob, log: this.activeJob.log.slice(-5) }] : []),
+      ...this.jobQueue.map(j => ({ ...j, log: j.log.slice(-5) })),
+      ...this.jobHistory.slice(0, 20).map(j => ({ ...j, log: j.log.slice(-5) })),
+    ]
+    return all
+  }
+
+  async _executeJob(job) {
+    const { type } = job
+    if (type === 'optimize') await this._executeOptimize(job)
+    else if (type === 'translate') await this._executeTranslate(job)
+    else if (type === 'summary') await this._executeSummary(job)
+    else if (type === 'aiQuery') await this._executeAiQuery(job)
+    else throw new Error(`Unknown job type: ${type}`)
+  }
+
+  _parseOptimizedResult(llmOutput, originalSegments) {
+    const lines = llmOutput.split('\n').filter(l => l.trim())
+    const result = []
+    for (const line of lines) {
+      const match = line.match(/^\[(\d+)\]\s*(.*)/)
+      if (match) {
+        const idx = parseInt(match[1]) - 1
+        const text = match[2].trim()
+        if (idx >= 0 && idx < originalSegments.length) {
+          result.push({
+            ...originalSegments[idx],
+            optimizedText: text,
+          })
+        }
+      }
+    }
+    // If parsing failed, return original segments with empty optimizedText
+    if (result.length === 0) {
+      return originalSegments.map(s => ({ ...s, optimizedText: '' }))
+    }
+    return result
+  }
+
+  _splitIntoBatches(segments, maxInputTokens, systemPrompt) {
+    const batches = []
+    let currentBatch = []
+    let currentTokens = estimateTokens(systemPrompt)
+
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]
+      const lineTokens = estimateTokens(`[${currentBatch.length + 1}] ${seg.text}\n`)
+      if (currentTokens + lineTokens > maxInputTokens && currentBatch.length > 0) {
+        batches.push(currentBatch)
+        currentBatch = []
+        currentTokens = estimateTokens(systemPrompt)
+      }
+      currentBatch.push(seg)
+      currentTokens += lineTokens
+    }
+    if (currentBatch.length > 0) batches.push(currentBatch)
+    return batches
+  }
+
+  async _executeOptimize(job) {
+    const { provider, apiKey, model, segments } = job.params
+    if (!segments || segments.length === 0) throw new Error('無逐字稿內容')
+
+    const numberedInput = segments.map((s, i) => `[${i+1}] ${s.text}`).join('\n')
+    const systemPrompt = '你是一個專業的會議記錄編輯。以下是逐字稿的每個句子（含編號）。請對每個句子進行優化：修正口語化表達、改善語句流暢度、保留原意。輸出格式：每行一個優化後的句子，以 "[編號] 優化文字" 格式輸出，編號必須與輸入一致。不要合併或拆分句子，不要額外說明。'
+
+    const totalInput = systemPrompt + '\n\n' + numberedInput
+    const estimatedTokens = estimateTokens(totalInput)
+    const contextLimit = await getModelContextLimit(provider, model)
+    const outputBudget = Math.floor(contextLimit * 0.2)
+    const maxInputTokens = contextLimit - outputBudget
+
+    this._log(job, `Token 估算: ${estimatedTokens}, 模型上限: ${contextLimit}, 輸入上限: ${maxInputTokens}`)
+
+    if (estimatedTokens <= maxInputTokens) {
+      job.progress = { batch: 1, totalBatches: 1, percent: 0 }
+      this._sendUpdate(job)
+      const result = await callLLM(provider, apiKey, model, numberedInput, systemPrompt)
+      job.progress = { batch: 1, totalBatches: 1, percent: 100 }
+      job.result = this._parseOptimizedResult(result, segments)
+      this._log(job, `優化完成: ${job.result.length} 句`)
+    } else {
+      const batches = this._splitIntoBatches(segments, maxInputTokens, systemPrompt)
+      job.progress = { batch: 0, totalBatches: batches.length, percent: 0 }
+      this._log(job, `分批處理: ${batches.length} 批`)
+      this._sendUpdate(job)
+
+      const allResults = []
+      for (let i = 0; i < batches.length; i++) {
+        if (job.status === 'cancelled') throw new Error('Job 已取消')
+        const batch = batches[i]
+        const batchInput = batch.map((s, j) => `[${j+1}] ${s.text}`).join('\n')
+        job.progress = { batch: i + 1, totalBatches: batches.length, percent: Math.round(((i) / batches.length) * 100) }
+        this._log(job, `處理第 ${i+1}/${batches.length} 批 (${batch.length} 句)`)
+        this._sendUpdate(job)
+
+        const batchResult = await callLLM(provider, apiKey, model, batchInput, systemPrompt)
+        const parsed = this._parseOptimizedResult(batchResult, batch)
+        allResults.push(...parsed)
+      }
+      job.progress = { batch: batches.length, totalBatches: batches.length, percent: 100 }
+      job.result = allResults
+      this._log(job, `分批優化完成: ${allResults.length} 句`)
+    }
+  }
+
+  async _executeTranslate(job) {
+    const { provider, apiKey, model, text, target } = job.params
+    if (!text) throw new Error('無逐字稿內容')
+
+    let systemPrompt
+    if (target === 'ja') {
+      systemPrompt = '你是一個專業的翻譯。請將以下中文逐字稿逐句翻譯為日文。輸出格式為每行「[中文] 原文\n[日文] 翻譯」，句與句之間空一行。保留原意，不要額外說明。'
+    } else if (target === 'en') {
+      systemPrompt = 'You are a professional translator. Translate the following Chinese transcript into English sentence by sentence. Output format: each line pair "[中文] original text\n[English] translation", with a blank line between sentence pairs. Preserve the original meaning, no extra commentary.'
+    } else {
+      systemPrompt = '你是一個專業的翻譯。請將以下逐字稿逐句翻譯為繁體中文。輸出格式為每行「[原文] 原文\n[中文] 翻譯」，句與句之間空一行。保留原意，不要額外說明。'
+    }
+
+    const totalInput = systemPrompt + '\n\n' + text
+    const estimatedTokens = estimateTokens(totalInput)
+    const contextLimit = await getModelContextLimit(provider, model)
+    const outputBudget = Math.floor(contextLimit * 0.3)
+    const maxInputTokens = contextLimit - outputBudget
+
+    this._log(job, `Token 估算: ${estimatedTokens}, 模型上限: ${contextLimit}`)
+
+    if (estimatedTokens <= maxInputTokens) {
+      job.progress = { batch: 1, totalBatches: 1, percent: 0 }
+      this._sendUpdate(job)
+      const result = await callLLM(provider, apiKey, model, text, systemPrompt)
+      job.progress = { batch: 1, totalBatches: 1, percent: 100 }
+      job.result = result
+      this._log(job, '翻譯完成')
+    } else {
+      // For translation, split by character count (rough estimate)
+      const maxChars = Math.floor((maxInputTokens - estimateTokens(systemPrompt)) / 1.5)
+      const chunks = []
+      let current = ''
+      for (const line of text.split('\n')) {
+        if (current.length + line.length > maxChars && current.length > 0) {
+          chunks.push(current)
+          current = line + '\n'
+        } else {
+          current += line + '\n'
+        }
+      }
+      if (current.trim()) chunks.push(current.trim())
+
+      job.progress = { batch: 0, totalBatches: chunks.length, percent: 0 }
+      this._log(job, `分批翻譯: ${chunks.length} 批`)
+      this._sendUpdate(job)
+
+      let fullResult = ''
+      for (let i = 0; i < chunks.length; i++) {
+        if (job.status === 'cancelled') throw new Error('Job 已取消')
+        job.progress = { batch: i + 1, totalBatches: chunks.length, percent: Math.round(((i) / chunks.length) * 100) }
+        this._log(job, `翻譯第 ${i+1}/${chunks.length} 批`)
+        this._sendUpdate(job)
+        const chunkResult = await callLLM(provider, apiKey, model, chunks[i], systemPrompt)
+        fullResult += chunkResult + '\n\n'
+      }
+      job.progress = { batch: chunks.length, totalBatches: chunks.length, percent: 100 }
+      job.result = fullResult.trim()
+      this._log(job, '分批翻譯完成')
+    }
+  }
+
+  async _executeSummary(job) {
+    const { provider, apiKey, model, text } = job.params
+    if (!text) throw new Error('無逐字稿內容')
+
+    const systemPrompt = '你是一個專業的會議記錄分析師。請根據以下逐字稿，提取：\n1. 會議摘要（3-5句話）\n2. 重要決策\n3. 待辦事項\n4. 關鍵時間點\n\n使用繁體中文輸出，條列式呈現。'
+
+    const totalInput = systemPrompt + '\n\n' + text
+    const estimatedTokens = estimateTokens(totalInput)
+    const contextLimit = await getModelContextLimit(provider, model)
+    const outputBudget = Math.floor(contextLimit * 0.3)
+    const maxInputTokens = contextLimit - outputBudget
+
+    this._log(job, `Token 估算: ${estimatedTokens}, 模型上限: ${contextLimit}`)
+
+    if (estimatedTokens <= maxInputTokens) {
+      job.progress = { batch: 1, totalBatches: 1, percent: 0 }
+      this._sendUpdate(job)
+      const result = await callLLM(provider, apiKey, model, text, systemPrompt)
+      job.progress = { batch: 1, totalBatches: 1, percent: 100 }
+      job.result = result
+      this._log(job, '摘要完成')
+    } else {
+      // For long text, take first portion that fits
+      const maxChars = Math.floor((maxInputTokens - estimateTokens(systemPrompt)) / 1.5)
+      const truncated = text.length > maxChars ? text.slice(0, maxChars) + '\n\n[注意：原文過長，已截斷處理]' : text
+      this._log(job, `原文過長 (${text.length} 字)，截斷為 ${maxChars} 字`)
+      job.progress = { batch: 1, totalBatches: 1, percent: 0 }
+      this._sendUpdate(job)
+      const result = await callLLM(provider, apiKey, model, truncated, systemPrompt)
+      job.progress = { batch: 1, totalBatches: 1, percent: 100 }
+      job.result = result
+      this._log(job, '摘要完成（截斷）')
+    }
+  }
+
+  async _executeAiQuery(job) {
+    const { provider, apiKey, model, question, context } = job.params
+    if (!question) throw new Error('無查詢問題')
+
+    const systemPrompt = '你是一個專業的會議記錄分析師。根據提供的逐字稿內容回答問題，並標註資訊來源（錄音檔名、時間戳）。使用繁體中文。'
+    const prompt = `以下是多筆會議錄音的逐字稿內容：\n\n${context}\n\n請根據以上內容回答使用者的問題。請引用來源錄音檔名和時間戳。\n\n問題：${question}`
+
+    const totalInput = systemPrompt + '\n\n' + prompt
+    const estimatedTokens = estimateTokens(totalInput)
+    const contextLimit = await getModelContextLimit(provider, model)
+    const outputBudget = Math.floor(contextLimit * 0.3)
+    const maxInputTokens = contextLimit - outputBudget
+
+    this._log(job, `Token 估算: ${estimatedTokens}, 模型上限: ${contextLimit}`)
+
+    if (estimatedTokens <= maxInputTokens) {
+      job.progress = { batch: 1, totalBatches: 1, percent: 0 }
+      this._sendUpdate(job)
+      const result = await callLLM(provider, apiKey, model, prompt, systemPrompt)
+      job.progress = { batch: 1, totalBatches: 1, percent: 100 }
+      job.result = result
+      this._log(job, 'AI 查詢完成')
+    } else {
+      // Truncate context to fit
+      const maxContextChars = Math.floor((maxInputTokens - estimateTokens(systemPrompt + `\n\n問題：${question}`)) / 1.5)
+      const truncatedContext = context.length > maxContextChars ? context.slice(0, maxContextChars) + '\n\n[注意：部分錄音內容因長度限制已省略]' : context
+      const truncatedPrompt = `以下是多筆會議錄音的逐字稿內容：\n\n${truncatedContext}\n\n請根據以上內容回答使用者的問題。請引用來源錄音檔名和時間戳。\n\n問題：${question}`
+      this._log(job, `Context 過長，截斷為 ${maxContextChars} 字`)
+      job.progress = { batch: 1, totalBatches: 1, percent: 0 }
+      this._sendUpdate(job)
+      const result = await callLLM(provider, apiKey, model, truncatedPrompt, systemPrompt)
+      job.progress = { batch: 1, totalBatches: 1, percent: 100 }
+      job.result = result
+      this._log(job, 'AI 查詢完成（截斷）')
+    }
+  }
+}
+
+const llmJobManager = new LlmJobManager()
+
 // ── 設定檔持久化 ──
 
 const SETTINGS_VERSION = 2
@@ -370,6 +843,38 @@ ipcMain.handle('llm:providers', () => {
   return { providers: list }
 })
 
+// ── LLM Job IPC Handlers ──
+
+ipcMain.handle('llm:jobSubmit', async (event, { type, params }) => {
+  try {
+    const jobId = llmJobManager.addJob(type, params)
+    return { success: true, jobId }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('llm:jobStatus', async (event, { jobId }) => {
+  try {
+    const status = llmJobManager.getJobStatus(jobId)
+    return { success: true, job: status }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('llm:jobList', async () => {
+  try {
+    const jobs = llmJobManager.listJobs()
+    return { success: true, jobs }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('llm:jobCancel', async (event, { jobId }) => {
+  try {
+    const cancelled = llmJobManager.cancelJob(jobId)
+    return { success: true, cancelled }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── 向後相容的舊 LLM IPC（直接呼叫，無 job 機制） ──
+
 ipcMain.handle('llm:optimize', async (event, { provider, apiKey, model, text }) => {
   try {
     const result = await callLLM(provider, apiKey, model, text,
@@ -383,7 +888,7 @@ ipcMain.handle('llm:translate', async (event, { provider, apiKey, model, text, t
     let systemPrompt
     if (target === 'ja') { systemPrompt = '你是一個專業的翻譯。請將以下中文逐字稿逐句翻譯為日文。輸出格式為每行「[中文] 原文\n[日文] 翻譯」，句與句之間空一行。保留原意，不要額外說明。' }
     else if (target === 'en') { systemPrompt = 'You are a professional translator. Translate the following Chinese transcript into English sentence by sentence. Output format: each line pair "[中文] original text\n[English] translation", with a blank line between sentence pairs. Preserve the original meaning, no extra commentary.' }
-    else { systemPrompt = '你是一個專業的翻譯。請將以下逐字稿逐句翻譯為中文。輸出格式為每行「[原文] 原文\n[中文] 翻譯」，句與句之間空一行。保留原意，不要額外說明。' }
+    else { systemPrompt = '你是一個專業的翻譯。請將以下逐字稿逐句翻譯為繁體中文。輸出格式為每行「[原文] 原文\n[中文] 翻譯」，句與句之間空一行。保留原意，不要額外說明。' }
     const result = await callLLM(provider, apiKey, model, text, systemPrompt)
     return { success: true, result }
   } catch (e) { return { success: false, error: e.message } }
@@ -966,6 +1471,7 @@ function createWindow() {
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   })
+  llmJobManager.setMainWindow(mainWindow)
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => cb(['media', 'display-capture'].includes(permission)))
   session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ['screen', 'window'] }).then(sources => callback({ video: sources[0], audio: 'loopback' })).catch(() => callback({ video: null, audio: null }))

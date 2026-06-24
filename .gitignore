@@ -10,6 +10,7 @@ frontend/node_modules/
 # Build outputs
 frontend/dist/
 frontend/dist-electron/
+frontend/dist-electron-build2/
 
 # Logs
 *.log

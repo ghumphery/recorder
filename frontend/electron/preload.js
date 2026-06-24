@@ -21,6 +21,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onDownloadProgress: (callback) => {
     ipcRenderer.on('model:download-progress', (event, data) => callback(data))
   },
+  // LLM Job 管理
+  llmJobSubmit: (p) => ipcRenderer.invoke('llm:jobSubmit', p),
+  llmJobStatus: (p) => ipcRenderer.invoke('llm:jobStatus', p),
+  llmJobList: () => ipcRenderer.invoke('llm:jobList'),
+  llmJobCancel: (p) => ipcRenderer.invoke('llm:jobCancel', p),
+  onLlmJobUpdate: (callback) => {
+    ipcRenderer.on('llm:jobUpdate', (event, data) => callback(data))
+  },
   // 錄音歷史與全文檢索
   recoSaveMeta: (p) => ipcRenderer.invoke('reco:saveMeta', p),
   recoList: (p) => ipcRenderer.invoke('reco:list', p || {}),

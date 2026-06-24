@@ -39,14 +39,14 @@ npm run electron:dev
 
 ### Download Release
 
-Download the latest `Recorder-1.13.2-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
+Download the latest `Recorder-1.14.1-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
 
 ### Build from Source
 
 ```bash
 cd frontend
 npm run electron:build
-# Output: frontend/dist-electron-build/Recorder-1.13.2-portable.exe
+# Output: frontend/dist-electron-build2/Recorder-1.14.1-portable.exe
 ```
 
 ### Run Packaged Version
@@ -96,6 +96,8 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 Version History
 
+- **v1.14.1** — Fix "An object could not be cloned" error on "✨ Optimize": Vue reactive array (Proxy) cannot be serialized through Electron IPC; use `JSON.parse(JSON.stringify(...))` to convert to plain JSON before passing
+- **v1.14.0** — LLM Job Manager async processing: token limit detection with auto batch splitting (CJK 1.5 token/char, ASCII 0.25 token/char estimation); per-sentence optimization preserving original timestamps (`[N] optimized text` format parsing); Job state machine `pending → running → completed/failed/cancelled`; frontend Job list panel with progress bar, log, cancel button
 - **v1.13.2** — Fix UI bug caused by i18n refactoring: `mounted()` lifecycle hook was accidentally removed, causing AI provider and whisper model dropdowns to be empty; restored `mounted()` to call `fetchModels()`, `fetchLlmProviders()`, `loadSettings()`
 - **v1.13.1** — Build latest portable exe (127 MB), fix Windows Defender `app.asar` lock issue
 - **v1.13.0** — Multi-language UI support (zh-TW/en/ja): i18n language files, language selector on first launch and in settings panel; multi-language documentation (readme_en.md, readme_ja.md, modify_record_en.md, modify_record_ja.md)

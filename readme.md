@@ -39,14 +39,14 @@ npm run electron:dev
 
 ### 下載打包版
 
-從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.13.1-portable.exe`，直接執行即可。
+從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.14.1-portable.exe`，直接執行即可。
 
 ### 自行打包
 
 ```bash
 cd frontend
 npm run electron:build
-# 產出：frontend/dist-electron-build/Recorder-1.13.1-portable.exe
+# 產出：frontend/dist-electron-build2/Recorder-1.14.1-portable.exe
 ```
 
 ### 直接運行打包版
@@ -96,6 +96,8 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 版本歷史
 
+- **v1.14.1** — 修正「✨ 優化」報錯 `An object could not be cloned`：Vue reactive 陣列（Proxy）無法通過 Electron IPC 序列化，傳遞前以 `JSON.parse(JSON.stringify(...))` 轉為純 JSON 物件
+- **v1.14.0** — 導入 LLM Job Manager 非同步處理機制：Token 限制偵測與自動分批處理（CJK 1.5 token/字、ASCII 0.25 token/字估算）；逐句優化保留原始時間戳對齊（`[N] 優化文字` 格式解析）；Job 狀態機 `pending → running → completed/failed/cancelled`；前端 Job 列表面板含進度條、log、取消按鈕
 - **v1.13.2** — 修正多語言重構造成的介面 bug：`mounted()` 生命週期鉤子被意外移除，導致設定中的 AI 供應商選單與 whisper 模型選單空白；補回 `mounted()` 依序呼叫 `fetchModels()`、`fetchLlmProviders()`、`loadSettings()`
 - **v1.13.1** — 編譯產出最新版 portable exe（127 MB），修正 Windows Defender 鎖定 `app.asar` 的編譯問題
 - **v1.13.0** — 多語言 UI 支援（繁體中文/English/日本語）：i18n 語言檔（zh-TW.js/en.js/ja.js），首次啟動顯示語言選擇對話框，設定面板可切換介面語言；多語言文件（readme_en.md、readme_ja.md、modify_record_en.md、modify_record_ja.md）；更新 workrule.md 加入多語言文件維護規範

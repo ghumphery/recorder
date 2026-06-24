@@ -51,3 +51,57 @@
   - Build output: `frontend/dist-electron-build2/Recorder-1.13.2-portable.exe` (127 MB)
   - Multi-language documentation: `Product_Design_Guidelines_en.md`, `Product_Design_Guidelines_ja.md` created; `readme_en.md`, `readme_ja.md` updated
 - Backup: backup-202606241135.zip
+
+## [2026-06-24 12:30]
+- **version**: 1.14.0
+- **Requirement**: Sentence optimization must reference original transcript timestamps — introduce LLM Job Manager async processing, token limit detection with batch splitting, per-sentence optimization preserving timestamp alignment.
+- **Plan**:
+  1. Create `LlmJobManager` class (main.js): manage queue, execution, cancellation, and history for all LLM operations; Job state machine `pending → running → completed/failed/cancelled`; push status changes via `llm:jobUpdate` IPC
+  2. Token estimation and model context limit lookup (main.js):
+     - `estimateTokens(text)`: estimate token count by character type (CJK 1.5 token/char, ASCII 0.25 token/char)
+     - `getModelContextLimit(provider, model)`: lookup model context window limit (lookup table + Ollama API dynamic query + fallback 4096)
+     - Auto batch split when exceeding limit (optimize by sentence, translate by character count, summary/AI query truncation)
+  3. Per-sentence optimization (main.js + App.vue):
+     - System prompt requires LLM to output in `[N] optimized text` format per sentence
+     - `_parseOptimizedResult()` parses LLM output, maps back to original segments preserving timestamps
+  4. Frontend UI integration (App.vue + preload.js):
+     - LLM action bar adds "📋 Job" button and job list panel (progress bar, log, cancel button)
+     - Real-time `llm:jobUpdate` event listener updates activeJobId and progress
+     - New methods: `initJobListener()`, `refreshJobList()`, `cancelJob()`, `cancelActiveJob()`
+  5. i18n: add job-related translation keys (zh-TW/en/ja)
+  6. Update `Product_Design_Guidelines.md` v1.6.0 with LLM Job Manager and Token estimation docs
+  7. Version 1.13.2 → 1.14.0 (minor: new feature, backward compatible)
+- **Result**:
+  - `frontend/electron/main.js`: Added `LlmJobManager` class, `estimateTokens()`, `getModelContextLimit()`, `KNOWN_MODEL_CONTEXTS` table, 4 job execution methods (optimize/translate/summary/aiQuery), 4 job IPC handlers (submit/status/list/cancel)
+  - `frontend/electron/preload.js`: Added `llmJobSubmit`, `llmJobStatus`, `llmJobList`, `llmJobCancel`, `onLlmJobUpdate` bridge
+  - `frontend/src/App.vue`: Added job management data/methods/UI panel/CSS styles; LLM action bar added Job button, batch progress display, cancel button
+  - `frontend/src/i18n/zh-TW.js`: Added 7 job-related translation keys
+  - `frontend/src/i18n/en.js`: Added 7 job-related translation keys
+  - `frontend/src/i18n/ja.js`: Added 7 job-related translation keys
+  - `frontend/package.json`: Version updated to 1.14.0
+  - `Product_Design_Guidelines.md`: Updated to v1.6.0 with LLM Job Manager and Token estimation docs
+- Backup: backup-202606241230.zip
+
+## [2026-06-24 14:42]
+- **version**: 1.14.0
+- **Requirement**: Recompile project, produce portable exe.
+- **Plan**:
+  1. Run `npm run electron:build` (vite build + electron-builder --win portable)
+  2. Verify output file
+  3. Update documentation and backup
+- **Result**:
+  - Build successful: `frontend/dist-electron-build2/Recorder-1.14.0-portable.exe` (127 MB)
+  - No code changes, recompile only
+- Backup: backup-202606241442.zip
+
+## [2026-06-24 14:58]
+- **version**: 1.14.1
+- **Requirement**: Fix "An object could not be cloned" error on "✨ Optimize" — Vue Proxy cannot be serialized through Electron IPC.
+- **Plan**:
+  1. Root cause: `doOptimize()` passes `segments: this.transcriptionResults` to `llmJobSubmit` IPC, but `this.transcriptionResults` is a Vue reactive array (Proxy object), which Structured Clone Algorithm cannot serialize
+  2. Fix: Use `JSON.parse(JSON.stringify(...))` to convert Vue Proxy to plain JSON object before passing
+  3. Version 1.14.0 → 1.14.1 (patch: bug fix)
+- **Result**:
+  - `frontend/src/App.vue`: `doOptimize()` changed to `segments: JSON.parse(JSON.stringify(this.transcriptionResults))`
+  - `frontend/package.json`: Version updated to 1.14.1
+- Backup: backup-202606241458.zip

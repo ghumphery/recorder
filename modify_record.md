@@ -904,3 +904,56 @@
   - 編譯輸出：`frontend/dist-electron-build2/Recorder-1.13.2-portable.exe` (127 MB)
 - 完成原始碼備份: backup-202606241135.zip
 
+## [2026-06-24 12:30]
+- **version**: 1.14.0
+- **修改要求**：話句優化必須引用原始逐字稿時間記號 — 導入 LLM Job Manager 非同步處理機制、Token 限制偵測與分批處理、逐句優化保留時間戳對齊。
+- **修改規劃**：
+  1. 建立 `LlmJobManager` 類別（main.js）：管理所有 LLM 操作的佇列、執行、取消與歷史記錄；Job 狀態機 `pending → running → completed/failed/cancelled`；透過 `llm:jobUpdate` IPC 主動推送狀態變更
+  2. Token 估算與模型 Context Limit 查詢（main.js）：
+     - `estimateTokens(text)`：根據字元類型估算 token 數（CJK 1.5 token/字，ASCII 0.25 token/字）
+     - `getModelContextLimit(provider, model)`：查詢模型 context window 上限（對照表 + Ollama API 動態查詢 + fallback 4096）
+     - 超過上限時自動分批處理（優化按句子切分、翻譯按字元數切分、摘要/AI 查詢截斷）
+  3. 逐句優化（main.js + App.vue）：
+     - system prompt 要求 LLM 以 `[編號] 優化文字` 格式逐句輸出
+     - `_parseOptimizedResult()` 解析 LLM 輸出，對應回原始 segment 保留時間戳
+  4. 前端 UI 整合（App.vue + preload.js）：
+     - LLM 動作列新增「📋 Job」按鈕與 job 列表面板（含進度條、log、取消按鈕）
+     - 即時監聽 `llm:jobUpdate` 事件更新 activeJobId 與進度
+     - 新增 `initJobListener()`、`refreshJobList()`、`cancelJob()`、`cancelActiveJob()` 方法
+  5. i18n 新增 job 相關翻譯 key（zh-TW/en/ja）
+  6. 更新 `Product_Design_Guidelines.md` 版本 1.6.0，新增 LLM Job Manager 與 Token 估算說明
+  7. 版本號 1.13.2 → 1.14.0（次版號新增功能，向下相容）
+- **修改結果**：
+  - `frontend/electron/main.js`：新增 `LlmJobManager` 類別、`estimateTokens()`、`getModelContextLimit()`、`KNOWN_MODEL_CONTEXTS` 對照表、4 個 job 執行方法（optimize/translate/summary/aiQuery）、4 個 job IPC handler（submit/status/list/cancel）
+  - `frontend/electron/preload.js`：新增 `llmJobSubmit`、`llmJobStatus`、`llmJobList`、`llmJobCancel`、`onLlmJobUpdate` bridge
+  - `frontend/src/App.vue`：新增 job 管理 data/methods/UI 面板/CSS 樣式；LLM 動作列新增 Job 按鈕、批次進度顯示、取消按鈕
+  - `frontend/src/i18n/zh-TW.js`：新增 7 條 job 相關翻譯 key
+  - `frontend/src/i18n/en.js`：新增 7 條 job 相關翻譯 key
+  - `frontend/src/i18n/ja.js`：新增 7 條 job 相關翻譯 key
+  - `frontend/package.json`：版本號更新為 1.14.0
+  - `Product_Design_Guidelines.md`：版本更新至 1.6.0，新增 LLM Job Manager 與 Token 估算說明
+- 備份檔名: backup-202606241230.zip
+
+## [2026-06-24 14:42]
+- **version**: 1.14.0
+- **修改要求**：重新編譯專案，產出 portable exe。
+- **修改規劃**：
+  1. 執行 `npm run electron:build`（vite build + electron-builder --win portable）
+  2. 驗證輸出檔案
+  3. 更新文件與備份
+- **修改結果**：
+  - 編譯成功：`frontend/dist-electron-build2/Recorder-1.14.0-portable.exe` (127 MB)
+  - 無程式碼變更，僅重新編譯
+- 備份檔名: backup-202606241442.zip
+
+## [2026-06-24 14:58]
+- **version**: 1.14.1
+- **修改要求**：修正「✨ 優化」功能報錯 `An object could not be cloned` — Vue Proxy 無法透過 Electron IPC 序列化。
+- **修改規劃**：
+  1. 根因分析：`doOptimize()` 傳遞 `segments: this.transcriptionResults` 給 `llmJobSubmit` IPC，但 `this.transcriptionResults` 是 Vue reactive 陣列（Proxy 物件），Structured Clone Algorithm 無法序列化 Proxy
+  2. 修復方案：傳遞前使用 `JSON.parse(JSON.stringify(...))` 將 Vue Proxy 轉為純 JSON 物件
+  3. 版本號 1.14.0 → 1.14.1（patch 修復 bug）
+- **修改結果**：
+  - `frontend/src/App.vue`：`doOptimize()` 中 `segments: JSON.parse(JSON.stringify(this.transcriptionResults))`
+  - `frontend/package.json`：版本號更新為 1.14.1
+- 備份檔名: backup-202606241458.zip

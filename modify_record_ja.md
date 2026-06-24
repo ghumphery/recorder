@@ -51,3 +51,57 @@
   - ビルド出力: `frontend/dist-electron-build2/Recorder-1.13.2-portable.exe` (127 MB)
   - 多言語ドキュメント: `Product_Design_Guidelines_en.md`、`Product_Design_Guidelines_ja.md` を作成；`readme_en.md`、`readme_ja.md` を更新
 - バックアップ: backup-202606241135.zip
+
+## [2026-06-24 12:30]
+- **version**: 1.14.0
+- **要件**: 文の最適化は元の文字起こしのタイムスタンプを参照する必要がある — LLM Job Manager 非同期処理機構、トークン制限検出とバッチ分割、タイムスタンプを保持した文単位の最適化を導入。
+- **計画**:
+  1. `LlmJobManager` クラスを作成（main.js）：すべての LLM 操作のキュー、実行、キャンセル、履歴を管理；Job ステートマシン `pending → running → completed/failed/cancelled`；`llm:jobUpdate` IPC でステータス変更をプッシュ
+  2. トークン推定とモデルコンテキスト制限の検索（main.js）：
+     - `estimateTokens(text)`：文字タイプに基づいてトークン数を推定（CJK 1.5 トークン/文字、ASCII 0.25 トークン/文字）
+     - `getModelContextLimit(provider, model)`：モデルのコンテキストウィンドウ上限を検索（参照テーブル + Ollama API 動的クエリ + フォールバック 4096）
+     - 上限超過時に自動バッチ分割（最適化は文単位、翻訳は文字数単位、要約/AI クエリは切り捨て）
+  3. 文単位の最適化（main.js + App.vue）：
+     - システムプロンプトで LLM に `[N] 最適化テキスト` 形式での出力を要求
+     - `_parseOptimizedResult()` で LLM 出力を解析し、元のセグメントにマッピングしてタイムスタンプを保持
+  4. フロントエンド UI 統合（App.vue + preload.js）：
+     - LLM アクションバーに「📋 Job」ボタンとジョブリストパネルを追加（プログレスバー、ログ、キャンセルボタン）
+     - `llm:jobUpdate` イベントをリアルタイム監視して activeJobId と進捗を更新
+     - 新規メソッド：`initJobListener()`、`refreshJobList()`、`cancelJob()`、`cancelActiveJob()`
+  5. i18n：ジョブ関連の翻訳キーを追加（zh-TW/en/ja）
+  6. `Product_Design_Guidelines.md` v1.6.0 を更新し、LLM Job Manager とトークン推定の説明を追加
+  7. バージョン 1.13.2 → 1.14.0（マイナー：新機能、下位互換性あり）
+- **結果**:
+  - `frontend/electron/main.js`：`LlmJobManager` クラス、`estimateTokens()`、`getModelContextLimit()`、`KNOWN_MODEL_CONTEXTS` テーブル、4 つのジョブ実行メソッド（optimize/translate/summary/aiQuery）、4 つのジョブ IPC ハンドラ（submit/status/list/cancel）を追加
+  - `frontend/electron/preload.js`：`llmJobSubmit`、`llmJobStatus`、`llmJobList`、`llmJobCancel`、`onLlmJobUpdate` ブリッジを追加
+  - `frontend/src/App.vue`：ジョブ管理の data/methods/UI パネル/CSS スタイルを追加；LLM アクションバーに Job ボタン、バッチ進捗表示、キャンセルボタンを追加
+  - `frontend/src/i18n/zh-TW.js`：7 つのジョブ関連翻訳キーを追加
+  - `frontend/src/i18n/en.js`：7 つのジョブ関連翻訳キーを追加
+  - `frontend/src/i18n/ja.js`：7 つのジョブ関連翻訳キーを追加
+  - `frontend/package.json`：バージョンを 1.14.0 に更新
+  - `Product_Design_Guidelines.md`：v1.6.0 に更新し、LLM Job Manager とトークン推定の説明を追加
+- バックアップ: backup-202606241230.zip
+
+## [2026-06-24 14:42]
+- **version**: 1.14.0
+- **要件**: プロジェクトを再コンパイルし、portable exe を生成する。
+- **計画**:
+  1. `npm run electron:build` を実行（vite build + electron-builder --win portable）
+  2. 出力ファイルを検証
+  3. ドキュメントとバックアップを更新
+- **結果**:
+  - ビルド成功：`frontend/dist-electron-build2/Recorder-1.14.0-portable.exe` (127 MB)
+  - コード変更なし、再コンパイルのみ
+- バックアップ: backup-202606241442.zip
+
+## [2026-06-24 14:58]
+- **version**: 1.14.1
+- **要件**: 「✨ 最適化」で `An object could not be cloned` エラーを修正 — Vue Proxy が Electron IPC でシリアライズできない問題。
+- **計画**:
+  1. 根本原因: `doOptimize()` が `segments: this.transcriptionResults` を `llmJobSubmit` IPC に渡しているが、`this.transcriptionResults` は Vue reactive 配列（Proxy オブジェクト）であり、Structured Clone Algorithm がシリアライズできない
+  2. 修正: `JSON.parse(JSON.stringify(...))` を使用して Vue Proxy をプレーンな JSON オブジェクトに変換してから渡す
+  3. バージョン 1.14.0 → 1.14.1 (パッチ: バグ修正)
+- **結果**:
+  - `frontend/src/App.vue`: `doOptimize()` で `segments: JSON.parse(JSON.stringify(this.transcriptionResults))` に変更
+  - `frontend/package.json`: バージョンを 1.14.1 に更新
+- バックアップ: backup-202606241458.zip

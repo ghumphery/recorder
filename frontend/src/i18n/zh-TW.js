@@ -54,6 +54,13 @@ export default {
   'llm.undoTitle': '復原',
   'llm.redoTitle': '取消復原',
   'llm.processing': '⏳ LLM 處理中...',
+  'llm.batchProgress': '批次 {batch}/{total}',
+  'llm.cancel': '✕ 取消',
+  'llm.jobPanel': '📋 Job',
+  'llm.jobPanelTitle': '📋 LLM Job 列表',
+  'llm.jobEmpty': '尚無 Job 記錄',
+  'llm.jobRefresh': '🔄 重新整理',
+  'llm.jobClose': '關閉',
 
   // Tab
   'tab.transcript': '📝 逐字稿',

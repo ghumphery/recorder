@@ -1,6 +1,6 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.5.4
+> **版本**: 1.6.0
 > **最後更新日期**: 2026-06-24
 
 ## 產品核心願景與哲學 (Product Vision & Philosophy)
@@ -132,6 +132,25 @@
 - **翻譯目標語言**：下拉選單選擇翻譯目標（🇯🇵 日文 / 🇺🇸 英文 / 🇨🇳 中文），system prompt 動態切換
 - **實作方式**：`callLLM(provider, apiKey, model, prompt, systemPrompt)` 依提供商路由至對應 API
 - **三個功能按鈕**：✨語句優化 / 🌐翻譯（含目標語言選擇） / 📋重點整理，僅在有辨識結果時顯示
+- **LLM Job Manager（v1.14.0 新增）**：
+  - **LlmJobManager 類別**：管理所有 LLM 操作的佇列、執行、取消與歷史記錄
+  - **Job 物件結構**：`{ id, type, status, progress, createdAt, startedAt, completedAt, error, result, log }`
+  - **狀態機**：`pending → running → completed/failed/cancelled`
+  - **佇列機制**：同時只執行 1 個 job，其餘排隊等待
+  - **即時推送**：透過 `llm:jobUpdate` IPC 主動推送 job 狀態變更給前端
+  - **前端 UI**：LLM 動作列新增「📋 Job」按鈕，點擊顯示 job 列表面板（含進度條、log、取消按鈕）
+- **Token 估算與分批處理（v1.14.0 新增）**：
+  - **`estimateTokens(text)`**：根據字元類型估算 token 數（CJK 1.5 token/字，ASCII 0.25 token/字）
+  - **`getModelContextLimit(provider, model)`**：查詢模型 context window 上限
+    - 優先比對 `KNOWN_MODEL_CONTEXTS` 對照表（含 Ollama、OpenRouter、SiliconFlow、Gemini 常見模型）
+    - Ollama 可透過 `POST /api/show` 動態查詢模型資訊
+    - 查無資料時 fallback 至 4096
+  - **分批策略**：
+    - 優化（optimize）：按句子切分，每批保留 80% context window 給輸入
+    - 翻譯（translate）：按字元數切分，保留 70% context window
+    - 摘要（summary）：超過上限時截斷開頭
+    - AI 查詢（aiQuery）：超過上限時截斷 context
+  - **逐句優化**：system prompt 要求 LLM 以 `[編號] 優化文字` 格式逐句輸出，前端解析後對應回原始 segment 保留時間戳
 
 ### 5. 音檔播放與逐句點擊播放 (`frontend/src/App.vue` + `frontend/electron/main.js`)
 - **功能**：支援逐字稿句子點擊播放對應時段的原始錄音內容；從歷史記錄載入音檔後不自動播放，由使用者自行選擇起始句子

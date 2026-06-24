@@ -111,7 +111,44 @@
       <span class="sep"></span>
       <button class="btn btn-undo" @click="undo" :disabled="llmBusy || !canUndo" :title="$t('llm.undoTitle')">{{ $t('llm.undo') }}</button>
       <button class="btn btn-undo" @click="redo" :disabled="llmBusy || !canRedo" :title="$t('llm.redoTitle')">{{ $t('llm.redo') }}</button>
-      <span v-if="llmBusy" class="llm-spinner">{{ $t('llm.processing') }}</span>
+      <button class="btn btn-small" @click="showJobPanel = !showJobPanel" style="background:#6A1B9A" :title="$t('llm.jobPanelTitle')">{{ $t('llm.jobPanel') }}</button>
+      <span v-if="llmBusy" class="llm-spinner">
+        <span v-if="activeJobProgress.totalBatches > 1">{{ $t('llm.batchProgress', { batch: activeJobProgress.batch, total: activeJobProgress.totalBatches }) }}</span>
+        <span v-else>{{ $t('llm.processing') }}</span>
+      </span>
+      <button v-if="llmBusy && activeJobId" class="btn btn-tiny" @click="cancelActiveJob" style="background:#e53935;padding:2px 6px;font-size:10px;margin-left:2px">{{ $t('llm.cancel') }}</button>
+    </div>
+
+    <!-- LLM Job 列表面板 -->
+    <div v-if="showJobPanel" class="label-editor-overlay" @click.self="showJobPanel = false">
+      <div class="label-editor-panel" style="width:600px">
+        <div class="panel-header">{{ $t('llm.jobPanelTitle') }}</div>
+        <div class="panel-body" style="max-height:400px;overflow-y:auto">
+          <div v-if="jobList.length === 0" class="empty-hint">{{ $t('llm.jobEmpty') }}</div>
+          <div v-for="job in jobList" :key="job.id" class="job-item" :class="'job-' + job.status">
+            <div class="job-header">
+              <span class="job-id">{{ job.id }}</span>
+              <span class="job-type">{{ job.type }}</span>
+              <span class="job-status" :class="'job-status-' + job.status">{{ job.status }}</span>
+              <button v-if="job.status === 'pending' || job.status === 'running'" class="btn btn-tiny" @click="cancelJob(job.id)" style="background:#e53935">{{ $t('llm.cancel') }}</button>
+            </div>
+            <div v-if="job.progress.totalBatches > 0" class="job-progress">
+              <div class="progress-bar" style="height:8px;margin:4px 0">
+                <div class="progress-fill" :style="{ width: job.progress.percent + '%' }"></div>
+              </div>
+              <span class="job-progress-text">{{ $t('llm.batchProgress', { batch: job.progress.batch, total: job.progress.totalBatches }) }}</span>
+            </div>
+            <div v-if="job.error" class="job-error">❌ {{ job.error }}</div>
+            <div class="job-log" v-if="job.log && job.log.length > 0">
+              <div v-for="(line, li) in job.log.slice(-5)" :key="li" class="job-log-line">{{ line }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="label-editor-actions">
+          <button class="btn btn-small" @click="refreshJobList">{{ $t('llm.jobRefresh') }}</button>
+          <button class="btn btn-small" @click="showJobPanel = false">{{ $t('llm.jobClose') }}</button>
+        </div>
+      </div>
     </div>
 
     <div class="status-bar" :class="{ error: statusError }">{{ statusText }}</div>
@@ -404,6 +441,12 @@ export default {
       showNewFolderDialog: false, newFolderName: '',
       showRenameFolderDialog: false, renameFolderName: '',
       showMoveDialog: false, moveTargetFolder: '', allFolders: [],
+      // LLM Job 管理
+      showJobPanel: false,
+      activeJobId: null,
+      activeJobProgress: { batch: 0, totalBatches: 0, percent: 0 },
+      jobList: [],
+      _jobUpdateListener: null,
     }
   },
   computed: {
@@ -442,6 +485,7 @@ export default {
     await this.fetchModels()
     await this.fetchLlmProviders()
     await this.loadSettings()
+    this.initJobListener()
   },
   methods: {
     $t(key, params) {
@@ -750,22 +794,154 @@ export default {
     getLlmParams() { const text = this.getActiveText(); const apiKey = this.apiKeys[this.llmProvider] || ''; return { provider: this.llmProvider, apiKey, model: this.llmModel, text } },
     async doOptimize() {
       if (!window.electronAPI) return; this.pushHistory('optimized'); this.llmBusy = true; this.statusText = this.$t('status.optimizing')
-      try { const r = await window.electronAPI.llmOptimize(this.getLlmParams()); if (r.success) { this.llmResults.optimized = r.result; this.activeSource = 'optimized' } else { this.statusText = this.$t('status.llmFail', { label: '✨ 優化', error: r.error }); this.statusError = true } }
-      catch (e) { this.statusText = this.$t('status.llmError', { label: '✨ 優化', message: e.message }); this.statusError = true }
-      finally { this.llmBusy = false; this.statusText = this.$t('status.optimized'); this.saveRecordingMeta(this.transcriptionResults) }
+      try {
+        // 使用 Job Manager 進行逐句優化（保留時間戳）
+        const apiKey = this.apiKeys[this.llmProvider] || ''
+        const r = await window.electronAPI.llmJobSubmit({
+          type: 'optimize',
+          params: { provider: this.llmProvider, apiKey, model: this.llmModel, segments: JSON.parse(JSON.stringify(this.transcriptionResults)) }
+        })
+        if (r.success) {
+          this.activeJobId = r.jobId
+          // 輪詢等待 job 完成
+          this._pollJobResult(r.jobId, 'optimized')
+        } else { this.statusText = this.$t('status.llmFail', { label: '✨ 優化', error: r.error }); this.statusError = true; this.llmBusy = false }
+      } catch (e) { this.statusText = this.$t('status.llmError', { label: '✨ 優化', message: e.message }); this.statusError = true; this.llmBusy = false }
+    },
+    async _pollJobResult(jobId, type) {
+      const maxAttempts = 600 // 最多等 5 分鐘
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise(r => setTimeout(r, 500))
+        try {
+          const status = await window.electronAPI.llmJobStatus({ jobId })
+          if (!status.success || !status.job) continue
+          const job = status.job
+          if (job.status === 'completed') {
+            if (type === 'optimized') {
+              // 逐句優化結果：job.result 是含 optimizedText 的 segments 陣列
+              if (Array.isArray(job.result) && job.result.length > 0) {
+                // 將優化後的文字組合成可讀格式
+                const lines = job.result.map((s, i) => {
+                  const t = this.formatTime(s.start)
+                  const e = this.formatTime(s.end)
+                  const optText = s.optimizedText || s.text
+                  return `[${t} - ${e}] ${optText}`
+                })
+                this.llmResults.optimized = lines.join('\n')
+              } else {
+                this.llmResults.optimized = job.result || ''
+              }
+            } else if (type === 'translated') {
+              this.llmResults.translated = job.result || ''
+            } else if (type === 'summary') {
+              this.llmResults.summary = job.result || ''
+            }
+            this.activeSource = type
+            this.llmBusy = false
+            this.activeJobId = null
+            this.activeJobProgress = { batch: 0, totalBatches: 0, percent: 0 }
+            this.statusText = this.$t('status.llmDone', { label: type === 'optimized' ? '✨ 優化' : type === 'translated' ? '🌐 翻譯' : '📋 摘要' })
+            this.saveRecordingMeta(this.transcriptionResults)
+            return
+          } else if (job.status === 'failed') {
+            this.llmBusy = false
+            this.activeJobId = null
+            this.activeJobProgress = { batch: 0, totalBatches: 0, percent: 0 }
+            this.statusText = this.$t('status.llmFail', { label: type, error: job.error || '未知錯誤' })
+            this.statusError = true
+            return
+          } else if (job.status === 'cancelled') {
+            this.llmBusy = false
+            this.activeJobId = null
+            this.activeJobProgress = { batch: 0, totalBatches: 0, percent: 0 }
+            this.statusText = this.$t('status.ready')
+            return
+          }
+          // 更新進度
+          if (job.progress) {
+            this.activeJobProgress = job.progress
+          }
+        } catch (e) {}
+      }
+      // Timeout
+      this.llmBusy = false
+      this.activeJobId = null
+      this.activeJobProgress = { batch: 0, totalBatches: 0, percent: 0 }
+      this.statusText = this.$t('status.llmFail', { label: type, error: '處理超時' })
+      this.statusError = true
     },
     async doTranslate() {
       if (!window.electronAPI) return; this.pushHistory('translated')
       const langLabels = { ja: '🇯🇵 日本語', en: '🇺🇸 English', zh: '🇨🇳 中文' }; this.llmBusy = true; this.statusText = this.$t('status.translating', { lang: langLabels[this.translateTarget] || this.translateTarget })
-      try { const params = this.getLlmParams(); params.target = this.translateTarget; const r = await window.electronAPI.llmTranslate(params); if (r.success) { this.llmResults.translated = r.result; this.activeSource = 'translated' } else { this.statusText = this.$t('status.llmFail', { label: '🌐 翻譯', error: r.error }); this.statusError = true } }
-      catch (e) { this.statusText = this.$t('status.llmError', { label: '🌐 翻譯', message: e.message }); this.statusError = true }
-      finally { this.llmBusy = false; this.statusText = this.$t('status.translated'); this.saveRecordingMeta(this.transcriptionResults) }
+      try {
+        const apiKey = this.apiKeys[this.llmProvider] || ''
+        const text = this.getActiveText()
+        const r = await window.electronAPI.llmJobSubmit({
+          type: 'translate',
+          params: { provider: this.llmProvider, apiKey, model: this.llmModel, text, target: this.translateTarget }
+        })
+        if (r.success) {
+          this.activeJobId = r.jobId
+          this._pollJobResult(r.jobId, 'translated')
+        } else { this.statusText = this.$t('status.llmFail', { label: '🌐 翻譯', error: r.error }); this.statusError = true; this.llmBusy = false }
+      } catch (e) { this.statusText = this.$t('status.llmError', { label: '🌐 翻譯', message: e.message }); this.statusError = true; this.llmBusy = false }
     },
     async doSummary() {
       if (!window.electronAPI) return; this.pushHistory('summary'); this.llmBusy = true; this.statusText = this.$t('status.summarizing')
-      try { const r = await window.electronAPI.llmSummary(this.getLlmParams()); if (r.success) { this.llmResults.summary = r.result; this.activeSource = 'summary' } else { this.statusText = this.$t('status.llmFail', { label: '📋 摘要', error: r.error }); this.statusError = true } }
-      catch (e) { this.statusText = this.$t('status.llmError', { label: '📋 摘要', message: e.message }); this.statusError = true }
-      finally { this.llmBusy = false; this.statusText = this.$t('status.summarized'); this.saveRecordingMeta(this.transcriptionResults) }
+      try {
+        const apiKey = this.apiKeys[this.llmProvider] || ''
+        const text = this.getActiveText()
+        const r = await window.electronAPI.llmJobSubmit({
+          type: 'summary',
+          params: { provider: this.llmProvider, apiKey, model: this.llmModel, text }
+        })
+        if (r.success) {
+          this.activeJobId = r.jobId
+          this._pollJobResult(r.jobId, 'summary')
+        } else { this.statusText = this.$t('status.llmFail', { label: '📋 摘要', error: r.error }); this.statusError = true; this.llmBusy = false }
+      } catch (e) { this.statusText = this.$t('status.llmError', { label: '📋 摘要', message: e.message }); this.statusError = true; this.llmBusy = false }
+    },
+
+    // ── LLM Job 管理 ──
+    initJobListener() {
+      if (!window.electronAPI) return
+      if (this._jobUpdateListener) return
+      this._jobUpdateListener = (data) => {
+        if (data.status === 'running' || data.status === 'pending') {
+          this.activeJobId = data.id
+          this.activeJobProgress = data.progress || { batch: 0, totalBatches: 0, percent: 0 }
+        }
+        if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+          this.activeJobId = null
+          this.activeJobProgress = { batch: 0, totalBatches: 0, percent: 0 }
+          this.llmBusy = false
+          if (data.status === 'completed') {
+            this.statusText = this.$t('status.llmDone', { label: data.type === 'optimize' ? '✨ 優化' : data.type === 'translate' ? '🌐 翻譯' : data.type === 'summary' ? '📋 摘要' : '🤖 查詢' })
+          } else if (data.status === 'failed') {
+            this.statusText = this.$t('status.llmFail', { label: data.type || '', error: data.error || '未知錯誤' })
+            this.statusError = true
+          }
+        }
+        if (this.showJobPanel) this.refreshJobList()
+      }
+      window.electronAPI.onLlmJobUpdate(this._jobUpdateListener)
+    },
+    async refreshJobList() {
+      if (!window.electronAPI) return
+      try {
+        const r = await window.electronAPI.llmJobList()
+        if (r.success) this.jobList = r.jobs
+      } catch (e) {}
+    },
+    async cancelJob(jobId) {
+      if (!window.electronAPI) return
+      try {
+        await window.electronAPI.llmJobCancel({ jobId })
+        await this.refreshJobList()
+      } catch (e) {}
+    },
+    async cancelActiveJob() {
+      if (this.activeJobId) await this.cancelJob(this.activeJobId)
     },
 
     // ── 匯出 ──
@@ -1146,6 +1322,28 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .move-folder-item { padding: 6px 10px; cursor: pointer; font-size: 12px; border-radius: 4px; }
 .move-folder-item:hover { background: #f0f0f0; }
 .move-folder-item.selected { background: #e3f2fd; color: #1565C0; font-weight: bold; }
+
+/* Job 列表面板樣式 */
+.job-item { padding: 8px; margin-bottom: 6px; border-radius: 4px; border: 1px solid #eee; }
+.job-item.job-running { border-color: #9C27B0; background: #f3e5f5; }
+.job-item.job-completed { border-color: #4CAF50; background: #e8f5e9; }
+.job-item.job-failed { border-color: #e53935; background: #ffebee; }
+.job-item.job-cancelled { border-color: #888; background: #f5f5f5; }
+.job-item.job-pending { border-color: #FF8F00; background: #fff8e1; }
+.job-header { display: flex; align-items: center; gap: 8px; font-size: 11px; flex-wrap: wrap; }
+.job-id { color: #888; font-family: monospace; font-size: 10px; }
+.job-type { font-weight: bold; color: #333; font-size: 11px; text-transform: capitalize; }
+.job-status { font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px; }
+.job-status-pending { background: #fff3e0; color: #e65100; }
+.job-status-running { background: #e1bee7; color: #6A1B9A; }
+.job-status-completed { background: #c8e6c9; color: #2e7d32; }
+.job-status-failed { background: #ffcdd2; color: #c62828; }
+.job-status-cancelled { background: #e0e0e0; color: #555; }
+.job-progress { margin: 4px 0; }
+.job-progress-text { font-size: 10px; color: #666; }
+.job-error { font-size: 11px; color: #c62828; margin-top: 4px; }
+.job-log { margin-top: 4px; }
+.job-log-line { font-size: 10px; color: #888; font-family: monospace; }
 
 /* 語言選擇按鈕 */
 .lang-select-buttons { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }

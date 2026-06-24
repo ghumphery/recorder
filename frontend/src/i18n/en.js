@@ -51,6 +51,13 @@ export default {
   'llm.undoTitle': 'Undo',
   'llm.redoTitle': 'Redo',
   'llm.processing': '⏳ LLM Processing...',
+  'llm.batchProgress': 'Batch {batch}/{total}',
+  'llm.cancel': '✕ Cancel',
+  'llm.jobPanel': '📋 Job',
+  'llm.jobPanelTitle': '📋 LLM Job List',
+  'llm.jobEmpty': 'No job records',
+  'llm.jobRefresh': '🔄 Refresh',
+  'llm.jobClose': 'Close',
 
   'tab.transcript': '📝 Transcript',
   'tab.history': '📚 History',
