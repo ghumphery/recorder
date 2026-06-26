@@ -1065,3 +1065,15 @@
   - `frontend/dist-electron-build2/Recorder-1.15.1-portable.exe` — 已簽署的 portable exe（127 MB）
   - 所有內含 .exe（whisper-cli.exe、ffmpeg.exe、Recorder.exe、elevate.exe）均已成功簽署
   - 備份檔名: backup-202606261736.zip
+
+## [2026-06-26 22:16]
+- **version**: 1.15.1
+- **修改要求**：更新設計指引和 workrule.md，加入「完成 portable.exe 後需使用個人 code sign 並進行 portable.exe 簽署」的規範。
+- **修改規劃**：
+  1. `.clinerules/workrule.md` 第 2 節新增「Code Sign 簽署規範」段落
+  2. `Product_Design_Guidelines.md` / `_en.md` / `_ja.md` 新增「Code Sign 簽署規範」章節
+  3. 同步 GitHub
+- **修改結果**：
+  - `.clinerules/workrule.md` — 新增 Code Sign 簽署規範（憑證位置、密碼設定、簽署流程、驗證方式、時間戳記、SmartScreen 注意事項）
+  - `Product_Design_Guidelines.md` / `_en.md` / `_ja.md` — 三語言同步新增 Code Sign 簽署規範章節（憑證來源、設定方式、簽署流程、時間戳記、驗證方式、注意事項）
+  - 已同步至 GitHub

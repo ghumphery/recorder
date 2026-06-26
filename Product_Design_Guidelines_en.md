@@ -75,6 +75,25 @@
 - **Favicon**: `frontend/public/icon.png` (Vite static asset), referenced in `index.html` via `<link rel="icon" type="image/png" href="/icon.png">`
 - **electron-builder Packaging**: `package.json` `build.win.icon` points to `../assets/app.ico`, automatically embedded in .exe during build
 
+## Code Sign Guidelines
+- **Certificate Source**: Self-signed certificate generated via PowerShell `New-SelfSignedCertificate` (`C:\Certs\recorder_selfsign.pfx`), Subject: `CN=Cheng-Feng Iron Factory, O=Cheng-Feng Iron Factory, C=TW`, 3-year validity
+- **Configuration**: Set in `frontend/package.json` `win` section:
+  ```json
+  "certificateFile": "C:/Certs/recorder_selfsign.pfx",
+  "certificatePassword": "<password>",
+  "signAndEditExecutable": true,
+  "signtoolOptions": {
+    "rfc3161TimeStampServer": "http://timestamp.digicert.com"
+  }
+  ```
+- **Signing Process**: electron-builder automatically calls Windows SDK signtool.exe during packaging to sign all .exe files (main Recorder.exe, whisper-cli.exe, ffmpeg.exe, elevate.exe)
+- **Timestamp**: Uses RFC 3161 timestamp server `http://timestamp.digicert.com` to ensure signatures remain verifiable after certificate expiration
+- **Verification**: `powershell Get-AuthenticodeSignature <exe_path>` to check Status and SignerCertificate
+- **Notes**:
+  - Self-signed certificates still trigger Windows SmartScreen warnings; users must click "More info → Run anyway"
+  - For public distribution, consider purchasing an EV certificate (Extended Validation, ~USD 200-500/year) for immediate SmartScreen trust
+  - Certificate password is stored in `package.json` `win.certificatePassword` field; do not upload this file to public repos (already in `.gitignore`)
+
 ## Electron + Vue.js Frontend Packaging Guidelines
 - **Frontend Framework**: Electron 33 + Vue 3 + Vite 6
 - **CLI Tool Integration**: electron-builder's `extraResources` copies `whisper_cli/` and `ffmpeg/` to `resources/` in output

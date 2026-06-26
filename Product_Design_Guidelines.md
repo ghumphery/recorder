@@ -75,6 +75,25 @@
 - **Favicon**：`frontend/public/icon.png`（Vite 靜態資源），`index.html` 以 `<link rel="icon" type="image/png" href="/icon.png">` 引用
 - **electron-builder 打包**：`package.json` 的 `build.win.icon` 指向 `../assets/app.ico`，打包時自動嵌入 .exe
 
+## Code Sign 簽署規範 (Code Sign Guidelines)
+- **憑證來源**：使用 PowerShell `New-SelfSignedCertificate` 產生的自簽憑證（`C:\Certs\recorder_selfsign.pfx`），Subject: `CN=Cheng-Feng Iron Factory, O=Cheng-Feng Iron Factory, C=TW`，效期 3 年
+- **設定方式**：`frontend/package.json` 的 `win` 區塊設定：
+  ```json
+  "certificateFile": "C:/Certs/recorder_selfsign.pfx",
+  "certificatePassword": "<密碼>",
+  "signAndEditExecutable": true,
+  "signtoolOptions": {
+    "rfc3161TimeStampServer": "http://timestamp.digicert.com"
+  }
+  ```
+- **簽署流程**：electron-builder 在打包時自動呼叫 Windows SDK 的 signtool.exe，對所有 .exe 進行數位簽署（主程式 Recorder.exe、whisper-cli.exe、ffmpeg.exe、elevate.exe）
+- **時間戳記**：使用 RFC 3161 時間戳伺服器 `http://timestamp.digicert.com`，確保憑證過期後簽署仍可驗證
+- **驗證方式**：`powershell Get-AuthenticodeSignature <exe路徑>` 檢查 Status 與 SignerCertificate
+- **注意事項**：
+  - 自簽憑證仍會觸發 Windows SmartScreen 警告，使用者需點選「More info → Run anyway」才能執行
+  - 若正式發行給一般使用者，建議購買 EV 憑證（Extended Validation，約 USD 200-500/年），可立即獲得 SmartScreen 信任
+  - 憑證密碼儲存於 `package.json` 的 `win.certificatePassword` 欄位，請勿將此檔案上傳至公開 repo（已納入 `.gitignore`）
+
 ## Electron + Vue.js 前端打包規範 (Frontend Packaging Guidelines)
 - **前端框架**：Electron 33 + Vue 3 + Vite 6
 - **CLI 工具整合**：electron-builder 的 `extraResources` 將 `whisper_cli/` 與 `ffmpeg/` 複製到產出中的 `resources/`

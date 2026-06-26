@@ -75,6 +75,25 @@
 - **ファビコン**: `frontend/public/icon.png`（Vite 静的アセット）、`index.html` で `<link rel="icon" type="image/png" href="/icon.png">` として参照
 - **electron-builder パッケージング**: `package.json` の `build.win.icon` が `../assets/app.ico` を指し、ビルド時に .exe に自動埋め込み
 
+## Code Sign 署名仕様 (Code Sign Guidelines)
+- **証明書ソース**: PowerShell `New-SelfSignedCertificate` で生成した自己署名証明書（`C:\Certs\recorder_selfsign.pfx`）、Subject: `CN=Cheng-Feng Iron Factory, O=Cheng-Feng Iron Factory, C=TW`、有効期限 3 年
+- **設定方法**: `frontend/package.json` の `win` セクションで設定：
+  ```json
+  "certificateFile": "C:/Certs/recorder_selfsign.pfx",
+  "certificatePassword": "<パスワード>",
+  "signAndEditExecutable": true,
+  "signtoolOptions": {
+    "rfc3161TimeStampServer": "http://timestamp.digicert.com"
+  }
+  ```
+- **署名プロセス**: electron-builder がパッケージング時に Windows SDK の signtool.exe を自動呼び出し、すべての .exe ファイルにデジタル署名（メイン Recorder.exe、whisper-cli.exe、ffmpeg.exe、elevate.exe）
+- **タイムスタンプ**: RFC 3161 タイムスタンプサーバー `http://timestamp.digicert.com` を使用し、証明書期限切れ後も署名が検証可能
+- **検証方法**: `powershell Get-AuthenticodeSignature <exeパス>` で Status と SignerCertificate を確認
+- **注意事項**：
+  - 自己署名証明書でも Windows SmartScreen 警告が表示されるため、ユーザーは「More info → Run anyway」をクリックする必要がある
+  - 一般公開用には EV 証明書（Extended Validation、約 USD 200-500/年）の購入を推奨。SmartScreen の即時信頼が得られる
+  - 証明書パスワードは `package.json` の `win.certificatePassword` フィールドに保存。公開リポジトリにアップロードしないこと（`.gitignore` に含まれている）
+
 ## Electron + Vue.js フロントエンドパッケージング仕様 (Frontend Packaging Guidelines)
 - **フロントエンドフレームワーク**: Electron 33 + Vue 3 + Vite 6
 - **CLI ツール統合**: electron-builder の `extraResources` が `whisper_cli/` と `ffmpeg/` を出力の `resources/` にコピー
