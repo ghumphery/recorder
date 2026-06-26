@@ -1016,3 +1016,35 @@
   - `frontend/package.json`：版本號更新為 1.14.4
   - 備份檔名: backup-202606261417.zip
   - 編譯成功：`frontend/dist-electron-build2/Recorder-1.14.4-portable.exe`（127 MB）
+
+## [2026-06-26 17:02]
+- **version**: 1.15.0
+- **修改要求**：更換應用程式圖示（左上角 icon 與主程式 .exe icon）為使用者提供的麥克風圖示。
+- **修改規劃**：
+  1. 使用者提供 1024x1024 RGBA PNG 圖檔（`assets/app_icon.png`）
+  2. 使用 PIL 產生多尺寸 .ico（16/24/32/48/64/96/128/256）→ `assets/app.ico`
+  3. 產生 256x256 PNG → `assets/icon.png`，複製到 `frontend/public/icon.png`（Vite 靜態資源）
+  4. `frontend/electron/main.js`：`BrowserWindow` 加入 `icon` 屬性（開發模式指向 `assets/icon.png`，生產模式指向 `dist/icon.png`）
+  5. `frontend/index.html`：加入 `<link rel="icon" type="image/png" href="/icon.png">` favicon
+  6. `frontend/package.json`：`build.win.icon` 已指向 `../assets/app.ico`（無需修改）
+  7. 版本號 1.14.4 → 1.15.0（次版號新增功能）
+- **修改結果**：
+  - `assets/app.ico` — 多尺寸 Windows 圖示（153 KB，含 16/24/32/48/64/96/128/256 八種尺寸）
+  - `assets/icon.png` — 256x256 PNG 圖示（87 KB）
+  - `frontend/public/icon.png` — Vite 靜態資源，建置後複製到 `dist/icon.png`
+  - `frontend/electron/main.js` — `createWindow()` 加入 `icon` 屬性，開發/生產模式各自指向正確路徑
+  - `frontend/index.html` — 加入 favicon `<link>` 標籤
+  - `frontend/package.json` — 版本號更新為 1.15.0
+  - 備份檔名: backup-202606261702.zip
+
+## [2026-06-26 17:17]
+- **version**: 1.15.0
+- **修改要求**：修正編譯後驗證流程 — `cd /d` 跨磁碟切換後 cmd 的 `&&` 串接導致路徑解析錯誤，誤判檔案不存在；將此注意事項寫入 workrule.md 和 Product_Design_Guidelines.md 三語言版本。
+- **修改規劃**：
+  1. `.clinerules/workrule.md` 第 2 節新增「編譯後驗證注意事項」：規定驗證產出檔案必須使用完整絕對路徑，避免 `cd /d` 跨磁碟切換造成的路徑解析錯誤
+  2. `Product_Design_Guidelines.md` / `_en.md` / `_ja.md` 打包規範章節同步新增「編譯後驗證」段落
+  3. 同步 GitHub（git add / commit / push）
+- **修改結果**：
+  - `.clinerules/workrule.md` — 新增編譯後驗證注意事項（完整絕對路徑檢查、`dir /s` 建議、背景執行緒注意）
+  - `Product_Design_Guidelines.md` / `_en.md` / `_ja.md` — 三語言同步新增編譯後驗證段落
+  - 已同步至 GitHub

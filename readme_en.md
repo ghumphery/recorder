@@ -39,14 +39,14 @@ npm run electron:dev
 
 ### Download Release
 
-Download the latest `Recorder-1.14.2-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
+Download the latest `Recorder-1.15.0-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
 
 ### Build from Source
 
 ```bash
 cd frontend
 npm run electron:build
-# Output: frontend/dist-electron-build2/Recorder-1.14.2-portable.exe
+# Output: frontend/dist-electron-build2/Recorder-1.15.0-portable.exe
 ```
 
 ### Run Packaged Version
@@ -96,7 +96,7 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 Version History
 
-- **v1.14.4** — Fix "❌ An object could not be cloned" error after completing speech-to-text from History → Audio List → Transcribe: `saveRecordingMeta` method now deep clones segments/llmResults/documents to prevent Vue reactive Proxy from failing Electron IPC serialization
+- **v1.15.0** — Replace application icons: top-left window icon and main .exe icon updated to microphone icon; multi-size .ico (16/24/32/48/64/96/128/256) and 256x256 PNG generated via PIL; `BrowserWindow` added `icon` property; `index.html` added favicon
 - **v1.14.3** — Add LLM document management panel: list/review/delete documents generated from original transcripts (optimize/translate/summary), distinguished by generation time; translation supports any document (original/optimized/summary); auto-refresh Job panel on open
 - **v1.14.2** — Fix LLM batch processing (optimize) "The user aborted a request" error caused by 30-second timeout: increased `callLLM()` AbortController timeout from 30s to 120s; added CSMA/CD-style exponential backoff retry (Slot Time=2s, max 16 retries), retry only on timeout, wait time = `Random(0, 2^k - 1) × Slot Time`
 - **v1.14.1** — Fix "An object could not be cloned" error on "✨ Optimize": Vue reactive array (Proxy) cannot be serialized through Electron IPC; use `JSON.parse(JSON.stringify(...))` to convert to plain JSON before passing

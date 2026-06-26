@@ -1,6 +1,6 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.6.1
+> **版本**: 1.7.0
 > **最後更新日期**: 2026-06-26
 
 ## 產品核心願景與哲學 (Product Vision & Philosophy)
@@ -68,6 +68,13 @@
   - **Python 後處理**（`transcriber._deduplicate_repeats()`）：辨識完成後進一步以 Jaccard 相似度計算去除相鄰高度相似的重複 segment，保留時間跨度最長者
 - **ffmpeg 參數**：`-y -i <input> -ar 16000 -ac 1 -sample_fmt s16 <output>`
 
+## 應用程式圖示規範 (Application Icon Guidelines)
+- **來源**：使用者提供 1024x1024 RGBA PNG（`assets/app_icon.png`）
+- **Windows 圖示**：`assets/app.ico` — 多尺寸 ICO（16/24/32/48/64/96/128/256），使用 PIL 從來源 PNG 產生
+- **視窗圖示**：`assets/icon.png`（256x256 PNG），開發模式 `BrowserWindow` 指向此路徑；生產模式指向 `dist/icon.png`（Vite 建置後複製）
+- **Favicon**：`frontend/public/icon.png`（Vite 靜態資源），`index.html` 以 `<link rel="icon" type="image/png" href="/icon.png">` 引用
+- **electron-builder 打包**：`package.json` 的 `build.win.icon` 指向 `../assets/app.ico`，打包時自動嵌入 .exe
+
 ## Electron + Vue.js 前端打包規範 (Frontend Packaging Guidelines)
 - **前端框架**：Electron 33 + Vue 3 + Vite 6
 - **CLI 工具整合**：electron-builder 的 `extraResources` 將 `whisper_cli/` 與 `ffmpeg/` 複製到產出中的 `resources/`
@@ -76,6 +83,7 @@
 - **編譯命令**：`cd frontend && npm run electron:build`（= `vite build && electron-builder --win portable`）
 - **編譯輸出**：`frontend/dist-electron/Recorder-{version}-portable.exe` (含 Electron + Vue + whisper-cli + ffmpeg)
 - **Windows Defender 注意**：若編譯時遇到 `app.asar` 被鎖定，可將 `directories.output` 改為 `dist-electron-build2` 繞過
+- **編譯後驗證**：驗證產出檔案時**必須使用完整絕對路徑**進行檢查，例如 `dir c:\...\frontend\dist-electron-build2\Recorder-*.exe`。避免使用 `cd /d` 切換目錄後再用相對路徑檢查（跨磁碟切換時 cmd 的 `&&` 串接可能導致路徑解析錯誤，誤判檔案不存在）。建議使用 `dir /s <完整路徑>` 確保找到正確的檔案位置。
 - **開發模式**：`cd frontend && npm run electron:dev`（啟動 Vite dev server + Electron）
 - **排除項目**：`files` 中排除 `node_modules/electron`，避免干擾 Electron 內建模組
 

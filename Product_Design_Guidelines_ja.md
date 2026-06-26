@@ -1,7 +1,7 @@
 # 製品設計ガイドライン (Product Design Guidelines)
 
-> **バージョン**: 1.6.0
-> **最終更新日**: 2026-06-24
+> **バージョン**: 1.7.0
+> **最終更新日**: 2026-06-26
 
 ## 製品コアビジョンと哲学 (Product Vision & Philosophy)
 - **コアバリュー**: 「オフライン、軽量、高精度の AI 会議記録ツール — すべての会話を追跡可能に。」
@@ -68,6 +68,13 @@
   - **Python 後処理**（`transcriber._deduplicate_repeats()`）：認識完了後、Jaccard 類似度を使用して隣接する高度に類似した重複セグメントを除去、最も長い時間範囲のものを保持
 - **ffmpeg パラメータ**: `-y -i <input> -ar 16000 -ac 1 -sample_fmt s16 <output>`
 
+## アプリケーションアイコン仕様 (Application Icon Guidelines)
+- **ソース**: ユーザー提供の 1024x1024 RGBA PNG（`assets/app_icon.png`）
+- **Windows アイコン**: `assets/app.ico` — マルチサイズ ICO（16/24/32/48/64/96/128/256）、PIL でソース PNG から生成
+- **ウィンドウアイコン**: `assets/icon.png`（256x256 PNG）、開発モードの `BrowserWindow` はこのパスを参照；本番モードは `dist/icon.png`（Vite ビルドでコピー）を参照
+- **ファビコン**: `frontend/public/icon.png`（Vite 静的アセット）、`index.html` で `<link rel="icon" type="image/png" href="/icon.png">` として参照
+- **electron-builder パッケージング**: `package.json` の `build.win.icon` が `../assets/app.ico` を指し、ビルド時に .exe に自動埋め込み
+
 ## Electron + Vue.js フロントエンドパッケージング仕様 (Frontend Packaging Guidelines)
 - **フロントエンドフレームワーク**: Electron 33 + Vue 3 + Vite 6
 - **CLI ツール統合**: electron-builder の `extraResources` が `whisper_cli/` と `ffmpeg/` を出力の `resources/` にコピー
@@ -76,6 +83,7 @@
 - **ビルドコマンド**: `cd frontend && npm run electron:build`（= `vite build && electron-builder --win portable`）
 - **ビルド出力**: `frontend/dist-electron/Recorder-{version}-portable.exe`（Electron + Vue + whisper-cli + ffmpeg を含む）
 - **Windows Defender 注意**: ビルド中に `app.asar` がロックされた場合、`directories.output` を `dist-electron-build2` に変更して回避
+- **ビルド後検証**: 出力ファイルの確認は**必ず絶対パス**を使用すること（例：`dir c:\...\frontend\dist-electron-build2\Recorder-*.exe`）。`cd /d` でドライブを切り替えてから相対パスで確認するのは避ける（cmd の `&&` チェーンがドライブ間でパス解決エラーを起こし、ファイルが存在しないと誤判定する可能性がある）。`dir /s <完全パス>` を使用して正しいファイル位置を確認すること。
 - **開発モード**: `cd frontend && npm run electron:dev`（Vite dev server + Electron を起動）
 - **除外項目**: `files` で `node_modules/electron` を除外、Electron 組み込みモジュールとの干渉を防止
 

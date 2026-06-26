@@ -104,6 +104,9 @@ function createWindow() {
     minWidth: 720,
     minHeight: 500,
     title: 'Recorder — AI 會議記錄',
+    icon: isDev
+      ? path.join(__dirname, '..', '..', 'assets', 'icon.png')
+      : path.join(__dirname, '..', 'dist', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

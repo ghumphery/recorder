@@ -160,3 +160,23 @@
   - `frontend/src/App.vue`：`saveRecordingMeta` メソッドに `clonedSegments`、`clonedLlmResults`、`clonedDocuments` ディープクローン変数を追加；IPC 呼び出しパラメータをクローンされたオブジェクトに変更。
   - `frontend/package.json`：バージョンを 1.14.4 に更新
 - バックアップ: backup-202606261417.zip
+
+## [2026-06-26 17:02]
+- **version**: 1.15.0
+- **要件**: アプリケーションアイコン（左上隅のウィンドウアイコンとメイン .exe アイコン）をユーザー提供のマイクアイコンに交換する。
+- **計画**:
+  1. ユーザーが 1024x1024 RGBA PNG（`assets/app_icon.png`）を提供
+  2. PIL を使用してマルチサイズ .ico（16/24/32/48/64/96/128/256）を生成 → `assets/app.ico`
+  3. 256x256 PNG を生成 → `assets/icon.png`、`frontend/public/icon.png` にコピー（Vite 静的アセット）
+  4. `frontend/electron/main.js`：`BrowserWindow` に `icon` プロパティを追加（開発モード → `assets/icon.png`、本番モード → `dist/icon.png`）
+  5. `frontend/index.html`：`<link rel="icon" type="image/png" href="/icon.png">` ファビコンを追加
+  6. `frontend/package.json`：`build.win.icon` は既に `../assets/app.ico` を指している（変更不要）
+  7. バージョン 1.14.4 → 1.15.0（マイナー：新機能）
+- **結果**:
+  - `assets/app.ico` — マルチサイズ Windows アイコン（153 KB、8 サイズ：16/24/32/48/64/96/128/256）
+  - `assets/icon.png` — 256x256 PNG アイコン（87 KB）
+  - `frontend/public/icon.png` — Vite 静的アセット、ビルド時に `dist/icon.png` にコピー
+  - `frontend/electron/main.js` — `createWindow()` に `icon` プロパティを追加、開発/本番モードで適切なパスを指定
+  - `frontend/index.html` — ファビコン `<link>` タグを追加
+  - `frontend/package.json` — バージョンを 1.15.0 に更新
+- バックアップ: backup-202606261702.zip

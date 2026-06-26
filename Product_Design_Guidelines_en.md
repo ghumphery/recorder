@@ -1,7 +1,7 @@
 # Product Design Guidelines
 
-> **Version**: 1.6.0
-> **Last Updated**: 2026-06-24
+> **Version**: 1.7.0
+> **Last Updated**: 2026-06-26
 
 ## Product Vision & Philosophy
 - **Core Value**: "An offline, lightweight, and accurate AI meeting notes tool — making every conversation traceable."
@@ -68,6 +68,13 @@
   - **Python Post-processing** (`transcriber._deduplicate_repeats()`): After recognition, use Jaccard similarity to remove adjacent highly similar duplicate segments, keeping the one with the longest time span
 - **ffmpeg Parameters**: `-y -i <input> -ar 16000 -ac 1 -sample_fmt s16 <output>`
 
+## Application Icon Guidelines
+- **Source**: User-provided 1024x1024 RGBA PNG (`assets/app_icon.png`)
+- **Windows Icon**: `assets/app.ico` — Multi-size ICO (16/24/32/48/64/96/128/256), generated from source PNG using PIL
+- **Window Icon**: `assets/icon.png` (256x256 PNG), dev mode `BrowserWindow` points to this path; production mode points to `dist/icon.png` (copied by Vite build)
+- **Favicon**: `frontend/public/icon.png` (Vite static asset), referenced in `index.html` via `<link rel="icon" type="image/png" href="/icon.png">`
+- **electron-builder Packaging**: `package.json` `build.win.icon` points to `../assets/app.ico`, automatically embedded in .exe during build
+
 ## Electron + Vue.js Frontend Packaging Guidelines
 - **Frontend Framework**: Electron 33 + Vue 3 + Vite 6
 - **CLI Tool Integration**: electron-builder's `extraResources` copies `whisper_cli/` and `ffmpeg/` to `resources/` in output
@@ -76,6 +83,7 @@
 - **Build Command**: `cd frontend && npm run electron:build` (= `vite build && electron-builder --win portable`)
 - **Build Output**: `frontend/dist-electron/Recorder-{version}-portable.exe` (includes Electron + Vue + whisper-cli + ffmpeg)
 - **Windows Defender Note**: If `app.asar` is locked during build, change `directories.output` to `dist-electron-build2` to bypass
+- **Post-build Verification**: **Always use absolute paths** to verify build output, e.g. `dir c:\...\frontend\dist-electron-build2\Recorder-*.exe`. Avoid using `cd /d` to switch drives then checking with relative paths (cmd's `&&` chaining across drives may cause path resolution errors, falsely reporting files as missing). Use `dir /s <full path>` to ensure correct file location.
 - **Development Mode**: `cd frontend && npm run electron:dev` (starts Vite dev server + Electron)
 - **Exclusions**: `files` excludes `node_modules/electron` to avoid interfering with Electron built-in modules
 

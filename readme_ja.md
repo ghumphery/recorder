@@ -39,14 +39,14 @@ npm run electron:dev
 
 ### リリース版のダウンロード
 
-[GitHub Releases](https://github.com/ghumphery/recorder/releases) から最新の `Recorder-1.14.1-portable.exe` をダウンロード。
+[GitHub Releases](https://github.com/ghumphery/recorder/releases) から最新の `Recorder-1.15.0-portable.exe` をダウンロード。
 
 ### ソースからビルド
 
 ```bash
 cd frontend
 npm run electron:build
-# 出力: frontend/dist-electron-build2/Recorder-1.14.1-portable.exe
+# 出力: frontend/dist-electron-build2/Recorder-1.15.0-portable.exe
 ```
 
 ### パッケージ版の実行
@@ -96,7 +96,7 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 バージョン履歴
 
-- **v1.14.4** — 「履歴 → 音声ファイル一覧 → 文字起こし → 音声認識完了後に ❌ An object could not be cloned」エラーを修正：`saveRecordingMeta` メソッドで segments/llmResults/documents をディープクローンし、Vue reactive Proxy が Electron IPC でシリアライズできない問題を防止
+- **v1.15.0** — アプリケーションアイコンを交換：左上隅のウィンドウアイコンとメイン .exe アイコンをマイクアイコンに更新；PIL でマルチサイズ .ico（16/24/32/48/64/96/128/256）と 256x256 PNG を生成；`BrowserWindow` に `icon` プロパティを追加；`index.html` にファビコンを追加
 - **v1.14.3** — LLM 文書管理パネルを追加：元の文字起こしから生成された文書（最適化/翻訳/要約）を一覧表示/レビュー/削除可能、生成時間で区別；翻訳は任意の文書（元/最適化/要約）に対応；Job パネルを開くときに自動更新
 - **v1.14.2** — LLM バッチ処理（optimize）で30秒タイムアウトによる「The user aborted a request」エラーを修正：`callLLM()` の AbortController タイムアウトを30秒から120秒に延長し、大規模バッチ処理に対応
 - **v1.14.1** — 「✨ 最適化」で `An object could not be cloned` エラーを修正：Vue reactive 配列（Proxy）が Electron IPC でシリアライズできない問題を、`JSON.parse(JSON.stringify(...))` でプレーンな JSON に変換してから渡すことで修正

@@ -163,3 +163,23 @@
   - `frontend/src/App.vue`: `saveRecordingMeta` method added `clonedSegments`, `clonedLlmResults`, `clonedDocuments` deep clone variables; IPC call parameters changed to use cloned objects.
   - `frontend/package.json`: Version updated to 1.14.4
 - Backup: backup-202606261417.zip
+
+## [2026-06-26 17:02]
+- **version**: 1.15.0
+- **Requirement**: Replace application icons (top-left window icon and main .exe icon) with the microphone icon provided by the user.
+- **Plan**:
+  1. User provided 1024x1024 RGBA PNG (`assets/app_icon.png`)
+  2. Use PIL to generate multi-size .ico (16/24/32/48/64/96/128/256) → `assets/app.ico`
+  3. Generate 256x256 PNG → `assets/icon.png`, copy to `frontend/public/icon.png` (Vite static asset)
+  4. `frontend/electron/main.js`: Add `icon` property to `BrowserWindow` (dev mode → `assets/icon.png`, production → `dist/icon.png`)
+  5. `frontend/index.html`: Add `<link rel="icon" type="image/png" href="/icon.png">` favicon
+  6. `frontend/package.json`: `build.win.icon` already points to `../assets/app.ico` (no change needed)
+  7. Version 1.14.4 → 1.15.0 (minor: new feature)
+- **Result**:
+  - `assets/app.ico` — Multi-size Windows icon (153 KB, 8 sizes: 16/24/32/48/64/96/128/256)
+  - `assets/icon.png` — 256x256 PNG icon (87 KB)
+  - `frontend/public/icon.png` — Vite static asset, copied to `dist/icon.png` on build
+  - `frontend/electron/main.js` — `createWindow()` added `icon` property with dev/production paths
+  - `frontend/index.html` — Added favicon `<link>` tag
+  - `frontend/package.json` — Version updated to 1.15.0
+- Backup: backup-202606261702.zip

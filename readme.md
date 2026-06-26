@@ -39,14 +39,14 @@ npm run electron:dev
 
 ### 下載打包版
 
-從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.14.2-portable.exe`，直接執行即可。
+從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.15.0-portable.exe`，直接執行即可。
 
 ### 自行打包
 
 ```bash
 cd frontend
 npm run electron:build
-# 產出：frontend/dist-electron-build2/Recorder-1.14.2-portable.exe
+# 產出：frontend/dist-electron-build2/Recorder-1.15.0-portable.exe
 ```
 
 ### 直接運行打包版
@@ -96,7 +96,7 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 版本歷史
 
-- **v1.14.4** — 修正「歷史記錄 → 音檔列表 → 辨識 → 完成語音轉文字後出現 ❌ An object could not be cloned」錯誤：`saveRecordingMeta` 方法對 segments/llmResults/documents 進行深度克隆，避免 Vue reactive Proxy 無法被 Electron IPC 序列化
+- **v1.15.0** — 更換應用程式圖示：左上角視窗 icon 與主程式 .exe icon 更新為麥克風圖示；使用 PIL 產生多尺寸 .ico（16/24/32/48/64/96/128/256）與 256x256 PNG；`BrowserWindow` 加入 `icon` 屬性；`index.html` 加入 favicon
 - **v1.14.3** — 新增 LLM 文件管理面板：可 list/review/delete 原始逐字稿延伸生成的文件（優化/翻譯/摘要），以生成時間區分；翻譯功能支援對任何文件（原始/優化/摘要）進行翻譯；Job 面板開啟時自動 refresh
 - **v1.14.2** — 修正 LLM 分批處理（optimize）因 30 秒 timeout 導致「The user aborted a request」錯誤：`callLLM()` 的 AbortController timeout 從 30 秒增加至 120 秒；加入 CSMA/CD 風格 exponential backoff retry 機制（Slot Time=2s，最多 16 次重試），僅對 timeout 進行重試，等待時間 = `Random(0, 2^k - 1) × Slot Time`
 - **v1.14.1** — 修正「✨ 優化」報錯 `An object could not be cloned`：Vue reactive 陣列（Proxy）無法通過 Electron IPC 序列化，傳遞前以 `JSON.parse(JSON.stringify(...))` 轉為純 JSON 物件
