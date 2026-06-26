@@ -96,6 +96,8 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 Version History
 
+- **v1.14.4** — Fix "❌ An object could not be cloned" error after completing speech-to-text from History → Audio List → Transcribe: `saveRecordingMeta` method now deep clones segments/llmResults/documents to prevent Vue reactive Proxy from failing Electron IPC serialization
+- **v1.14.3** — Add LLM document management panel: list/review/delete documents generated from original transcripts (optimize/translate/summary), distinguished by generation time; translation supports any document (original/optimized/summary); auto-refresh Job panel on open
 - **v1.14.2** — Fix LLM batch processing (optimize) "The user aborted a request" error caused by 30-second timeout: increased `callLLM()` AbortController timeout from 30s to 120s; added CSMA/CD-style exponential backoff retry (Slot Time=2s, max 16 retries), retry only on timeout, wait time = `Random(0, 2^k - 1) × Slot Time`
 - **v1.14.1** — Fix "An object could not be cloned" error on "✨ Optimize": Vue reactive array (Proxy) cannot be serialized through Electron IPC; use `JSON.parse(JSON.stringify(...))` to convert to plain JSON before passing
 - **v1.14.0** — LLM Job Manager async processing: token limit detection with auto batch splitting (CJK 1.5 token/char, ASCII 0.25 token/char estimation); per-sentence optimization preserving original timestamps (`[N] optimized text` format parsing); Job state machine `pending → running → completed/failed/cancelled`; frontend Job list panel with progress bar, log, cancel button

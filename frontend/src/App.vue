@@ -827,7 +827,11 @@ export default {
       const id = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}_${this.recordingMode || 'import'}`
       const duration = segments.length > 0 ? segments[segments.length-1].end : 0
       const audioPath = this.currentAudioPath || ''
-      await window.electronAPI.recoSaveMeta({ recordingId: id, filename: `${id}.webm`, recordingMode: this.recordingMode || 'import', recordedAt: now.toISOString(), duration, modelSize: this.selectedModel, segments, llmResults: llmResults ? { ...llmResults } : { ...this.llmResults }, audioPath, documents: this.documents })
+      // 深度克隆避免 Vue reactive Proxy 無法被 IPC 結構化克隆
+      const clonedSegments = JSON.parse(JSON.stringify(segments))
+      const clonedLlmResults = JSON.parse(JSON.stringify(llmResults || this.llmResults))
+      const clonedDocuments = JSON.parse(JSON.stringify(this.documents))
+      await window.electronAPI.recoSaveMeta({ recordingId: id, filename: `${id}.webm`, recordingMode: this.recordingMode || 'import', recordedAt: now.toISOString(), duration, modelSize: this.selectedModel, segments: clonedSegments, llmResults: clonedLlmResults, audioPath, documents: clonedDocuments })
     },
 
     // ── LLM ──

@@ -121,3 +121,45 @@
     - Extracted actual fetch logic into `_llmFetch()` helper function
   - `frontend/package.json`: Version updated to 1.14.2
 - Backup: backup-202606261106.zip
+
+## [2026-06-26 12:33]
+- **version**: 1.14.3
+- **Requirement**:
+  1. Provide LLM document management UI: list/review/delete documents generated from original transcripts (optimize, translate, summary, etc.)
+  2. Translation supports translating any document (original transcript, optimized result, summary, etc.), with output documents categorized under the same original transcript, distinguished by generation time
+  3. Auto-refresh job list when clicking the Job button
+- **Plan**:
+  1. Backend `main.js`:
+     - `reco:saveMeta` add `documents` parameter to store document history array (id, type, source, target, content, createdAt)
+     - Add `reco:deleteLlmDoc` IPC: delete specified document, sync cleanup of `llmResults` latest version
+  2. `preload.js`: Add `recoDeleteLlmDoc` bridge
+  3. Frontend `App.vue`:
+     - Add `documents: []` data array and `showLlmDocPanel` variable
+     - Add `_addDocument(type, content, source, target)` method, auto-add to document history after LLM operations complete
+     - Add LLM document management panel (template): list all documents (type, source, target language, time, preview), support view and delete
+     - Add `viewLlmDoc(doc)`: set document content as activeSource for display
+     - Add `deleteLlmDoc(doc)`: call backend delete, sync frontend state
+     - `toggleJobPanel()` method: auto-call `refreshJobList()` when toggling panel
+     - Add "📄 Document Manager" button in LLM action bar
+  4. i18n: Add 8 translation keys each for zh-TW/en/ja
+  5. Version 1.14.2 → 1.14.3 (patch: new feature)
+- **Result**:
+  - `frontend/electron/main.js`: `reco:saveMeta` added `documents` parameter; added `reco:deleteLlmDoc` IPC
+  - `frontend/electron/preload.js`: Added `recoDeleteLlmDoc` bridge
+  - `frontend/src/App.vue`: Added document management panel, `_addDocument`, `viewLlmDoc`, `deleteLlmDoc`, `toggleJobPanel` methods
+  - `frontend/src/i18n/zh-TW.js`, `en.js`, `ja.js`: Added 8 translation keys
+  - `frontend/package.json`: Version updated to 1.14.3
+- Backup: backup-202606261233.zip
+
+## [2026-06-26 14:12]
+- **version**: 1.14.4
+- **Requirement**: Fix "❌ An object could not be cloned" error after completing speech-to-text transcription from History → Audio List → (select specific audio file) → Transcribe.
+- **Plan**:
+  1. Root cause: `saveRecordingMeta` method passes Vue reactive Proxy-wrapped `segments`, `llmResults`, `documents` directly to Electron IPC; V8 structured clone cannot serialize Proxy objects.
+  2. Fix: Deep clone `segments`, `llmResults`, `documents` using `JSON.parse(JSON.stringify(...))` in `saveRecordingMeta` to detach from Vue Proxy wrapping.
+  3. Reference: `doOptimize` method (App.vue:846) already uses the same technique to avoid this issue.
+  4. Version 1.14.3 → 1.14.4 (patch: bug fix)
+- **Result**:
+  - `frontend/src/App.vue`: `saveRecordingMeta` method added `clonedSegments`, `clonedLlmResults`, `clonedDocuments` deep clone variables; IPC call parameters changed to use cloned objects.
+  - `frontend/package.json`: Version updated to 1.14.4
+- Backup: backup-202606261417.zip

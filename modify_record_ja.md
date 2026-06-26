@@ -118,3 +118,45 @@
   - `frontend/electron/main.js`：`callLLM()` の AbortController タイムアウトを 30000 から 120000 に変更
   - `frontend/package.json`：バージョンを 1.14.2 に更新
 - バックアップ: backup-202606261106.zip
+
+## [2026-06-26 12:33]
+- **version**: 1.14.3
+- **要件**:
+  1. LLM 文書管理 UI を提供：元の文字起こしから生成された文書（最適化、翻訳、要約など）を一覧表示/レビュー/削除可能にする
+  2. 翻訳機能は任意の文書（元の文字起こし、最適化結果、要約など）の翻訳をサポートし、出力文書は同じ元の文字起こしの下に分類され、生成時間で区別される
+  3. Job ボタンクリック時に自動的に job リストを更新
+- **計画**:
+  1. バックエンド `main.js`：
+     - `reco:saveMeta` に `documents` パラメータを追加し、文書履歴配列（id、type、source、target、content、createdAt）を保存
+     - `reco:deleteLlmDoc` IPC を追加：指定された文書を削除し、`llmResults` の最新バージョンを同期クリーンアップ
+  2. `preload.js`：`recoDeleteLlmDoc` ブリッジを追加
+  3. フロントエンド `App.vue`：
+     - `documents: []` データ配列と `showLlmDocPanel` 変数を追加
+     - `_addDocument(type, content, source, target)` メソッドを追加、LLM 操作完了後に自動的に文書履歴に追加
+     - LLM 文書管理パネル（テンプレート）を追加：すべての文書を一覧表示（タイプ、ソース、ターゲット言語、時間、プレビュー）、表示と削除をサポート
+     - `viewLlmDoc(doc)` を追加：文書内容を activeSource として表示
+     - `deleteLlmDoc(doc)` を追加：バックエンド削除を呼び出し、フロントエンド状態を同期
+     - `toggleJobPanel()` メソッド：パネル切り替え時に自動的に `refreshJobList()` を呼び出す
+     - LLM アクションバーに「📄 文書管理」ボタンを追加
+  4. i18n：zh-TW/en/ja に各 8 つの翻訳キーを追加
+  5. バージョン 1.14.2 → 1.14.3（パッチ：新機能）
+- **結果**:
+  - `frontend/electron/main.js`：`reco:saveMeta` に `documents` パラメータを追加；`reco:deleteLlmDoc` IPC を追加
+  - `frontend/electron/preload.js`：`recoDeleteLlmDoc` ブリッジを追加
+  - `frontend/src/App.vue`：文書管理パネル、`_addDocument`、`viewLlmDoc`、`deleteLlmDoc`、`toggleJobPanel` メソッドを追加
+  - `frontend/src/i18n/zh-TW.js`、`en.js`、`ja.js`：8 つの翻訳キーを追加
+  - `frontend/package.json`：バージョンを 1.14.3 に更新
+- バックアップ: backup-202606261233.zip
+
+## [2026-06-26 14:12]
+- **version**: 1.14.4
+- **要件**: 「履歴 → 音声ファイル一覧 → （特定の音声ファイルを選択）→ 文字起こし → 音声認識完了後に ❌ An object could not be cloned」エラーを修正。
+- **計画**:
+  1. 根本原因：`saveRecordingMeta` メソッドが Vue reactive Proxy でラップされた `segments`、`llmResults`、`documents` を直接 Electron IPC に渡している。V8 構造化クローンは Proxy オブジェクトをシリアライズできない。
+  2. 修正：`saveRecordingMeta` 内で `JSON.parse(JSON.stringify(...))` を使用して `segments`、`llmResults`、`documents` をディープクローンし、Vue Proxy ラッピングから切り離す。
+  3. 参考：`doOptimize` メソッド（App.vue:846）は既に同じ手法でこの問題を回避している。
+  4. バージョン 1.14.3 → 1.14.4（パッチ：バグ修正）
+- **結果**:
+  - `frontend/src/App.vue`：`saveRecordingMeta` メソッドに `clonedSegments`、`clonedLlmResults`、`clonedDocuments` ディープクローン変数を追加；IPC 呼び出しパラメータをクローンされたオブジェクトに変更。
+  - `frontend/package.json`：バージョンを 1.14.4 に更新
+- バックアップ: backup-202606261417.zip

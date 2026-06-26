@@ -1001,4 +1001,18 @@
   - `frontend/src/App.vue`：新增文件管理面板、`_addDocument`、`viewLlmDoc`、`deleteLlmDoc`、`toggleJobPanel` 方法
   - `frontend/src/i18n/zh-TW.js`、`en.js`、`ja.js`：新增 8 條翻譯 key
   - `frontend/package.json`：版本號更新為 1.14.3
-  - 備份檔名: backup-202606261233.zip
+   - 備份檔名: backup-202606261233.zip
+
+## [2026-06-26 14:12]
+- **version**: 1.14.4
+- **修改要求**：修正「歷史記錄 → 音檔列表 → 選特定音檔 → 辨識 → 完成語音轉文字後出現 ❌ An object could not be cloned」的錯誤。
+- **修改規劃**：
+  1. 問題根源：`saveRecordingMeta` 方法將 Vue reactive Proxy 包裹的 `segments`、`llmResults`、`documents` 直接傳遞給 Electron IPC，V8 結構化克隆無法序列化 Proxy 物件。
+  2. 修復方式：在 `saveRecordingMeta` 中對 `segments`、`llmResults`、`documents` 使用 `JSON.parse(JSON.stringify(...))` 深度克隆，使其脫離 Vue Proxy 包裹。
+  3. 參考：`doOptimize` 方法（App.vue:846）已使用相同手法避免此問題。
+  4. 版本號 1.14.3 → 1.14.4（patch 修復）
+- **修改結果**：
+  - `frontend/src/App.vue`：`saveRecordingMeta` 方法新增 `clonedSegments`、`clonedLlmResults`、`clonedDocuments` 深度克隆變數，並將 IPC 呼叫參數改為使用克隆後的物件。
+  - `frontend/package.json`：版本號更新為 1.14.4
+  - 備份檔名: backup-202606261417.zip
+  - 編譯成功：`frontend/dist-electron-build2/Recorder-1.14.4-portable.exe`（127 MB）

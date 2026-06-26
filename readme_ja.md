@@ -96,6 +96,8 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 バージョン履歴
 
+- **v1.14.4** — 「履歴 → 音声ファイル一覧 → 文字起こし → 音声認識完了後に ❌ An object could not be cloned」エラーを修正：`saveRecordingMeta` メソッドで segments/llmResults/documents をディープクローンし、Vue reactive Proxy が Electron IPC でシリアライズできない問題を防止
+- **v1.14.3** — LLM 文書管理パネルを追加：元の文字起こしから生成された文書（最適化/翻訳/要約）を一覧表示/レビュー/削除可能、生成時間で区別；翻訳は任意の文書（元/最適化/要約）に対応；Job パネルを開くときに自動更新
 - **v1.14.2** — LLM バッチ処理（optimize）で30秒タイムアウトによる「The user aborted a request」エラーを修正：`callLLM()` の AbortController タイムアウトを30秒から120秒に延長し、大規模バッチ処理に対応
 - **v1.14.1** — 「✨ 最適化」で `An object could not be cloned` エラーを修正：Vue reactive 配列（Proxy）が Electron IPC でシリアライズできない問題を、`JSON.parse(JSON.stringify(...))` でプレーンな JSON に変換してから渡すことで修正
 - **v1.14.0** — LLM Job Manager 非同期処理機構を導入：トークン制限検出と自動バッチ分割（CJK 1.5 トークン/文字、ASCII 0.25 トークン/文字推定）；タイムスタンプを保持した文単位の最適化（`[N] 最適化テキスト` 形式解析）；Job ステートマシン `pending → running → completed/failed/cancelled`；フロントエンド Job リストパネル（プログレスバー、ログ、キャンセルボタン）
