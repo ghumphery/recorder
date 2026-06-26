@@ -1048,3 +1048,20 @@
   - `.clinerules/workrule.md` — 新增編譯後驗證注意事項（完整絕對路徑檢查、`dir /s` 建議、背景執行緒注意）
   - `Product_Design_Guidelines.md` / `_en.md` / `_ja.md` — 三語言同步新增編譯後驗證段落
   - 已同步至 GitHub
+
+## [2026-06-26 17:36]
+- **version**: 1.15.1
+- **修改要求**：製作個人自簽 code sign 憑證，並對 portable.exe 進行數位簽署。
+- **修改規劃**：
+  1. 使用 PowerShell `New-SelfSignedCertificate` 產生自簽 code sign 憑證（RSA 2048, CodeSigning EKU, 3 年效期）
+  2. 匯出為 `.pfx` 儲存至 `C:\Certs\recorder_selfsign.pfx`
+  3. 修改 `frontend/package.json` 加入 `win.certificateFile`、`certificatePassword`、`signAndEditExecutable`、`signtoolOptions.rfc3161TimeStampServer`
+  4. 重新編譯 portable exe（electron-builder 自動呼叫 signtool 簽署所有 .exe）
+  5. 驗證簽署結果（Get-AuthenticodeSignature）
+  6. 更新文件與 GitHub 同步
+- **修改結果**：
+  - `C:\Certs\recorder_selfsign.pfx` — 自簽 code sign 憑證（Subject: CN=Cheng-Feng Iron Factory, O=Cheng-Feng Iron Factory, C=TW, 效期至 2029-06-26）
+  - `frontend/package.json` — 加入 code sign 設定（certificateFile, certificatePassword, signAndEditExecutable, signtoolOptions）
+  - `frontend/dist-electron-build2/Recorder-1.15.1-portable.exe` — 已簽署的 portable exe（127 MB）
+  - 所有內含 .exe（whisper-cli.exe、ffmpeg.exe、Recorder.exe、elevate.exe）均已成功簽署
+  - 備份檔名: backup-202606261736.zip

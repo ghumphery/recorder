@@ -1,7 +1,7 @@
 {
   "name": "recoder-frontend",
   "private": true,
-  "version": "1.15.0",
+  "version": "1.15.1",
   "type": "commonjs",
   "main": "electron/main.js",
   "scripts": {
@@ -48,7 +48,13 @@
     ],
     "win": {
       "target": "portable",
-      "icon": "../assets/app.ico"
+      "icon": "../assets/app.ico",
+      "certificateFile": "C:/Certs/recorder_selfsign.pfx",
+      "certificatePassword": "RecorderSelfSign2026",
+      "signAndEditExecutable": true,
+      "signtoolOptions": {
+        "rfc3161TimeStampServer": "http://timestamp.digicert.com"
+      }
     },
     "portable": {
       "artifactName": "Recorder-${version}-portable.exe"
