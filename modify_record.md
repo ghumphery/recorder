@@ -957,3 +957,19 @@
   - `frontend/src/App.vue`：`doOptimize()` 中 `segments: JSON.parse(JSON.stringify(this.transcriptionResults))`
   - `frontend/package.json`：版本號更新為 1.14.1
 - 備份檔名: backup-202606241458.zip
+
+## [2026-06-26 11:06]
+- **version**: 1.14.2
+- **修改要求**：修正 LLM 分批處理（optimize）時因 30 秒 timeout 導致「The user aborted a request」錯誤。
+- **修改規劃**：
+  1. 分析日誌：`callLLM()` 函數在第 139 行設定了 30 秒的 AbortController timeout
+  2. 分批處理大量句子（如 237 句或 444 句）時，LLM API 呼叫需要超過 30 秒才能完成，導致 `controller.abort()` 被觸發
+  3. 修復方案：將 timeout 從 30 秒增加到 120 秒，以容納大型批次處理
+  4. 版本號 1.14.1 → 1.14.2（patch 修復 bug）
+- **修改結果**：
+  - `frontend/electron/main.js`：
+    - `callLLM()` 的 AbortController timeout 從 30000 改為 120000
+    - 加入 CSMA/CD 風格 exponential backoff retry 機制：`LLM_SLOT_TIME=2000ms`、`LLM_MAX_RETRIES=16`；僅對 AbortError（timeout）進行重試，等待時間 = `Random(0, 2^k - 1) × Slot Time`（k=min(attempt+1, 10)），連續 16 次 timeout 後拋出最終錯誤
+    - 將實際 fetch 邏輯抽取為 `_llmFetch()` 獨立函式
+  - `frontend/package.json`：版本號更新為 1.14.2
+  - 備份檔名: backup-202606261106.zip

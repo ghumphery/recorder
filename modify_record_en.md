@@ -105,3 +105,19 @@
   - `frontend/src/App.vue`: `doOptimize()` changed to `segments: JSON.parse(JSON.stringify(this.transcriptionResults))`
   - `frontend/package.json`: Version updated to 1.14.1
 - Backup: backup-202606241458.zip
+
+## [2026-06-26 11:06]
+- **version**: 1.14.2
+- **Requirement**: Fix LLM batch processing (optimize) "The user aborted a request" error caused by 30-second timeout.
+- **Plan**:
+  1. Log analysis: `callLLM()` function had a 30-second AbortController timeout at line 139
+  2. When processing large batches (e.g., 237 or 444 sentences), LLM API calls take longer than 30 seconds, triggering `controller.abort()`
+  3. Fix: Increase timeout from 30 seconds to 120 seconds to accommodate large batch processing
+  4. Version 1.14.1 → 1.14.2 (patch: bug fix)
+- **Result**:
+  - `frontend/electron/main.js`:
+    - `callLLM()` AbortController timeout changed from 30000 to 120000
+    - Added CSMA/CD-style exponential backoff retry: `LLM_SLOT_TIME=2000ms`, `LLM_MAX_RETRIES=16`; retry only on AbortError (timeout), wait time = `Random(0, 2^k - 1) × Slot Time` (k=min(attempt+1, 10)), throw final error after 16 consecutive timeouts
+    - Extracted actual fetch logic into `_llmFetch()` helper function
+  - `frontend/package.json`: Version updated to 1.14.2
+- Backup: backup-202606261106.zip

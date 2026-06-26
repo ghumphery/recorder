@@ -39,14 +39,14 @@ npm run electron:dev
 
 ### Download Release
 
-Download the latest `Recorder-1.14.1-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
+Download the latest `Recorder-1.14.2-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
 
 ### Build from Source
 
 ```bash
 cd frontend
 npm run electron:build
-# Output: frontend/dist-electron-build2/Recorder-1.14.1-portable.exe
+# Output: frontend/dist-electron-build2/Recorder-1.14.2-portable.exe
 ```
 
 ### Run Packaged Version
@@ -96,6 +96,7 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 Version History
 
+- **v1.14.2** — Fix LLM batch processing (optimize) "The user aborted a request" error caused by 30-second timeout: increased `callLLM()` AbortController timeout from 30s to 120s; added CSMA/CD-style exponential backoff retry (Slot Time=2s, max 16 retries), retry only on timeout, wait time = `Random(0, 2^k - 1) × Slot Time`
 - **v1.14.1** — Fix "An object could not be cloned" error on "✨ Optimize": Vue reactive array (Proxy) cannot be serialized through Electron IPC; use `JSON.parse(JSON.stringify(...))` to convert to plain JSON before passing
 - **v1.14.0** — LLM Job Manager async processing: token limit detection with auto batch splitting (CJK 1.5 token/char, ASCII 0.25 token/char estimation); per-sentence optimization preserving original timestamps (`[N] optimized text` format parsing); Job state machine `pending → running → completed/failed/cancelled`; frontend Job list panel with progress bar, log, cancel button
 - **v1.13.2** — Fix UI bug caused by i18n refactoring: `mounted()` lifecycle hook was accidentally removed, causing AI provider and whisper model dropdowns to be empty; restored `mounted()` to call `fetchModels()`, `fetchLlmProviders()`, `loadSettings()`

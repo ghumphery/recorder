@@ -96,6 +96,7 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 バージョン履歴
 
+- **v1.14.2** — LLM バッチ処理（optimize）で30秒タイムアウトによる「The user aborted a request」エラーを修正：`callLLM()` の AbortController タイムアウトを30秒から120秒に延長し、大規模バッチ処理に対応
 - **v1.14.1** — 「✨ 最適化」で `An object could not be cloned` エラーを修正：Vue reactive 配列（Proxy）が Electron IPC でシリアライズできない問題を、`JSON.parse(JSON.stringify(...))` でプレーンな JSON に変換してから渡すことで修正
 - **v1.14.0** — LLM Job Manager 非同期処理機構を導入：トークン制限検出と自動バッチ分割（CJK 1.5 トークン/文字、ASCII 0.25 トークン/文字推定）；タイムスタンプを保持した文単位の最適化（`[N] 最適化テキスト` 形式解析）；Job ステートマシン `pending → running → completed/failed/cancelled`；フロントエンド Job リストパネル（プログレスバー、ログ、キャンセルボタン）
 - **v1.13.2** — i18n リファクタリングによる UI バグを修正：`mounted()` ライフサイクルフックが誤って削除され、AI プロバイダーと whisper モデルのドロップダウンが空になる問題を修正；`mounted()` を復元して `fetchModels()`、`fetchLlmProviders()`、`loadSettings()` を呼び出す

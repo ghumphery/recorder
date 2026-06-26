@@ -105,3 +105,16 @@
   - `frontend/src/App.vue`: `doOptimize()` で `segments: JSON.parse(JSON.stringify(this.transcriptionResults))` に変更
   - `frontend/package.json`: バージョンを 1.14.1 に更新
 - バックアップ: backup-202606241458.zip
+
+## [2026-06-26 11:06]
+- **version**: 1.14.2
+- **要件**: LLM バッチ処理（optimize）で30秒タイムアウトによる「The user aborted a request」エラーを修正。
+- **計画**:
+  1. ログ分析：`callLLM()` 関数の 139 行目に 30 秒の AbortController タイムアウトが設定されていた
+  2. 大量の文（例：237 文または 444 文）をバッチ処理する際、LLM API 呼び出しに 30 秒以上かかり、`controller.abort()` がトリガーされる
+  3. 修正：タイムアウトを 30 秒から 120 秒に延長し、大規模バッチ処理に対応
+  4. バージョン 1.14.1 → 1.14.2（パッチ：バグ修正）
+- **結果**:
+  - `frontend/electron/main.js`：`callLLM()` の AbortController タイムアウトを 30000 から 120000 に変更
+  - `frontend/package.json`：バージョンを 1.14.2 に更新
+- バックアップ: backup-202606261106.zip

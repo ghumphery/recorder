@@ -129,55 +129,81 @@ const LLM_PROVIDERS = {
   gemini: { name: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', defaultModel: 'gemini-2.0-flash' },
 }
 
+const LLM_SLOT_TIME = 2000 // 時槽時間 2 秒（CSMA/CD 風格 exponential backoff）
+const LLM_MAX_RETRIES = 16 // 最大重試次數
+
+async function _llmFetch(provider, apiKey, model, prompt, systemPrompt, signal) {
+  const cfg = LLM_PROVIDERS[provider]
+  if (provider === 'ollama') {
+    const res = await fetch(`${cfg.baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: model || cfg.defaultModel, prompt, system: systemPrompt, stream: false }),
+      signal,
+    })
+    if (!res.ok) { const body = await res.text().catch(() => ''); throw new Error(`Ollama HTTP ${res.status}: ${body.slice(0, 200)}`) }
+    const data = await res.json()
+    if (data.error) throw new Error(`Ollama 錯誤: ${data.error}`)
+    return data.response || data.message?.content || ''
+  }
+  if (provider === 'gemini') {
+    const url = `${cfg.baseUrl}/models/${model || cfg.defaultModel}:generateContent?key=${apiKey}`
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }] }),
+      signal,
+    })
+    if (!res.ok) { const body = await res.text().catch(() => ''); throw new Error(`Gemini HTTP ${res.status}: ${body.slice(0, 200)}`) }
+    const data = await res.json()
+    if (data.error) throw new Error(`Gemini 錯誤: ${data.error.message || JSON.stringify(data.error)}`)
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+  }
+  const headers = { 'Content-Type': 'application/json' }
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+  const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      model: model || cfg.defaultModel,
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: prompt }],
+    }),
+    signal,
+  })
+  if (!res.ok) { const body = await res.text().catch(() => ''); throw new Error(`${cfg.name} HTTP ${res.status}: ${body.slice(0, 200)}`) }
+  const data = await res.json()
+  if (data.error) throw new Error(`${cfg.name} 錯誤: ${data.error.message || JSON.stringify(data.error)}`)
+  return data.choices?.[0]?.message?.content || ''
+}
+
 async function callLLM(provider, apiKey, model, prompt, systemPrompt) {
   const cfg = LLM_PROVIDERS[provider]
   if (!cfg) throw new Error(`不支援的提供商: ${provider}`)
   if (provider !== 'ollama' && (!apiKey || apiKey.trim() === '')) {
     throw new Error(`使用 ${cfg.name} 需要在設定中輸入 API Key`)
   }
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30000)
-  try {
-    if (provider === 'ollama') {
-      const res = await fetch(`${cfg.baseUrl}/api/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: model || cfg.defaultModel, prompt, system: systemPrompt, stream: false }),
-        signal: controller.signal,
-      })
-      if (!res.ok) { const body = await res.text().catch(() => ''); throw new Error(`Ollama HTTP ${res.status}: ${body.slice(0, 200)}`) }
-      const data = await res.json()
-      if (data.error) throw new Error(`Ollama 錯誤: ${data.error}`)
-      return data.response || data.message?.content || ''
-    }
-    if (provider === 'gemini') {
-      const url = `${cfg.baseUrl}/models/${model || cfg.defaultModel}:generateContent?key=${apiKey}`
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }] }),
-        signal: controller.signal,
-      })
-      if (!res.ok) { const body = await res.text().catch(() => ''); throw new Error(`Gemini HTTP ${res.status}: ${body.slice(0, 200)}`) }
-      const data = await res.json()
-      if (data.error) throw new Error(`Gemini 錯誤: ${data.error.message || JSON.stringify(data.error)}`)
-      return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
-    }
-    const headers = { 'Content-Type': 'application/json' }
-    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
-    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
-      method: 'POST', headers,
-      body: JSON.stringify({
-        model: model || cfg.defaultModel,
-        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: prompt }],
-      }),
-      signal: controller.signal,
-    })
-    if (!res.ok) { const body = await res.text().catch(() => ''); throw new Error(`${cfg.name} HTTP ${res.status}: ${body.slice(0, 200)}`) }
-    const data = await res.json()
-    if (data.error) throw new Error(`${cfg.name} 錯誤: ${data.error.message || JSON.stringify(data.error)}`)
-    return data.choices?.[0]?.message?.content || ''
-  } finally { clearTimeout(timeout) }
+  let lastError = null
+  for (let attempt = 0; attempt < LLM_MAX_RETRIES; attempt++) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 120000)
+    try {
+      const result = await _llmFetch(provider, apiKey, model, prompt, systemPrompt, controller.signal)
+      return result
+    } catch (e) {
+      clearTimeout(timeout)
+      lastError = e
+      // 只有 AbortError（timeout）才進行 retry，其他錯誤直接拋出
+      if (e.name !== 'AbortError') throw e
+      // 最後一次嘗試失敗後不再等待，直接拋出
+      if (attempt >= LLM_MAX_RETRIES - 1) break
+      // CSMA/CD exponential backoff：等待時間 = Random(0, 2^k - 1) × Slot Time
+      const k = Math.min(attempt + 1, 10)
+      const maxSlots = (1 << k) - 1
+      const waitMs = Math.floor(Math.random() * (maxSlots + 1)) * LLM_SLOT_TIME
+      appLog('WARN', 'llm', `LLM timeout (attempt ${attempt + 1}/${LLM_MAX_RETRIES})，等待 ${waitMs}ms 後重試...`)
+      await new Promise(resolve => setTimeout(resolve, waitMs))
+    } finally { clearTimeout(timeout) }
+  }
+  throw new Error(`LLM 請求連續失敗 ${LLM_MAX_RETRIES} 次（timeout）：${lastError.message}`)
 }
 
 // ── Token 估算與模型 Context Limit ──
