@@ -946,11 +946,11 @@ ipcMain.handle('transcribe:segment', async (event, { audioPath, modelSize, useGp
 
 // ── 錄音歷史與全文檢索（支援樹狀目錄） ──
 
-ipcMain.handle('reco:saveMeta', async (event, { recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, llmResults, audioPath, labels, folder }) => {
+ipcMain.handle('reco:saveMeta', async (event, { recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, llmResults, audioPath, labels, folder, documents }) => {
   appLog('INFO', 'reco', `儲存 metadata: ${recordingId}`)
   try {
     const fullText = segments.map(s => s.text).join(' ')
-    const meta = { id: recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, fullText, llmResults: llmResults || {}, audioPath: audioPath || '', labels: labels || [] }
+    const meta = { id: recordingId, filename, recordingMode, recordedAt, duration, modelSize, segments, fullText, llmResults: llmResults || {}, audioPath: audioPath || '', labels: labels || [], documents: documents || [] }
     const baseDir = folder ? recoDataPath(folder) : recoDataPath()
     fs.mkdirSync(baseDir, { recursive: true })
     const metaPath = path.join(baseDir, `${recordingId}.json`)
@@ -1359,6 +1359,33 @@ ipcMain.handle('reco:renameFolder', async (event, { folderPath, newName }) => {
     if (fs.existsSync(newDir)) return { success: false, error: '新名稱已存在' }
     fs.renameSync(oldDir, newDir)
     return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('reco:deleteLlmDoc', async (event, { recordingId, docId }) => {
+  appLog('INFO', 'reco', `刪除 LLM 文件: ${recordingId} docId=${docId}`)
+  try {
+    const dir = recoDataPath()
+    const files = scanJsonFiles(dir)
+    for (const metaPath of files) {
+      try {
+        const data = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+        if (data.id === recordingId) {
+          const docs = data.documents || []
+          const idx = docs.findIndex(d => d.id === docId)
+          if (idx === -1) return { success: false, error: '找不到該文件' }
+          const removed = docs.splice(idx, 1)[0]
+          data.documents = docs
+          // 若該類型的最新版 llmResults 與被刪除文件內容相同，一併清除
+          if (data.llmResults && data.llmResults[removed.type] === removed.content) {
+            data.llmResults[removed.type] = ''
+          }
+          fs.writeFileSync(metaPath, JSON.stringify(data, null, 2), 'utf-8')
+          return { success: true }
+        }
+      } catch {}
+    }
+    return { success: false, error: `找不到記錄: ${recordingId}` }
   } catch (e) { return { success: false, error: e.message } }
 })
 

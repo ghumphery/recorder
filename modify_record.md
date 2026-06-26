@@ -973,3 +973,32 @@
     - 將實際 fetch 邏輯抽取為 `_llmFetch()` 獨立函式
   - `frontend/package.json`：版本號更新為 1.14.2
   - 備份檔名: backup-202606261106.zip
+
+## [2026-06-26 12:33]
+- **version**: 1.14.3
+- **修改要求**：
+  1. 提供 LLM 文件管理介面：可 list/review/delete 原始逐字稿所延伸生成的文件（語句優化、翻譯、重點整理等）
+  2. 翻譯功能支援對任何文件（原始逐字稿、優化結果、摘要等）進行翻譯，產出文件歸類於同一原始逐字稿下，以生成時間區分
+  3. 按 Job 按鈕時自動 refresh job 列表
+- **修改規劃**：
+  1. 後端 `main.js`：
+     - `reco:saveMeta` 新增 `documents` 參數，儲存文件歷史陣列（含 id、type、source、target、content、createdAt）
+     - 新增 `reco:deleteLlmDoc` IPC：刪除指定 document，同步清理 `llmResults` 最新版
+  2. `preload.js`：新增 `recoDeleteLlmDoc` bridge
+  3. 前端 `App.vue`：
+     - 新增 `documents: []` data 陣列與 `showLlmDocPanel` 變數
+     - 新增 `_addDocument(type, content, source, target)` 方法，LLM 操作完成後自動加入文件歷史
+     - 新增 LLM 文件管理面板（模板）：列出所有文件（類型、來源、目標語言、時間、預覽），支援檢視與刪除
+     - 新增 `viewLlmDoc(doc)`：將文件內容設為 activeSource 顯示
+     - 新增 `deleteLlmDoc(doc)`：呼叫後端刪除，同步更新前端狀態
+     - `toggleJobPanel()` 方法：切換面板時自動呼叫 `refreshJobList()`
+     - LLM 動作列新增「📄 文件管理」按鈕
+  4. i18n：zh-TW/en/ja 各新增 8 條翻譯 key
+  5. 版本號 1.14.2 → 1.14.3（patch 新增功能）
+- **修改結果**：
+  - `frontend/electron/main.js`：`reco:saveMeta` 新增 `documents` 參數；新增 `reco:deleteLlmDoc` IPC
+  - `frontend/electron/preload.js`：新增 `recoDeleteLlmDoc` bridge
+  - `frontend/src/App.vue`：新增文件管理面板、`_addDocument`、`viewLlmDoc`、`deleteLlmDoc`、`toggleJobPanel` 方法
+  - `frontend/src/i18n/zh-TW.js`、`en.js`、`ja.js`：新增 8 條翻譯 key
+  - `frontend/package.json`：版本號更新為 1.14.3
+  - 備份檔名: backup-202606261233.zip

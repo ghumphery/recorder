@@ -111,12 +111,41 @@
       <span class="sep"></span>
       <button class="btn btn-undo" @click="undo" :disabled="llmBusy || !canUndo" :title="$t('llm.undoTitle')">{{ $t('llm.undo') }}</button>
       <button class="btn btn-undo" @click="redo" :disabled="llmBusy || !canRedo" :title="$t('llm.redoTitle')">{{ $t('llm.redo') }}</button>
-      <button class="btn btn-small" @click="showJobPanel = !showJobPanel" style="background:#6A1B9A" :title="$t('llm.jobPanelTitle')">{{ $t('llm.jobPanel') }}</button>
+      <button class="btn btn-small" @click="toggleJobPanel" style="background:#6A1B9A" :title="$t('llm.jobPanelTitle')">{{ $t('llm.jobPanel') }}</button>
+      <button class="btn btn-small" @click="showLlmDocPanel = !showLlmDocPanel" style="background:#1565C0" :title="$t('llm.docManager')">{{ $t('llm.docManager') }}</button>
       <span v-if="llmBusy" class="llm-spinner">
         <span v-if="activeJobProgress.totalBatches > 1">{{ $t('llm.batchProgress', { batch: activeJobProgress.batch, total: activeJobProgress.totalBatches }) }}</span>
         <span v-else>{{ $t('llm.processing') }}</span>
       </span>
       <button v-if="llmBusy && activeJobId" class="btn btn-tiny" @click="cancelActiveJob" style="background:#e53935;padding:2px 6px;font-size:10px;margin-left:2px">{{ $t('llm.cancel') }}</button>
+    </div>
+
+    <!-- LLM 文件管理面板 -->
+    <div v-if="showLlmDocPanel" class="label-editor-overlay" @click.self="showLlmDocPanel = false">
+      <div class="label-editor-panel" style="width:550px">
+        <div class="panel-header">{{ $t('llm.docManagerTitle') }}</div>
+        <div class="panel-body" style="max-height:400px;overflow-y:auto">
+          <div v-if="documents.length === 0" class="empty-hint">{{ $t('llm.docEmpty') }}</div>
+          <div v-for="(doc, idx) in documents" :key="doc.id" class="job-item">
+            <div class="job-header">
+              <span class="job-type">{{ doc.type === 'optimize' ? '✨ 優化' : doc.type === 'translate' ? '🌐 翻譯' : doc.type === 'summary' ? '📋 摘要' : doc.type }}</span>
+              <span class="job-id" v-if="doc.source">({{ $t('llm.docSource' + (doc.source === 'original' ? 'Original' : doc.source === 'optimized' ? 'Optimized' : 'Summary')) }})</span>
+              <span class="job-id" v-if="doc.target">→ {{ doc.target === 'ja' ? '🇯🇵' : doc.target === 'en' ? '🇺🇸' : '🇨🇳' }} {{ doc.target }}</span>
+              <span class="job-id">{{ doc.createdAt ? doc.createdAt.slice(11, 19) : '' }}</span>
+            </div>
+            <div class="job-log" style="margin-top:4px">
+              <div class="job-log-line">{{ (doc.content || '').slice(0, 80) }}{{ (doc.content || '').length > 80 ? '...' : '' }}</div>
+            </div>
+            <div class="label-editor-actions" style="margin-top:4px">
+              <button class="btn btn-tiny" @click="viewLlmDoc(doc)" style="background:#1565C0">{{ $t('llm.docView') }}</button>
+              <button class="btn btn-tiny" @click="deleteLlmDoc(doc)" style="background:#e53935">{{ $t('llm.docDelete') }}</button>
+            </div>
+          </div>
+        </div>
+        <div class="label-editor-actions">
+          <button class="btn btn-small" @click="showLlmDocPanel = false">{{ $t('llm.jobClose') }}</button>
+        </div>
+      </div>
     </div>
 
     <!-- LLM Job 列表面板 -->
@@ -441,6 +470,9 @@ export default {
       showNewFolderDialog: false, newFolderName: '',
       showRenameFolderDialog: false, renameFolderName: '',
       showMoveDialog: false, moveTargetFolder: '', allFolders: [],
+      // LLM 文件管理
+      showLlmDocPanel: false,
+      documents: [],
       // LLM Job 管理
       showJobPanel: false,
       activeJobId: null,
@@ -777,13 +809,25 @@ export default {
       } catch (e) { this.statusText = this.$t('status.transcribeFail', { error: e.message }); this.statusError = true; this.showProgress = false }
       finally { this.busy = false }
     },
+    _addDocument(type, content, source, target) {
+      const doc = {
+        id: `doc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        type,
+        source: source || 'original',
+        content,
+        createdAt: new Date().toISOString(),
+      }
+      if (target) doc.target = target
+      this.documents.push(doc)
+      return doc
+    },
     async saveRecordingMeta(segments, llmResults) {
       if (!window.electronAPI || !this.audioInfo) return
       const now = new Date()
       const id = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}_${this.recordingMode || 'import'}`
       const duration = segments.length > 0 ? segments[segments.length-1].end : 0
       const audioPath = this.currentAudioPath || ''
-      await window.electronAPI.recoSaveMeta({ recordingId: id, filename: `${id}.webm`, recordingMode: this.recordingMode || 'import', recordedAt: now.toISOString(), duration, modelSize: this.selectedModel, segments, llmResults: llmResults ? { ...llmResults } : { ...this.llmResults }, audioPath })
+      await window.electronAPI.recoSaveMeta({ recordingId: id, filename: `${id}.webm`, recordingMode: this.recordingMode || 'import', recordedAt: now.toISOString(), duration, modelSize: this.selectedModel, segments, llmResults: llmResults ? { ...llmResults } : { ...this.llmResults }, audioPath, documents: this.documents })
     },
 
     // ── LLM ──
@@ -942,6 +986,44 @@ export default {
     },
     async cancelActiveJob() {
       if (this.activeJobId) await this.cancelJob(this.activeJobId)
+    },
+
+    // ── LLM 文件管理 ──
+    toggleJobPanel() {
+      this.showJobPanel = !this.showJobPanel
+      if (this.showJobPanel) this.refreshJobList()
+    },
+    viewLlmDoc(doc) {
+      // 將文件內容設為 activeSource 對應的 llmResults
+      const typeMap = { optimize: 'optimized', translate: 'translated', summary: 'summary' }
+      const targetType = typeMap[doc.type] || doc.type
+      this.llmResults[targetType] = doc.content
+      this.activeSource = targetType
+      this.showLlmDocPanel = false
+    },
+    async deleteLlmDoc(doc) {
+      if (!window.electronAPI || !this.currentRecordingId) return
+      if (!confirm(this.$t('llm.docDeleteConfirm'))) return
+      try {
+        const r = await window.electronAPI.recoDeleteLlmDoc({ recordingId: this.currentRecordingId, docId: doc.id })
+        if (r.success) {
+          const idx = this.documents.findIndex(d => d.id === doc.id)
+          if (idx >= 0) this.documents.splice(idx, 1)
+          const typeMap = { optimize: 'optimized', translate: 'translated', summary: 'summary' }
+          const targetType = typeMap[doc.type] || doc.type
+          if (this.llmResults[targetType] === doc.content) {
+            this.llmResults[targetType] = ''
+            if (this.activeSource === targetType) this.activeSource = 'original'
+          }
+          this.statusText = this.$t('status.llmDocDeleted')
+        } else {
+          this.statusText = this.$t('status.llmDocDeleteFail', { error: r.error })
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = this.$t('status.llmDocDeleteFail', { error: e.message })
+        this.statusError = true
+      }
     },
 
     // ── 匯出 ──

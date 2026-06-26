@@ -61,6 +61,15 @@ export default {
   'llm.jobEmpty': '尚無 Job 記錄',
   'llm.jobRefresh': '🔄 重新整理',
   'llm.jobClose': '關閉',
+  'llm.docManager': '📄 文件管理',
+  'llm.docManagerTitle': '📄 LLM 文件管理',
+  'llm.docEmpty': '尚無 LLM 文件',
+  'llm.docView': '檢視',
+  'llm.docDelete': '🗑️ 刪除',
+  'llm.docDeleteConfirm': '確定要刪除此文件嗎？此操作無法復原。',
+  'llm.docSourceOriginal': '原始',
+  'llm.docSourceOptimized': '優化',
+  'llm.docSourceSummary': '摘要',
 
   // Tab
   'tab.transcript': '📝 逐字稿',
