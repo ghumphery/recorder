@@ -1,7 +1,7 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.7.0
-> **最後更新日期**: 2026-06-26
+> **版本**: 1.7.1
+> **最後更新日期**: 2026-06-27
 
 ## 產品核心願景與哲學 (Product Vision & Philosophy)
 - **核心價值**：一句話 — 「離線、輕量、精準的 AI 會議記錄工具，讓每一場對話都有跡可循。」
@@ -238,6 +238,25 @@
   - ▶️ 播放按鈕（僅在有音檔時可點擊）
   - 🗑️ 刪除按鈕（紅色，點擊後彈出 confirm 對話框）
   - 音檔列表每筆也有 🗑️ 刪除按鈕
+
+### 9. LLM 文件管理 (`frontend/src/App.vue` + `frontend/electron/main.js`)
+- **功能**：將 LLM 優化/翻譯/摘要結果自動存入 documents 歷史陣列，支援檢視、刪除、持久化儲存
+- **資料模型**：每筆 document 物件結構 `{ id, type, source, target?, content, createdAt }`
+  - `type`：`optimize` / `translate` / `summary`
+  - `source`：`original` / `optimized` / `translated` / `summary`（表示從哪個來源產生）
+  - `target`：僅翻譯時有值（`ja` / `en` / `zh`）
+  - `content`：LLM 結果文字內容
+- **觸發點**：`_pollJobResult()` 完成時自動呼叫 `_addDocument()`，將 LLM 結果寫入 documents
+- **持久化**：`saveRecordingMeta()` 將 `documents` 陣列一併寫入 JSON（`reco:saveMeta` IPC）
+- **載入**：`reviewRecording()` 從 `meta.documents` 還原 documents 陣列
+- **重置**：`startTranscribe()` 新辨識時清空 documents
+- **檢視**：`viewLlmDoc()` 將文件內容設為 `llmResults[type]` 並切換 `activeSource`
+- **刪除**：`deleteLlmDoc()` 呼叫 `reco:deleteLlmDoc` IPC 從 JSON 中移除指定 docId，同步清理 `llmResults`
+- **前端 UI**：
+  - LLM 動作列新增「📄 文件管理」按鈕（藍色 #1565C0）
+  - 面板顯示所有 documents 列表（類型、來源、目標語言、時間、內容預覽 80 字）
+  - 每筆提供「檢視」與「🗑️ 刪除」按鈕
+  - 空列表時顯示「尚無 LLM 文件」
 
 ### 8. 前端 Vue.js 元件 (`frontend/src/App.vue`)
 - **框架**：Vue 3 + Vite 6

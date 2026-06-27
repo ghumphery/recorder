@@ -601,6 +601,7 @@ export default {
         if (r.success && r.meta && r.meta.segments) {
           this.transcriptionResults = r.meta.segments; this.hasResult = true
           this.llmResults = r.meta.llmResults || { optimized: '', translated: '', summary: '' }
+          this.documents = r.meta.documents || []
           this.llmHistory = { optimized: [], translated: [], summary: [] }
           this.llmRedo = { optimized: [], translated: [], summary: [] }
           this.activeSource = 'original'; this.currentAudioPath = null; this.audioLoaded = false
@@ -802,6 +803,7 @@ export default {
           this.transcriptionResults = r.segments; this.hasResult = true; this.showProgress = false
           this.statusText = this.$t('status.transcribed', { count: r.segments.length }); this.progressPercent = 100
           this.llmResults = { optimized: '', translated: '', summary: '' }
+          this.documents = []
           this.llmHistory = { optimized: [], translated: [], summary: [] }
           this.llmRedo = { optimized: [], translated: [], summary: [] }; this.activeSource = 'original'
           await this.saveRecordingMeta(r.segments)
@@ -885,6 +887,12 @@ export default {
               this.llmResults.summary = job.result || ''
             }
             this.activeSource = type
+            // 將完成的 LLM 結果存入文件管理
+            const typeToJobType = { optimized: 'optimize', translated: 'translate', summary: 'summary' }
+            const jobType = typeToJobType[type] || type
+            const source = type === 'translated' ? 'translated' : type
+            const target = type === 'translated' ? this.translateTarget : null
+            this._addDocument(jobType, this.llmResults[type], source, target)
             this.llmBusy = false
             this.activeJobId = null
             this.activeJobProgress = { batch: 0, totalBatches: 0, percent: 0 }

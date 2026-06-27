@@ -1077,3 +1077,23 @@
   - `.clinerules/workrule.md` — 新增 Code Sign 簽署規範（憑證位置、密碼設定、簽署流程、驗證方式、時間戳記、SmartScreen 注意事項）
   - `Product_Design_Guidelines.md` / `_en.md` / `_ja.md` — 三語言同步新增 Code Sign 簽署規範章節（憑證來源、設定方式、簽署流程、時間戳記、驗證方式、注意事項）
   - 已同步至 GitHub
+
+## [2026-06-27 13:48]
+- **version**: 1.15.2
+- **修改要求**：補完「LLM 文件管理」功能 — 點擊 📄 文件管理按鈕後面板顯示「尚無 LLM 文件」的空殼問題。
+- **修改規劃**：
+  1. `frontend/src/App.vue` — `reviewRecording()` 載入時從 `meta.documents` 還原 documents 陣列
+  2. `frontend/src/App.vue` — `_pollJobResult()` LLM Job 完成時呼叫 `_addDocument()` 將結果存入 documents
+  3. `frontend/src/App.vue` — `startTranscribe()` 重置時清空 documents 陣列
+  4. 版本遞增 1.15.1 → 1.15.2
+  5. 更新文件（modify_record.md、Product_Design_Guidelines.md、readme.md）
+  6. 原始碼備份
+- **修改結果**：
+  - `frontend/src/App.vue` — 3 處修改：
+    - `reviewRecording()` 行 603 後新增 `this.documents = r.meta.documents || []`
+    - `_pollJobResult()` 行 887 後新增 `_addDocument()` 呼叫（含 type/source/target 對應）
+    - `startTranscribe()` 行 804 後新增 `this.documents = []`
+  - 後端 IPC 無需修改（`reco:saveMeta` 已支援 `documents` 欄位，`reco:deleteLlmDoc` 已存在）
+  - i18n 無需修改（zh-TW/en/ja 翻譯 key 已完整）
+  - 功能驗證：LLM 優化/翻譯/摘要完成後自動新增文件記錄，關閉重開後仍可檢視
+  - 備份檔名: backup-202606271348.zip
