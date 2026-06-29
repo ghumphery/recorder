@@ -223,3 +223,22 @@
   - `frontend/src/i18n/zh-TW.js` / `en.js` / `ja.js` — 6 new i18n keys each
   - `frontend/package.json` — version updated to 1.17.1
 - Backup: backup-202606291350.zip
+
+## [2026-06-29 14:48]
+- **version**: 1.17.2
+- **Requirement**: Verified that original long audio file transcribes correctly on CPU, but GPU (Vulkan, AMD RX 5700 XT) hangs. Need automatic GPU→CPU fallback.
+- **Plan**:
+  1. Add `anySegmentOutput` flag in `runWhisper()` to detect real GPU stall
+  2. Auto-retry with CPU in `transcribe:start` IPC handler when `gpuStalled=true`
+  3. Frontend handles `data.fallback` to show degradation message
+  4. Add `gpuFallback` i18n key in zh-TW/en/ja
+  5. Version bump 1.17.1 → 1.17.2
+- **Result**:
+  - `frontend/electron/main.js` — `runWhisper()`: added `anySegmentOutput` & `gpuStalled` flags (no `[timestamp]` output on stderr → GPU stall); `transcribe:start`: when `gpuStalled=true`, auto-retry with `useGpu=false`, pushes `fallback: true` progress events during retry
+  - `frontend/src/App.vue` — `startTranscribe()` handles `data.fallback` in progress events to show degradation message
+  - `frontend/src/i18n/zh-TW.js` — added `status.gpuFallback`
+  - `frontend/src/i18n/en.js` — added `status.gpuFallback`
+  - `frontend/src/i18n/ja.js` — added `status.gpuFallback`
+  - `frontend/package.json` — version updated to 1.17.2
+  - Tested: original 105-minute meeting audio → GPU hangs all 4 times, CPU completes correctly
+  - Backup: backup-202606291448.zip

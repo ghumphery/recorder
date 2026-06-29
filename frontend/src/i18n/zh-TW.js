@@ -176,6 +176,7 @@ export default {
   'status.transcribingBusy': '⚠️ 此音檔已在辨識中，請稍候',
   'status.transcribingCancel': '⏹ 正在取消辨識...',
   'status.transcribingCancelled': '✅ 辨識已取消',
+  'status.gpuFallback': 'GPU 辨識無回應，自動改用 CPU...',
   'status.transcribed': '✅ 共 {count} 句',
   'status.transcribeFail': '❌ {error}',
   'status.importing': '載入中...',

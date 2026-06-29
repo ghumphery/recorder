@@ -1164,3 +1164,22 @@
   - `frontend/src/i18n/ja.js` — 同步新增 6 個 i18n keys
   - `frontend/package.json` — 版本號更新為 1.17.1
   - 備份檔名: backup-202606291350.zip
+
+## [2026-06-29 14:48]
+- **version**: 1.17.2
+- **修改要求**：實測驗證原始檔案可正常 CPU 辨識，GPU (Vulkan, AMD RX 5700 XT) 會 hang，需要 GPU→CPU 自動降級機制
+- **修改規劃**：
+  1. `runWhisper()` 加入 `anySegmentOutput` 判斷 GPU 是否真正卡住
+  2. `transcribe:start` IPC handler 偵測 `gpuStalled` 旗標 → 自動以 CPU 重試
+  3. 前端處理 `data.fallback` 顯示降級提示
+  4. i18n 三語言新增 `gpuFallback` 字串
+  5. 版本遞增 1.17.1 → 1.17.2
+- **修改結果**：
+  - `frontend/electron/main.js` — `runWhisper()` 加入 `anySegmentOutput` 與 `gpuStalled` 標記（stderr 無任何 `[timestamp]` 輸出即判定 GPU stall）；`transcribe:start` 偵測 `gpuStalled=true` 時自動以 `useGpu=false` 重試一次，重試期間推送 `fallback: true` 進度事件通知前端
+  - `frontend/src/App.vue` — `startTranscribe()` 進度訂閱加入 `data.fallback` 判斷，顯示降級訊息
+  - `frontend/src/i18n/zh-TW.js` — 新增 `status.gpuFallback`
+  - `frontend/src/i18n/en.js` — 新增 `status.gpuFallback`
+  - `frontend/src/i18n/ja.js` — 新增 `status.gpuFallback`
+  - `frontend/package.json` — 版本號更新為 1.17.2
+  - 實測驗證：原始 105 分鐘會議錄音，GPU 模式下 4 次全部 hang，CPU 模式完整正常辨識
+  - 備份檔名: backup-202606291448.zip

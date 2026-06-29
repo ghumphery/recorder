@@ -845,7 +845,11 @@ export default {
       const unsubProgress = window.electronAPI ? window.electronAPI.onTranscribeProgress((data) => {
         if (data.audioPath === this._transcribingAudioPath) {
           this.progressPercent = data.percent || 0
-          this.statusText = this.$t('status.transcribingPercent', { percent: data.percent || 0, elapsed: data.elapsed || '' })
+          if (data.fallback) {
+            this.statusText = data.message || this.$t('status.gpuFallback')
+          } else {
+            this.statusText = this.$t('status.transcribingPercent', { percent: data.percent || 0, elapsed: data.elapsed || '' })
+          }
         }
       }) : null
       try {

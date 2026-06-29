@@ -220,3 +220,22 @@
   - `frontend/src/i18n/zh-TW.js` / `en.js` / `ja.js` — 各6つの新i18nキー
   - `frontend/package.json` — バージョンを1.17.1に更新
 - バックアップ: backup-202606291350.zip
+
+## [2026-06-29 14:48]
+- **version**: 1.17.2
+- **要件**: 長時間音声ファイルはCPUで正常に認識できるが、GPU（Vulkan, AMD RX 5700 XT）がハングすることを確認。GPU→CPU自動フォールバックが必要。
+- **計画**:
+  1. `runWhisper()` に `anySegmentOutput` フラグを追加し、GPUの実際のストールを検出
+  2. `transcribe:start` IPCハンドラで `gpuStalled=true` 時に自動的にCPUで再試行
+  3. フロントエンドで `data.fallback` を処理してGPU→CPUフォールバックメッセージを表示
+  4. 3言語（zh-TW/en/ja）に `gpuFallback` i18nキーを追加
+  5. バージョン 1.17.1 → 1.17.2
+- **結果**:
+  - `frontend/electron/main.js` — `runWhisper()`: `anySegmentOutput` & `gpuStalled` フラグを追加（stderrに `[timestamp]` 出力なし→GPUストールと判定）; `transcribe:start`: `gpuStalled=true` 時に `useGpu=false` で自動再試行、再試行中は `fallback: true` 進捗イベントをプッシュ
+  - `frontend/src/App.vue` — `startTranscribe()`: 進捗イベントの `data.fallback` を処理し、フォールバックメッセージを表示
+  - `frontend/src/i18n/zh-TW.js` — `status.gpuFallback` を追加
+  - `frontend/src/i18n/en.js` — `status.gpuFallback` を追加
+  - `frontend/src/i18n/ja.js` — `status.gpuFallback` を追加
+  - `frontend/package.json` — バージョンを1.17.2に更新
+  - テスト：元の105分の会議音声→GPUは4回ともハング、CPUは正常に認識完了
+  - バックアップ: backup-202606291448.zip

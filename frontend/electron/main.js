@@ -748,6 +748,7 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
       let lastStderrTime = Date.now()
       let lastProgressPercent = 0
       let resolved = false
+      let anySegmentOutput = false // 是否有任何分段被輸出（判斷 GPU 是否真正 hang）
 
       // 註冊到 active map
       activeWhisperProcs.set(audioPath, { proc, startTime, lastStderrTime: lastStderrTime })
@@ -773,7 +774,8 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
         resolved = true
         clearInterval(progressTimer)
         activeWhisperProcs.delete(audioPath)
-        resolve({ success: false, error: `辨識超時（超過 ${WHISPER_MAX_DURATION_MS / 60000} 分鐘），已自動終止` })
+        const isGpuStall = useGpu !== false && !anySegmentOutput
+        resolve({ success: false, gpuStalled: isGpuStall, error: `辨識超時（超過 ${WHISPER_MAX_DURATION_MS / 60000} 分鐘），已自動終止` })
       }, WHISPER_MAX_DURATION_MS)
 
       // stderr 停滯偵測
@@ -788,7 +790,8 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
           clearInterval(stallCheckTimer)
           clearTimeout(maxTimer)
           activeWhisperProcs.delete(audioPath)
-          resolve({ success: false, error: `辨識無回應（${WHISPER_STALL_TIMEOUT_MS / 60000} 分鐘無輸出），已自動終止` })
+          const isGpuStall = useGpu !== false && !anySegmentOutput
+          resolve({ success: false, gpuStalled: isGpuStall, error: `辨識無回應（${WHISPER_STALL_TIMEOUT_MS / 60000} 分鐘無輸出），已自動終止` })
         }
       }, 30000) // 每 30 秒檢查一次
 
@@ -801,6 +804,7 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
         for (const line of lines) {
           const match = line.match(/\[(\d{2}):(\d{2}):(\d{2})\.\d{3}\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.\d{3}\]/)
           if (match) {
+            anySegmentOutput = true
             const endH = parseInt(match[4]), endM = parseInt(match[5]), endS = parseInt(match[6])
             const endSec = endH * 3600 + endM * 60 + endS
             // 估算音檔總長度（從 stderr 最後一個時間戳推算）
@@ -1037,7 +1041,19 @@ ipcMain.handle('transcribe:start', async (event, { audioPath, modelSize, useGpu,
     return { success: false, error: '此音檔已在辨識中，請稍候或取消現有辨識' }
   }
   try {
-    return await runWhisper(audioPath, modelSize, useGpu, gpuDevice)
+    let result = await runWhisper(audioPath, modelSize, useGpu, gpuDevice)
+    // GPU 卡住時自動降級為 CPU 重試
+    if (!result.success && result.gpuStalled && useGpu !== false) {
+      appLog('WARN', 'whisper', `GPU 辨識卡住，自動降級為 CPU 重試: ${audioPath}`)
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('transcribe:progress', {
+          audioPath, percent: 0, elapsed: '0s',
+          fallback: true, message: 'GPU 辨識無回應，自動改用 CPU...',
+        })
+      }
+      result = await runWhisper(audioPath, modelSize, false, '')
+    }
+    return result
   } catch (e) { return { success: false, error: e.message } }
 })
 
