@@ -7,6 +7,7 @@ const http = require('http')
 const os = require('os')
 const OpenCC = require('opencc-js')
 const fetch = require('node-fetch')
+const voiceprint = require('./voiceprint')
 
 let mainWindow = null
 const s2tConverter = OpenCC.Converter({ from: 'cn', to: 'tw' })
@@ -1387,6 +1388,40 @@ ipcMain.handle('reco:deleteLlmDoc', async (event, { recordingId, docId }) => {
     }
     return { success: false, error: `找不到記錄: ${recordingId}` }
   } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── 聲紋說話者標註 ──
+
+ipcMain.handle('voiceprint:status', async () => {
+  return { success: true, cached: voiceprint.isModelCached() }
+})
+
+ipcMain.handle('voiceprint:download', async (event) => {
+  appLog('INFO', 'voiceprint', '下載聲紋模型開始')
+  try {
+    await voiceprint.downloadModel((percent) => {
+      if (mainWindow) mainWindow.webContents.send('voiceprint:download-progress', { percent })
+    })
+    appLog('INFO', 'voiceprint', '聲紋模型下載完成')
+    return { success: true }
+  } catch (e) {
+    appLog('ERROR', 'voiceprint', `下載失敗: ${e.message}`)
+    return { success: false, error: e.message }
+  }
+})
+
+ipcMain.handle('voiceprint:diarize', async (event, { audioPath, segments }) => {
+  appLog('INFO', 'voiceprint', `說話者標註開始: ${audioPath} (${segments.length} 句)`)
+  try {
+    const result = await voiceprint.diarizeAudio(audioPath, segments, (percent) => {
+      if (mainWindow) mainWindow.webContents.send('voiceprint:progress', { percent })
+    })
+    appLog('INFO', 'voiceprint', `說話者標註完成: ${result.length} 句`)
+    return { success: true, segments: result }
+  } catch (e) {
+    appLog('ERROR', 'voiceprint', `說話者標註失敗: ${e.message}`)
+    return { success: false, error: e.message }
+  }
 })
 
 ipcMain.handle('reco:listAllFolders', async () => {

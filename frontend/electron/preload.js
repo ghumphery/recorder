@@ -63,4 +63,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
    recoListAllFolders: () => ipcRenderer.invoke('reco:listAllFolders'),
    // LLM 文件管理
    recoDeleteLlmDoc: (p) => ipcRenderer.invoke('reco:deleteLlmDoc', p),
+   // 聲紋說話者標註
+   voiceprintStatus: () => ipcRenderer.invoke('voiceprint:status'),
+   voiceprintDownload: () => ipcRenderer.invoke('voiceprint:download'),
+   voiceprintDiarize: (p) => ipcRenderer.invoke('voiceprint:diarize', p),
+   onVoiceprintDownloadProgress: (callback) => {
+     ipcRenderer.on('voiceprint:download-progress', (event, data) => callback(data))
+   },
+   onVoiceprintProgress: (callback) => {
+     ipcRenderer.on('voiceprint:progress', (event, data) => callback(data))
+   },
 })

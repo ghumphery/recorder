@@ -113,6 +113,10 @@
       <button class="btn btn-undo" @click="redo" :disabled="llmBusy || !canRedo" :title="$t('llm.redoTitle')">{{ $t('llm.redo') }}</button>
       <button class="btn btn-small" @click="toggleJobPanel" style="background:#6A1B9A" :title="$t('llm.jobPanelTitle')">{{ $t('llm.jobPanel') }}</button>
       <button class="btn btn-small" @click="showLlmDocPanel = !showLlmDocPanel" style="background:#1565C0" :title="$t('llm.docManager')">{{ $t('llm.docManager') }}</button>
+      <button class="btn btn-small" @click="doDiarize" :disabled="voiceprintBusy || !hasResult" style="background:#FF5722" :title="$t('voiceprint.diarize')">{{ $t('voiceprint.diarize') }}</button>
+      <span v-if="voiceprintBusy" class="llm-spinner" style="color:#FF5722">
+        <span>{{ $t('voiceprint.processing') }} {{ voiceprintProgress }}%</span>
+      </span>
       <span v-if="llmBusy" class="llm-spinner">
         <span v-if="activeJobProgress.totalBatches > 1">{{ $t('llm.batchProgress', { batch: activeJobProgress.batch, total: activeJobProgress.totalBatches }) }}</span>
         <span v-else>{{ $t('llm.processing') }}</span>
@@ -470,6 +474,10 @@ export default {
       showNewFolderDialog: false, newFolderName: '',
       showRenameFolderDialog: false, renameFolderName: '',
       showMoveDialog: false, moveTargetFolder: '', allFolders: [],
+      // 聲紋說話者標註
+      voiceprintBusy: false,
+      voiceprintProgress: 0,
+      voiceprintModelCached: false,
       // LLM 文件管理
       showLlmDocPanel: false,
       documents: [],
@@ -1035,6 +1043,80 @@ export default {
       } catch (e) {
         this.statusText = this.$t('status.llmDocDeleteFail', { error: e.message })
         this.statusError = true
+      }
+    },
+
+    // ── 聲紋說話者標註 ──
+    async doDiarize() {
+      if (!window.electronAPI || !this.hasResult || !this.currentAudioPath) {
+        this.statusText = '❌ 無音檔或逐字稿，無法進行說話者標註'
+        this.statusError = true
+        return
+      }
+      // 檢查模型是否已下載
+      try {
+        const status = await window.electronAPI.voiceprintStatus()
+        if (!status.cached) {
+          if (!confirm('聲紋模型尚未下載（約 50MB），是否立即下載？')) return
+          this.voiceprintBusy = true
+          this.voiceprintProgress = 0
+          this.statusText = '正在下載聲紋模型...'
+          // 監聽下載進度
+          if (window.electronAPI.onVoiceprintDownloadProgress) {
+            window.electronAPI.onVoiceprintDownloadProgress((data) => {
+              this.voiceprintProgress = data.percent
+            })
+          }
+          const dl = await window.electronAPI.voiceprintDownload()
+          if (!dl.success) {
+            this.statusText = `❌ 下載失敗: ${dl.error}`
+            this.statusError = true
+            this.voiceprintBusy = false
+            return
+          }
+        }
+      } catch (e) {
+        this.statusText = `❌ 檢查模型狀態失敗: ${e.message}`
+        this.statusError = true
+        return
+      }
+
+      // 執行說話者標註
+      this.voiceprintBusy = true
+      this.voiceprintProgress = 0
+      this.statusText = '正在進行說話者標註...'
+      this.statusError = false
+
+      // 監聽進度
+      if (window.electronAPI.onVoiceprintProgress) {
+        window.electronAPI.onVoiceprintProgress((data) => {
+          this.voiceprintProgress = data.percent
+        })
+      }
+
+      try {
+        const segments = this.transcriptionResults.map(s => ({ start: s.start, end: s.end, text: s.text }))
+        const r = await window.electronAPI.voiceprintDiarize({ audioPath: this.currentAudioPath, segments })
+        if (r.success && r.segments) {
+          // 更新 transcriptionResults 的 speaker 欄位
+          for (let i = 0; i < r.segments.length; i++) {
+            if (this.transcriptionResults[i]) {
+              this.transcriptionResults[i].speaker = r.segments[i].speaker || ''
+            }
+          }
+          this.statusText = `✅ 說話者標註完成：${r.segments.length} 句`
+          // 儲存 metadata
+          await this.saveRecordingMeta(this.transcriptionResults)
+        } else {
+          this.statusText = `❌ 說話者標註失敗: ${r.error || '未知錯誤'}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 說話者標註異常: ${e.message}`
+        this.statusError = true
+      } finally {
+        this.voiceprintBusy = false
+        this.voiceprintProgress = 0
       }
     },
 

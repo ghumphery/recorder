@@ -1,7 +1,7 @@
 {
   "name": "recoder-frontend",
   "private": true,
-  "version": "1.15.2",
+  "version": "1.16.0",
   "type": "commonjs",
   "main": "electron/main.js",
   "scripts": {
@@ -11,9 +11,10 @@
     "electron:build": "vite build && electron-builder --win portable"
   },
   "dependencies": {
-    "vue": "^3.5.0",
+    "node-fetch": "^2.7.0",
+    "onnxruntime-node": "^1.27.0",
     "opencc-js": "^1.0.5",
-    "node-fetch": "^2.7.0"
+    "vue": "^3.5.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",
@@ -38,12 +39,16 @@
       {
         "from": "../whisper_cli",
         "to": "whisper_cli",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../ffmpeg",
         "to": "ffmpeg",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
