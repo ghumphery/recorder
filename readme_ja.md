@@ -1,4 +1,4 @@
-# Recorder — オフライン AI 会議記録ツール
+﻿# Recorder — オフライン AI 会議記録ツール
 
 [![GitHub release](https://img.shields.io/github/v/release/ghumphery/recorder)](https://github.com/ghumphery/recorder/releases)
 [![GitHub](https://img.shields.io/github/license/ghumphery/recorder)](https://github.com/ghumphery/recorder)
@@ -40,14 +40,14 @@ npm run electron:dev
 
 ### リリース版のダウンロード
 
-[GitHub Releases](https://github.com/ghumphery/recorder/releases) から最新の `Recorder-1.17.1-portable.exe` をダウンロード。
+[GitHub Releases](https://github.com/ghumphery/recorder/releases) から最新の `Recorder-1.20.1-portable.exe` をダウンロード。
 
 ### ソースからビルド
 
 ```bash
 cd frontend
 npm run electron:build
-# 出力: frontend/dist-electron-build2/Recorder-1.17.1-portable.exe
+# 出力: frontend/dist-electron-build2/Recorder-1.20.1-portable.exe
 ```
 
 ### パッケージ版の実行

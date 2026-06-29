@@ -1,6 +1,6 @@
-# Product Design Guidelines
+﻿# Product Design Guidelines
 
-> **Version**: 1.8.1
+> **Version**: 1.8.2
 > **Last Updated**: 2026-06-29
 
 ## Product Vision & Philosophy

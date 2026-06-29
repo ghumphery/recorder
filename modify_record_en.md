@@ -281,3 +281,26 @@
   - Build success: `frontend/dist-electron-build2/Recorder-1.19.0-portable.exe` (188 MB, code signed)
   - git commit `65e2054` pushed to GitHub origin master
   - Backup: backup-202606291717.zip
+
+---
+
+## [2026-06-29 18:13] v1.20.0 — Async Job Management Panel on Home Page
+- **version**: 1.19.0 → 1.20.0
+- **requirement**: Provide async Job List / Status / Show Log / Delete / Stop on home page
+- **plan**: Add deleteJob() to backend managers; new IPCs; new Job button + badge; new panel with 2 tabs; log modal; i18n for 3 languages
+- **result: build OK (Recorder-1.20.0-portable.exe 188 MB, code sign manually applied), backup backup-202606291823.zip
+- **backup**: TBD
+
+## [2026-06-29 22:04] v1.20.1 — Fix bug: voice-to-text result not saved to "Recording History"
+- **version**: 1.20.0 → 1.20.1 (patch bug fix)
+- **Issue**: User reported "After voice-to-text completes, the result is not saved to Recording History", and the recording cannot be seen under the "Recording History" tab on the home page.
+- **Root Cause**:
+  1. In `frontend/src/App.vue`, the IPC event callback registered by `initTranscribeEventListener()` was `() => { if (this.showJobPanel) this.refreshJobList() }`, which did not accept the `data` argument at all.
+  2. `preload.js`'s `onTranscribeEvent` correctly forwards the IPC `data` to the renderer via `callback(data)`, but the above callback did not accept or handle it.
+  3. As a result, `_onTranscribeEvent(data)` was never executed, and `saveRecordingMeta()` inside the `completed` branch was never called — so recording metadata was never written to `reco_data/`.
+- **Side Effects**: The progress bar, `busy` flag, and Job status would never update; the recording would not appear in the "Recording History" list.
+- **Fix**: Changed the callback to `(data) => { this._onTranscribeEvent(data) }`, so that `data` from the event is properly handled by `_onTranscribeEvent`.
+- **Result**:
+  - `frontend/src/App.vue`: `initTranscribeEventListener()` callback corrected to `(data) => { this._onTranscribeEvent(data) }`
+  - `frontend/package.json`: Version bumped to 1.20.1
+- **Backup**: backup-202606292204.zip

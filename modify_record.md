@@ -1252,3 +1252,34 @@
   - 編譯成功：`frontend/dist-electron-build2/Recorder-1.19.0-portable.exe`（188 MB，已 code sign）
   - git commit `65e2054` 並 push 至 GitHub origin master
   - 備份檔名: backup-202606291717.zip
+
+---
+
+## [2026-06-29 18:13] v1.20.0 — 首頁非同步 Job 管理面板
+
+- **版本號**：1.19.0 → 1.20.0
+- **修改要求**：在首頁提供非同步 Job List / Status / Show Log / Delete / Stop 功能
+- **修改規劃**：
+  - 後端 WhisperJobManager 與 LlmJobManager 新增 deleteJob() 方法（支援 active / queued / history 三種狀態）
+  - 新增 IPC 	ranscribe:jobDelete 與 llm:jobDelete
+  - WhisperJobManager._executeTranscribe 補上 job._proc 指派，使刪除 in-flight job 可終止子進程
+  - 前端控制列新增「📋 Jobs」按鈕 + in-flight 徽章
+  - 新 Job 面板：雙 tab（轉譯 / LLM），每筆含 ⏹ Stop / 📜 Show Log / 🗑 Delete
+  - 獨立 Log Modal：黑底等寬字體，完整 log + 結束時間戳
+  - 三語言 i18n（zh-TW / en / ja）新增 jobs: 區塊
+- **修改結果：編譯成功（`frontend/dist-electron-build2/Recorder-1.20.0-portable.exe` 188 MB，code sign 已手動補簽成功），備份 `backup-202606291823.zip`
+- **備份檔名：backup-202606291823.zip
+
+## [2026-06-29 22:04] v1.20.1 — voice to text 完成後結果未存到「錄音記錄」bug 修正
+- **version**: 1.20.0 → 1.20.1（patch 修復 bug）
+- **修改要求**：使用者回報「voice to text 完成後結果沒有存到錄音記錄」，亦無法在首頁「錄音記錄」標籤看到該筆錄音。
+- **根因分析**：
+  1. `frontend/src/App.vue` 的 `initTranscribeEventListener()` 註冊的 IPC 事件回呼是 `() => { if (this.showJobPanel) this.refreshJobList() }`，完全沒有接收 `data` 參數。
+  2. `preload.js` 的 `onTranscribeEvent` 是正確地把 IPC `data` 透過 `callback(data)` 傳給前端，但上述回呼並未接收處理。
+  3. 結果是 `_onTranscribeEvent(data)` 從未被執行、`completed` 分支內的 `saveRecordingMeta()` 亦永遠不會被呼叫，錄音記錄 metadata 永遠不會被儲入 `reco_data/`。
+- **次要影響**：進度條、`busy` flag、Job 狀態全部不會更新；該錄音記錄不會出現在「錄音記錄」列表。
+- **修正方案**：把回呼改為 `(data) => { this._onTranscribeEvent(data) }`，使事件中的 `data` 能正確進入 `_onTranscribeEvent` 處理。
+- **修改結果**：
+  - `frontend/src/App.vue`：`initTranscribeEventListener()` 修正為 `(data) => { this._onTranscribeEvent(data) }`
+  - `frontend/package.json`：版本號更新為 1.20.1
+- **備份檔名**: backup-202606292204.zip

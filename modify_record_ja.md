@@ -278,3 +278,26 @@
   - ビルド成功：`frontend/dist-electron-build2/Recorder-1.19.0-portable.exe`（188 MB、コード署名済み）
   - git commit `65e2054` を GitHub origin master にプッシュ
   - バックアップ：backup-202606291717.zip
+
+---
+
+## [2026-06-29 18:13] v1.20.0 — ホームページ非同期ジョブ管理パネル
+- **version**: 1.19.0 → 1.20.0
+- **requirement**: ホームページに非同期 Job List / Status / Show Log / Delete / Stop を提供
+- **plan**: バックエンド Manager に deleteJob() 追加；新規 IPC；新規 Job ボタン + バッジ；2 タブの新パネル；ログモーダル；3 言語 i18n
+- **result**: ビルド検証待ち
+- **backup**: TBD
+
+## [2026-06-29 22:04] v1.20.1 — voice-to-text 完了後結果が「録音履歴」に保存されないバグを修正
+- **version**: 1.20.0 → 1.20.1（patch バグ修正）
+- **修正要求**: ユーザーから「voice-to-text 完了後、結果が録音履歴に保存されない」との報告。ホームページの「録音履歴」タブにも該当録音が表示されない。
+- **根本原因**:
+  1. `frontend/src/App.vue` の `initTranscribeEventListener()` で登録された IPC イベントコールバックが `() => { if (this.showJobPanel) this.refreshJobList() }` となっており、`data` 引数を一切受け取っていなかった。
+  2. `preload.js` の `onTranscribeEvent` は IPC の `data` を `callback(data)` で正しく renderer に渡しているが、上記コールバックがそれを処理していなかった。
+  3. その結果、`_onTranscribeEvent(data)` は一度も実行されず、`completed` 分岐内の `saveRecordingMeta()` も永遠に呼ばれず、録音履歴 metadata は `reco_data/` に書き込まれなかった。
+- **副次影響**: プログレスバー、`busy` フラグ、Job ステータスが一切更新されず、録音は「録音履歴」リストに表示されない。
+- **修正方法**: コールバックを `(data) => { this._onTranscribeEvent(data) }` に変更し、イベント内の `data` が `_onTranscribeEvent` で正しく処理されるようにした。
+- **修正結果**:
+  - `frontend/src/App.vue`: `initTranscribeEventListener()` のコールバックを `(data) => { this._onTranscribeEvent(data) }` に修正
+  - `frontend/package.json`: バージョン番号を 1.20.1 に更新
+- **バックアップファイル名**: backup-202606292204.zip

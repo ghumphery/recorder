@@ -106,6 +106,10 @@
       </span>
       <button class="btn btn-import" @click="importAudio" :disabled="busy || isRecording">{{ $t('control.import') }}</button>
       <button class="btn btn-transcribe" @click="startTranscribe" :disabled="busy || !audioLoaded || isRecording">{{ $t('control.transcribe') }}</button>
+      <button class="btn btn-jobs" @click="toggleJobPanel" style="background:#6A1B9A;position:relative" :title="$t('jobs.panelTitle')">
+        📋 Jobs
+        <span v-if="totalInFlightJobs > 0" class="jobs-badge">{{ totalInFlightJobs }}</span>
+      </button>
     </div>
 
     <!-- LLM 動作列 -->
@@ -128,7 +132,6 @@
       <span class="sep"></span>
       <button class="btn btn-undo" @click="undo" :disabled="llmBusy || !canUndo" :title="$t('llm.undoTitle')">{{ $t('llm.undo') }}</button>
       <button class="btn btn-undo" @click="redo" :disabled="llmBusy || !canRedo" :title="$t('llm.redoTitle')">{{ $t('llm.redo') }}</button>
-      <button class="btn btn-small" @click="toggleJobPanel" style="background:#6A1B9A" :title="$t('llm.jobPanelTitle')">{{ $t('llm.jobPanel') }}</button>
       <button class="btn btn-small" @click="showLlmDocPanel = !showLlmDocPanel" style="background:#1565C0" :title="$t('llm.docManager')">{{ $t('llm.docManager') }}</button>
       <button class="btn btn-small" @click="doDiarize" :disabled="voiceprintBusy || !hasResult" style="background:#FF5722" :title="$t('voiceprint.diarize')">{{ $t('voiceprint.diarize') }}</button>
       <span v-if="voiceprintBusy" class="llm-spinner" style="color:#FF5722">
@@ -169,34 +172,68 @@
       </div>
     </div>
 
-    <!-- LLM Job 列表面板 -->
+    <!-- 首頁 Job 管理面板（v1.20.0） -->
     <div v-if="showJobPanel" class="label-editor-overlay" @click.self="showJobPanel = false">
-      <div class="label-editor-panel" style="width:600px">
-        <div class="panel-header">{{ $t('llm.jobPanelTitle') }}</div>
-        <div class="panel-body" style="max-height:400px;overflow-y:auto">
-          <div v-if="jobList.length === 0" class="empty-hint">{{ $t('llm.jobEmpty') }}</div>
-          <div v-for="job in jobList" :key="job.id" class="job-item" :class="'job-' + job.status">
+      <div class="label-editor-panel" style="width:700px">
+        <div class="panel-header">
+          {{ $t('jobs.panelTitle') }}
+          <span class="job-stats">{{ $t('jobs.stats', { inflight: totalInFlightJobs, total: totalJobs }) }}</span>
+        </div>
+        <div class="job-tabs">
+          <button class="job-tab" :class="{ active: jobPanelTab === 'transcribe' }" @click="jobPanelTab = 'transcribe'">
+            🎙️ {{ $t('jobs.transcribeTab') }} ({{ transcribeJobList.length }})
+          </button>
+          <button class="job-tab" :class="{ active: jobPanelTab === 'llm' }" @click="jobPanelTab = 'llm'">
+            🤖 {{ $t('jobs.llmTab') }} ({{ jobList.length }})
+          </button>
+        </div>
+        <div class="panel-body" style="max-height:450px;overflow-y:auto">
+          <div v-if="currentJobList.length === 0" class="empty-hint">{{ $t('jobs.empty') }}</div>
+          <div v-for="job in currentJobList" :key="job.id" class="job-item" :class="'job-' + job.status">
             <div class="job-header">
-              <span class="job-id">{{ job.id }}</span>
-              <span class="job-type">{{ job.type }}</span>
-              <span class="job-status" :class="'job-status-' + job.status">{{ job.status }}</span>
-              <button v-if="job.status === 'pending' || job.status === 'running'" class="btn btn-tiny" @click="cancelJob(job.id)" style="background:#e53935">{{ $t('llm.cancel') }}</button>
+              <span class="job-id">{{ job.id.slice(-12) }}</span>
+              <span class="job-type">{{ $t('jobs.type.' + (job.type || 'transcribe')) }}</span>
+              <span class="job-status" :class="'job-status-' + job.status">{{ $t('jobs.status.' + job.status) }}</span>
+              <span v-if="job.audioPath" class="job-source">📄 {{ basenameOf(job.audioPath) }}</span>
+              <span class="job-time">{{ formatJobTime(job) }}</span>
             </div>
-            <div v-if="job.progress.totalBatches > 0" class="job-progress">
-              <div class="progress-bar" style="height:8px;margin:4px 0">
-                <div class="progress-fill" :style="{ width: job.progress.percent + '%' }"></div>
+            <div v-if="(job.progress && (job.progress.percent > 0 || job.progress.batch > 0))" class="job-progress">
+              <div class="progress-bar" style="height:6px;margin:4px 0">
+                <div class="progress-fill" :style="{ width: (job.progress.percent || 0) + '%' }"></div>
               </div>
-              <span class="job-progress-text">{{ $t('llm.batchProgress', { batch: job.progress.batch, total: job.progress.totalBatches }) }}</span>
+              <span class="job-progress-text">
+                <template v-if="job.progress.totalBatches > 1">{{ $t('llm.batchProgress', { batch: job.progress.batch, total: job.progress.totalBatches }) }}</template>
+                <template v-else>{{ job.progress.percent || 0 }}%</template>
+              </span>
             </div>
             <div v-if="job.error" class="job-error">❌ {{ job.error }}</div>
-            <div class="job-log" v-if="job.log && job.log.length > 0">
-              <div v-for="(line, li) in job.log.slice(-5)" :key="li" class="job-log-line">{{ line }}</div>
+            <div class="job-actions">
+              <button v-if="job.status === 'pending' || job.status === 'running'" class="btn btn-tiny" @click="stopJob(job)" style="background:#e53935">{{ $t('jobs.action.stop') }}</button>
+              <button class="btn btn-tiny" @click="openJobLog(job)" style="background:#1565C0">{{ $t('jobs.action.showLog') }}</button>
+              <button class="btn btn-tiny" @click="deleteJob(job)" style="background:#607D8B">{{ $t('jobs.action.delete') }}</button>
             </div>
           </div>
         </div>
         <div class="label-editor-actions">
-          <button class="btn btn-small" @click="refreshJobList">{{ $t('llm.jobRefresh') }}</button>
-          <button class="btn btn-small" @click="showJobPanel = false">{{ $t('llm.jobClose') }}</button>
+          <button class="btn btn-small" @click="refreshJobList">🔄 {{ $t('jobs.action.refresh') }}</button>
+          <button class="btn btn-small" @click="clearAllJobs" style="background:#e53935">🗑 {{ $t('jobs.action.clearAll') }}</button>
+          <button class="btn btn-small" @click="showJobPanel = false">{{ $t('jobs.close') }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Job Log Modal（v1.20.0） -->
+    <div v-if="showJobLogModal" class="label-editor-overlay" @click.self="showJobLogModal = false">
+      <div class="label-editor-panel" style="width:700px">
+        <div class="panel-header">
+          📜 {{ $t('jobs.logTitle', { id: logModalJob?.id, type: logModalJob ? $t('jobs.type.' + logModalJob.type) : '' }) }}
+        </div>
+        <div class="panel-body" style="max-height:500px;overflow-y:auto;background:#1e1e1e;color:#d4d4d4;font-family:'Consolas','Monaco',monospace;font-size:12px;padding:12px;white-space:pre-wrap;line-height:1.5">
+          <div v-for="(line, i) in (logModalJob?.log || [])" :key="i">{{ line }}</div>
+          <div v-if="logModalJob?.completedAt" class="log-end" style="margin-top:8px;color:#888">--- {{ $t('jobs.logEnd', { time: logModalJob.completedAt }) }} ---</div>
+        </div>
+        <div class="label-editor-actions">
+          <button class="btn btn-small" @click="showJobLogModal = false">{{ $t('jobs.close') }}</button>
         </div>
       </div>
     </div>
@@ -504,13 +541,17 @@ export default {
       documents: [],
       // LLM Job 管理
       showJobPanel: false,
+      jobPanelTab: 'transcribe',
+      showJobLogModal: false,
+      logModalJob: null,
       activeJobId: null,
       activeJobProgress: { batch: 0, totalBatches: 0, percent: 0 },
       jobList: [],
+      transcribeJobList: [],
       _jobUpdateListener: null,
+      _transcribeEventUnsub: null,
       _transcribingAudioPath: null,
       _transcribingJobId: null,
-      _transcribeEventUnsub: null,
     }
   },
   computed: {
@@ -544,6 +585,17 @@ export default {
       const parts = this.currentFolder.split('/')
       return parts.map((name, i) => ({ name, path: parts.slice(0, i + 1).join('/') }))
     },
+    currentJobList() {
+      return this.jobPanelTab === 'transcribe' ? this.transcribeJobList : this.jobList
+    },
+    totalInFlightJobs() {
+      const t = (this.transcribeJobList || []).filter(j => j.status === 'pending' || j.status === 'running').length
+      const l = (this.jobList || []).filter(j => j.status === 'pending' || j.status === 'running').length
+      return t + l
+    },
+    totalJobs() {
+      return (this.transcribeJobList?.length || 0) + (this.jobList?.length || 0)
+    },
   },
   async mounted() {
     await this.fetchModels()
@@ -563,6 +615,12 @@ export default {
       return text
     },
     formatTime(s) { return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}` },
+    basenameOf(p) { return p ? p.split(/[\\/]/).pop() : '' },
+    formatJobTime(j) {
+      if (j.completedAt) return `✓ ${j.completedAt.slice(11,19)}`
+      if (j.startedAt) return `▶ ${j.startedAt.slice(11,19)}`
+      return j.createdAt ? `⌛ ${j.createdAt.slice(11,19)}` : ''
+    },
     async fetchModels() {
       try { if (window.electronAPI) { const d = await window.electronAPI.listModels(); this.models = d.models } }
       catch (e) { this.statusText = `⚠️ ${e.message}`; this.statusError = true }
@@ -1120,9 +1178,58 @@ export default {
     async refreshJobList() {
       if (!window.electronAPI) return
       try {
-        const r = await window.electronAPI.llmJobList()
-        if (r.success) this.jobList = r.jobs
+        const [llmR, txR] = await Promise.all([window.electronAPI.llmJobList(), window.electronAPI.transcribeList()])
+        if (llmR.success) this.jobList = llmR.jobs
+        if (txR.success) this.transcribeJobList = txR.jobs
       } catch (e) {}
+    },
+    async stopJob(job) {
+      if (!window.electronAPI) return
+      try {
+        if (job.type === 'transcribe') await window.electronAPI.transcribeJobCancel({ jobId: job.id })
+        else await window.electronAPI.llmJobCancel({ jobId: job.id })
+        this.statusText = this.$t('status.jobStopped', { id: job.id })
+        await this.refreshJobList()
+      } catch (e) { this.statusText = this.$t('status.jobStopFail', { error: e.message }); this.statusError = true }
+    },
+    async deleteJob(job) {
+      if (!window.electronAPI) return
+      if (!confirm(this.$t('jobs.confirmDelete'))) return
+      try {
+        if (job.type === 'transcribe') await window.electronAPI.transcribeJobDelete({ jobId: job.id })
+        else await window.electronAPI.llmJobDelete({ jobId: job.id })
+        this.statusText = this.$t('status.jobDeleted', { id: job.id })
+        await this.refreshJobList()
+      } catch (e) { this.statusText = this.$t('status.jobDeleteFail', { error: e.message }); this.statusError = true }
+    },
+    async clearAllJobs() {
+      if (!window.electronAPI) return
+      if (!confirm(this.$t('jobs.confirmClearAll'))) return
+      try {
+        await window.electronAPI.transcribeJobClear()
+        this.statusText = this.$t('status.jobsCleared')
+        await this.refreshJobList()
+      } catch (e) { this.statusText = this.$t('status.jobClearFail', { error: e.message }); this.statusError = true }
+    },
+    async openJobLog(job) {
+      if (!window.electronAPI) return
+      try {
+        const isTx = job.type === 'transcribe'
+        const r = isTx
+          ? await window.electronAPI.transcribeGetStatus({ jobId: job.id })
+          : await window.electronAPI.llmJobStatus({ jobId: job.id })
+        this.logModalJob = r.success && r.job ? r.job : job
+        this.showJobLogModal = true
+      } catch (e) {
+        this.logModalJob = job
+        this.showJobLogModal = true
+      }
+    },
+    initTranscribeEventListener() {
+      if (!window.electronAPI || this._transcribeEventUnsub) return
+      this._transcribeEventUnsub = window.electronAPI.onTranscribeEvent((data) => {
+        this._onTranscribeEvent(data)
+      })
     },
     async cancelJob(jobId) {
       if (!window.electronAPI) return
@@ -1669,4 +1776,15 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .btn-lang { background: #e0e0e0; color: #333; padding: 8px 20px; font-size: 14px; border: 2px solid transparent; border-radius: 6px; cursor: pointer; transition: all .2s; }
 .btn-lang:hover { background: #bbdefb; }
 .btn-lang.selected { background: #1565C0; color: white; border-color: #0D47A1; }
+
+/* v1.20.0 Jobs 面板 */
+.jobs-badge { position: absolute; top: -4px; right: -4px; background: #e53935; color: white; font-size: 10px; font-weight: bold; padding: 1px 5px; border-radius: 8px; min-width: 16px; text-align: center; line-height: 1.4; }
+.job-stats { font-size: 10px; color: #888; margin-left: 8px; font-weight: normal; }
+.job-tabs { display: flex; background: #f5f5f5; border-bottom: 1px solid #ddd; }
+.job-tab { flex: 1; padding: 8px 10px; border: none; background: transparent; font-size: 12px; font-weight: bold; color: #666; cursor: pointer; border-bottom: 2px solid transparent; transition: all .2s; }
+.job-tab:hover { background: #e0e0e0; color: #333; }
+.job-tab.active { background: white; color: #6A1B9A; border-bottom-color: #6A1B9A; }
+.job-source { color: #555; font-size: 11px; }
+.job-time { color: #888; font-size: 11px; margin-left: auto; font-family: monospace; }
+.job-actions { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
 </style>

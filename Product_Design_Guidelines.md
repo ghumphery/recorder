@@ -1,6 +1,6 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.8.2
+> **版本**: 1.8.3
 > **最後更新日期**: 2026-06-29
 
 ## 產品核心願景與哲學 (Product Vision & Philosophy)
@@ -109,6 +109,20 @@
 
 ## 功能模組與業務邏輯 (Functional Modules & Business Logic)
 
+
+### 13. v1.20.0 新增 — 首頁非同步 Job 管理面板
+- **首頁控制列新增「📋 Jobs」按鈕**（背景 `#6A1B9A`），需 on-flight jobs 時右上角顯示紅色徽章計數。
+- **Job 面板**（雙 tab）：
+  - **🎙️ 轉譯 Tab**：來自 `WhisperJobManager.listJobs()`，每筆含 id（末 12 字）、type、狀態徽章、來源音檔名、起始/完成時間、進度條、錯誤訊息。
+  - **🤖 LLM Tab**：來自 `LlmJobManager.listJobs()`，同樣結構。
+- **每筆動作按鈕**：
+  - **⏹ Stop**：僅在 pending / running，呼叫 `transcribeJobCancel` / `llmJobCancel`。
+  - **📜 Show Log**：開啟獨立 modal（700×500 黑底等寬字體）顯示完整 log 與結束時間戳。
+  - **🗑 Delete**：可刪除任何狀態；running 會先 `kill('SIGTERM')` 子進程 → 狀態轉 cancelled → 從 active 移除；queued 直接從 queue splice；history 從歷史 splice。
+- **底部工具列**：`🔄 重新整理`、`🗑 全部清除`（whisper 全部刪除 + LLM 另可個別 delete）、`❌ 關閉`。
+- **計算屬性**：`totalInFlightJobs`（pending + running 合計）、`totalJobs`（全部含歷史）、`currentJobList`（依 tab 決定）。
+- **Live 同步**：訂閱既有 `onTranscribeEvent` 與 `onLlmJobUpdate`，任一事件都會刷新面板（限面板開啟時）。
+- **新增 IPC**：`transcribe:jobDelete` / `llm:jobDelete`；preload 暴露 `transcribeJobDelete` / `llmJobDelete`。
 
 ### 11. v1.19.0 新增 — WhisperJobManager 非同步轉譯（後端）
 `frontend/electron/main.js` 內的 `WhisperJobManager` 類別管理轉譯 job queue/active/history 三段式狀態；前端 `startTranscribe()` 改為 fire-and-forget，提交後立即回傳 `jobId`，背景執行；透過 `transcribe:event` 推送 `running / completed / failed / cancelled` 狀態；持久化至 `~/.recoder/jobs.json`（最近 50 筆）；App 關閉時 `cancelAll()` 統一取消 in-flight jobs。

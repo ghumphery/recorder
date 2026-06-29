@@ -1,6 +1,6 @@
-# 製品設計ガイドライン (Product Design Guidelines)
+﻿# 製品設計ガイドライン (Product Design Guidelines)
 
-> **バージョン**: 1.8.1
+> **バージョン**: 1.8.2
 > **最終更新日**: 2026-06-29
 
 ## 製品コアビジョンと哲学 (Product Vision & Philosophy)
