@@ -518,7 +518,7 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
     const seg = segments[i]
     const pcm = await extractSegmentPcm(audioPath, seg.start, seg.end)
 
-    if (pcm && pcm.length > 16000) { // 至少 1 秒
+    if (pcm && pcm.length > 8000) { // 至少 0.5 秒 (v1.20.6: 降為 0.5s 協助小女孩/小聲音辨識)
       const emb = await extractEmbedding(pcm)
       if (emb) {
         embeddings.push(emb)
@@ -543,7 +543,8 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
 
   let speakerLabels = []
   if (validEmbeddings.length > 0) {
-    speakerLabels = clusterEmbeddings(validEmbeddings, 0.6)
+    // v1.20.6: 0.6 -> 0.5 放寬聚類閾值，協助辨識男聲 + 小女孩等差異較大的聲紋組合
+    speakerLabels = clusterEmbeddings(validEmbeddings, 0.5)
   }
 
   // 將結果對應回原始 segments

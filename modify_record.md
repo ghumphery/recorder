@@ -1308,3 +1308,54 @@
   - `frontend/src/i18n/{zh-TW,en,ja}.js`：新增 voiceprint 相關 i18n keys
   - `frontend/package.json`：版本號更新為 1.20.2
 - **後續收尾**（同 session）：三語言 modify_record / readme / Product_Design_Guidelines 同步、`npm run electron:build` 重新編譯 + code sign + 建立備份 + git commit + push
+
+## [2026-06-30 02:00] v1.20.3 — onnxruntime-node native binary 載入修正
+- **version**: 1.20.2 → 1.20.3（patch: hotfix）
+- **修改要求**: 使用者回報執行「標註說話者」後 Job failed: 無法載入聲紋模型，請先下載模型，但模型實際已下載。
+- **根因分析**: onnxruntime-node 透過 native binary (onnxruntime_binding.node) 載入 ONNX 模型。electron-builder 把 
+ode_modules 整個壓進 asar，native binary 放在 asar 內無法被 Node.js require 載入，導致 InferenceSession.create() 失敗。模型檔本身沒問題，但 loadModel() 拋出的錯誤訊息模糊地讓使用者誤以為是模型問題。
+- **修正方案**: 在 rontend/package.json 的 uild.asarUnpack 加入 "node_modules/onnxruntime-node/**/*"，讓 electron-builder 在打包時把 onnxruntime-node 的所有檔案（含 native binary）解到 pp.asar.unpacked/，Node.js 才能正確 require。
+- **修改結果**:
+  - rontend/package.json: asarUnpack 加入 
+ode_modules/onnxruntime-node/**/*
+  - 重新編譯 Recorder-1.20.2-portable.exe + code sign
+  - git commit + push
+- **備份檔名**: backup-202606300208.zip
+
+## [2026-06-30 02:30] v1.20.4 — downloadModel 完整性檢查
+- **version**: 1.20.3 → 1.20.4（patch: hotfix）
+- **修改要求**: 使用者回報模型檔下載後是 0.0 MB，再次點「下載」後仍失敗。
+- **根因分析**: v1.20.3 修好 native binary 載入後，使用者按下「下載模型」實際下載到 ~/recoder/voiceprint/campplus_cn_en_common_200k.onnx，但因為某些網路/HF 限流情境，response body 是 HTML 文字（"Found. Redirecting to ..."），被當作二進位寫入 .downloading 檔，rename 後即得到 0 bytes 或文字型內容。isModelCached() 只檢查檔案存在與大小 ≥ 40MB 的時候才 OK，但若是 0 bytes 也會回傳 false 永遠卡在「模型未下載」。
+- **修正方案**:
+  1. downloadModel(): 寫入 .downloading 暫存，成功後才 rename 到正式檔；過程中累積 receivedBytes，總計 < 1 MB 視為下載不完整，刪除檔案並回傳失敗。
+  2. diarizeAudio() 在 loadModel() 失敗時再次確認檔案大小；若 size < 1 MB，呼叫 esetModel() 自動刪除損壞檔案，要求使用者重新下載。
+- **修改結果**: rontend/electron/voiceprint.js 的 downloadModel() 與 diarizeAudio() 載入邏輯
+- **備份檔名**: backup-202606300208.zip
+
+## [2026-06-30 02:45] v1.20.5 — HuggingFace LFS xet-bridge text/plain 重新導向處理
+- **version**: 1.20.4 → 1.20.5（patch: hotfix）
+- **修改要求**: 即使 v1.20.4 加入了完整性檢查，下載仍然報「下載不完整 (只收到 ... bytes)」。
+- **根因分析**: HuggingFace LFS 會透過 us.aws.cdn.hf.co 或 cdn-lfs.huggingface.co 等 xet-bridge 服務下發，**有時返回 HTTP 200 + Content-Type: text/plain + body="Found. Redirecting to https://..."** 而非標準的 302 重新導向。Node.js 原生 https.get 預期 3xx 才有 Location header，無法處理這種 text/plain body 的 "隱性 redirect"，於是直接寫入 text content 當作模型檔。
+- **修正方案**: 重寫 etchWithRedirects()，除了 3xx Location header 之外，新增 Content-Type: text/plain 的 peek body 解析：若 body 開頭是 Found. Redirecting to <URL>，把 URL 抓出來遞迴呼叫 etchWithRedirects(next)。整個函式對 edirectsLeft = 5 有上限保護。
+- **修改結果**: rontend/electron/voiceprint.js 的 etchWithRedirects() 新增 text/plain 隱性 redirect 處理
+- **備份檔名**: backup-202606300208.zip
+
+## [2026-06-30 03:15] v1.20.6 — Voiceprint Job UI 永不重置 + 男聲/小女孩聚類失敗修正
+- **version**: 1.20.5 → 1.20.6（patch: hotfix）
+- **修改要求**: 使用者回報兩個問題：
+  1. 「speaker 辨識 job 完成，但首頁顯示為 0%，按鈕為灰色不能再進行其它 speaker 辨識」（UI 卡死）
+  2. 「speaker 辨識無法識別音檔有兩人再說話，一個男人和一個小女孩」（聚類失敗）
+- **根因分析**:
+  1. **UI 卡死（問題 1）**：App.vue 的 _jobUpdateListener 邏輯判斷分支用的是 data.jobType === 'voiceprint'，但後端 VoiceprintJobManager._sendUpdate() 發送的欄位名稱其實是 data.type。這造成 voiceprint Job 完成事件**默默被忽略**，oiceprintBusy 永遠停在 	rue，導致首頁按鈕一直 disable。
+  2. **聚類失敗（問題 2）**: diarizeAudio() 用的 cosine similarity threshold = 0.6，男聲（低沉）與小女孩（高亢）的 embedding 相似度往往 < 0.6，所以兩個不同 speaker 的段落全部被歸到同一群或亂歸。此外 pcm.length > 16000 的 1 秒下限過濾掉了小女孩短促的發聲段落，導致她整段被忽略。
+- **修正方案**:
+  1. _jobUpdateListener: data.jobType === 'voiceprint' → data.type === 'voiceprint'；同時加強 progress 解析，同時相容 number 與 { percent: 0 } 物件兩種型態。
+  2. diarizeAudio():
+     - pcm.length > 16000 → pcm.length > 8000（1 秒降至 0.5 秒，捕捉短促的小聲發聲）
+     - clusterEmbeddings(validEmbeddings, 0.6) → clusterEmbeddings(validEmbeddings, 0.5)（放寬聚類閾值以容納差異較大的聲紋組合）
+- **修改結果**:
+  - rontend/src/App.vue: _jobUpdateListener 修正欄位 + progress 解析加強
+  - rontend/electron/voiceprint.js: 最小 PCM 8000 + threshold 0.5
+  - 重新編譯 Recorder-1.20.2-portable.exe（188,635,584 bytes，2026/6/30 03:16）+ code sign
+  - git commit + push
+- **備份檔名**: backup-202606300316.zip

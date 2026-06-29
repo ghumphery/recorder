@@ -1167,10 +1167,18 @@ export default {
       if (this._jobUpdateListener) return
       this._jobUpdateListener = (data) => {
         // Voiceprint Job 更新：更新進度條 / 完成時寫回 segments
-        if (data && data.jobType === 'voiceprint') {
+        // 修正：VoiceprintJobManager._sendUpdate 發送的是 type 欄位，不是 jobType
+        if (data && data.type === 'voiceprint') {
           if (data.status === 'running' || data.status === 'pending') {
             this.voiceprintBusy = true
-            this.voiceprintProgress = data.progress || 0
+            // progress 可以是 number 或 { percent: 0 } 物件
+            if (typeof data.progress === 'number') {
+              this.voiceprintProgress = data.progress
+            } else if (data.progress && typeof data.progress === 'object') {
+              this.voiceprintProgress = data.progress.percent || 0
+            } else {
+              this.voiceprintProgress = 0
+            }
           }
           if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
             this.voiceprintBusy = false

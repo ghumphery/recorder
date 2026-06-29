@@ -329,3 +329,55 @@
   - `frontend/src/i18n/{zh-TW,en,ja}.js`: new voiceprint i18n keys.
   - `frontend/package.json`: version bumped to 1.20.2.
 - **follow-up** (same session): sync modify_record / readme / Product_Design_Guidelines 3 languages, rebuild `npm run electron:build`, code sign, backup, git commit + push.
+
+## [2026-06-30 02:00] v1.20.3 — onnxruntime-node native binary load fix
+- **version**: 1.20.2 → 1.20.3 (patch: hotfix)
+- **requirement**: User reported Job failed: Cannot load voiceprint model, please download the model first after running Diarize, even though the model was already present.
+- **root cause**: onnxruntime-node requires its native binary (onnxruntime_binding.node) at runtime. electron-builder packs the entire 
+ode_modules into asar, so the native binary is trapped inside asar and equire('onnxruntime-node') fails inside InferenceSession.create(). The model itself was fine, but the error message misled the user into thinking it was a model issue.
+- **fix**: Added 
+ode_modules/onnxruntime-node/**/* to uild.asarUnpack in rontend/package.json. electron-builder then unpacks onnxruntime-node (including the native binary) to pp.asar.unpacked/, where Node.js can equire it normally.
+- **result**:
+  - rontend/package.json: asarUnpack includes 
+ode_modules/onnxruntime-node/**/*
+  - Rebuilt Recorder-1.20.2-portable.exe + code sign
+  - git commit + push
+- **backup**: backup-202606300208.zip
+
+## [2026-06-30 02:30] v1.20.4 — downloadModel integrity check
+- **version**: 1.20.3 → 1.20.4 (patch: hotfix)
+- **requirement**: User reported the downloaded model file is 0.0 MB; clicking "Download" again still fails.
+- **root cause**: After v1.20.3 fixed the native binary issue, the "Download model" button actually wrote ~/recoder/voiceprint/campplus_cn_en_common_200k.onnx, but some networks / HF rate-limit responses return HTML text bodies ("Found. Redirecting to ...") that get written verbatim into the .downloading file. After rename, the final model is 0 bytes or text content. isModelCached() only checks existence + size ≥ 40 MB, so a 0-byte result still returns false and the UI is stuck on "Model not downloaded".
+- **fix**:
+  1. downloadModel() writes to a .downloading temp file first, accumulating eceivedBytes. If the total is < 1 MB it's treated as a failed download: the temp file is deleted and the function rejects.
+  2. diarizeAudio() re-checks the file size if loadModel() fails; if size < 1 MB, esetModel() is invoked to delete the broken file and the user is prompted to re-download.
+- **result**: rontend/electron/voiceprint.js downloadModel() and diarizeAudio() loading logic.
+- **backup**: backup-202606300208.zip
+
+## [2026-06-30 02:45] v1.20.5 — HuggingFace LFS xet-bridge text/plain redirect handling
+- **version**: 1.20.4 → 1.20.5 (patch: hotfix)
+- **requirement**: Even with the integrity check in v1.20.4, downloads still fail with "Incomplete download (only received X bytes)".
+- **root cause**: HuggingFace LFS serves through xet-bridge proxies such as us.aws.cdn.hf.co or cdn-lfs.huggingface.co. Sometimes these return **HTTP 200 + Content-Type: text/plain + body="Found. Redirecting to https://..."** instead of a standard 302 redirect. Node's native https.get only follows 3xx with a Location: header, so the text body was written straight into the model file as if it were binary content.
+- **fix**: Rewrote etchWithRedirects() to peek the body when the response is 	ext/plain. If the body starts with Found. Redirecting to <URL>, the URL is extracted and etchWithRedirects(next) recurses. The whole function still has edirectsLeft = 5 as an upper bound to prevent loops.
+- **result**: rontend/electron/voiceprint.js fetchWithRedirects() now handles implicit text/plain redirects.
+- **backup**: backup-202606300208.zip
+
+## [2026-06-30 03:15] v1.20.6 — Voiceprint Job UI lock-up fix + male/child speaker clustering fix
+- **version**: 1.20.5 → 1.20.6 (patch: hotfix)
+- **requirement**: User reported two issues:
+  1. "The Diarize Job completes, but the homepage shows 0% and the button stays grey — I can't run another Diarize" (UI lock-up).
+  2. "The Diarize Job cannot distinguish two speakers in the audio: a man and a little girl" (clustering failure).
+- **root cause**:
+  1. **UI lock-up (issue 1)**: App.vue _jobUpdateListener checks data.jobType === 'voiceprint', but the backend VoiceprintJobManager._sendUpdate() actually sends the field name data.type. As a result, completion events for voiceprint jobs are silently dropped, oiceprintBusy stays 	rue forever, and the homepage Diarize button stays disabled.
+  2. **Clustering failure (issue 2)**: diarizeAudio() uses clusterEmbeddings(..., 0.6). A low male voice and a high-pitched little girl typically have cosine similarity well below 0.6, so the two speakers end up merged into a single cluster. Also, pcm.length > 16000 (1 s floor) filtered out short utterances from the little girl and she effectively disappeared from the analysis.
+- **fix**:
+  1. _jobUpdateListener: data.jobType === 'voiceprint' → data.type === 'voiceprint'; also tolerate progress as either a number or an { percent: 0 } object.
+  2. diarizeAudio():
+     - pcm.length > 16000 → pcm.length > 8000 (1 s → 0.5 s, to keep short utterances).
+     - clusterEmbeddings(validEmbeddings, 0.6) → clusterEmbeddings(validEmbeddings, 0.5) (loosen threshold to cover the wider male/child gap).
+- **result**:
+  - rontend/src/App.vue: _jobUpdateListener fixed field name + progress parser hardened.
+  - rontend/electron/voiceprint.js: minimum PCM 8000 + threshold 0.5.
+  - Rebuilt Recorder-1.20.2-portable.exe (188,635,584 bytes, 2026-06-30 03:16) + code sign.
+  - git commit + push.
+- **backup**: backup-202606300316.zip

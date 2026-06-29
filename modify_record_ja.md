@@ -326,3 +326,54 @@
   - `frontend/src/i18n/{zh-TW,en,ja}.js`: voiceprint 関連 i18n keys を追加
   - `frontend/package.json`: バージョン番号を 1.20.2 に更新
 - **後続收尾**（同セッション）: 三言語 modify_record / readme / Product_Design_Guidelines 同期、`npm run electron:build` 再コンパイル + code sign + バックアップ作成 + git commit + push
+
+## [2026-06-30 02:00] v1.20.3 — onnxruntime-node ネイティブバイナリ読み込み修正
+- **version**: 1.20.2 → 1.20.3（patch: hotfix）
+- **要求**: ユーザーから「話者識別を実行すると Job failed: 声紋モデルを読み込めません。先にモデルをダウンロードしてください が表示されるが、モデルは既にダウンロード済み」との報告。
+- **原因**: onnxruntime-node は実行時にネイティブバイナリ (onnxruntime_binding.node) を必要としますが、electron-builder は 
+ode_modules 全体を asar に圧縮してしまい、ネイティブバイナリは asar 内に入って Node.js の equire で読めず、InferenceSession.create() が失敗します。モデル自体には問題がないのに、エラーメッセージがモデル側の問題のように見えてしまっていました。
+- **修正**: rontend/package.json の uild.asarUnpack に "node_modules/onnxruntime-node/**/*" を追加。electron-builder が asar 展開時に onnxruntime-node（ネイティブバイナリ含む）を pp.asar.unpacked/ に展開し、Node.js から正常に equire できるようになります。
+- **結果**:
+  - rontend/package.json: asarUnpack に 
+ode_modules/onnxruntime-node/**/* を追加
+  - Recorder-1.20.2-portable.exe 再ビルド + コード署名
+  - git commit + push
+- **バックアップ**: backup-202606300208.zip
+
+## [2026-06-30 02:30] v1.20.4 — downloadModel 完全性チェック
+- **version**: 1.20.3 → 1.20.4（patch: hotfix）
+- **要求**: 「モデルをダウンロードしてもファイルサイズが 0.0 MB。再ダウンロードしても失敗する」との報告。
+- **原因**: v1.20.3 でネイティブバイナリ問題が解決した一方、「モデルダウンロード」ボタンが書き込む ~/recoder/voiceprint/campplus_cn_en_common_200k.onnx の中身が、ネットワーク／HF レート制限により HTML テキスト（"Found. Redirecting to ..."）となり、それをバイナリとして .downloading に書いたまま rename した結果、0 bytes またはテキスト内容のままとなることがありました。isModelCached() は存在とサイズ ≥40 MB だけを見るため 0 bytes では false を返し続け、「モデル未ダウンロード」のまま固まります。
+- **修正**:
+  1. downloadModel() はまず .downloading 一時ファイルへ書き込み、eceivedBytes を累積する。合計が 1 MB 未満ならダウンロード失敗とみなして一時ファイルを削除し reject。
+  2. diarizeAudio() は loadModel() 失敗時に再度ファイルサイズを確認し、1 MB 未満なら esetModel() で破損ファイルを自動削除し、ユーザーに再ダウンロードを促す。
+- **結果**: rontend/electron/voiceprint.js の downloadModel() と diarizeAudio() 読み込みロジックを修正。
+- **バックアップ**: backup-202606300208.zip
+
+## [2026-06-30 02:45] v1.20.5 — HuggingFace LFS xet-bridge text/plain リダイレクト対応
+- **version**: 1.20.4 → 1.20.5（patch: hotfix）
+- **要求**: v1.20.4 で完全性チェックを入れても、引き続き "ダウンロード失敗 (received X bytes)" と表示される。
+- **原因**: HuggingFace LFS は us.aws.cdn.hf.co や cdn-lfs.huggingface.co といった xet-bridge プロキシ経由で配信されることがあり、**HTTP 200 + Content-Type: text/plain + body="Found. Redirecting to https://..."** という形で返す場合があります（標準の 302 リダイレクトの代わり）。Node.js 標準の https.get は 3xx の Location: ヘッダしか追わないため、この text/plain body をそのままモデルファイルに書き込んでしまいます。
+- **修正**: etchWithRedirects() を再設計し、レスポンスが 	ext/plain の場合は body を peek して、Found. Redirecting to <URL> で始まるなら URL を抽出して etchWithRedirects(next) を再帰呼び出し。edirectsLeft = 5 の上限は維持。
+- **結果**: rontend/electron/voiceprint.js fetchWithRedirects() に text/plain 暗黙リダイレクト処理を追加。
+- **バックアップ**: backup-202606300208.zip
+
+## [2026-06-30 03:15] v1.20.6 — Voiceprint Job UI ロック修正 + 男性／小女孩クラスタリング失敗修正
+- **version**: 1.20.5 → 1.20.6（patch: hotfix）
+- **要求**: ユーザーから 2 件の報告：
+  1. 「話者識別 Job は完了するのに、ホーム画面で 0% のままボタンがグレーで、他音声の話者識別ができない」（UI ロック）
+  2. 「話者識別で、男の子と小女孩の 2 人の発話を見分けられない」（クラスタリング失敗）
+- **原因**:
+  1. **UI ロック（問題 1）**：App.vue の _jobUpdateListener は data.jobType === 'voiceprint' で分岐していますが、バックエンドの VoiceprintJobManager._sendUpdate() が送ってくるフィールド名は実は data.type。このため voiceprint Job の完了イベントが**黙って破棄**され、oiceprintBusy が 	rue のままとなり、ホームの話者識別ボタンが disable のまま固まる。
+  2. **クラスタリング失敗（問題 2）**：diarizeAudio() は cosine similarity threshold = 0.6 を使用。低い男性の声と高音の小女孩の声の embedding 類似度は 0.6 を大きく下回るため、2 話者が同一クラスタにまとめられてしまう。さらに pcm.length > 16000（1 秒閾値）で小女孩の短い発話区間が捨てられてしまうため、彼女の声がほぼ分析対象から外れていました。
+- **修正**:
+  1. _jobUpdateListener: data.jobType === 'voiceprint' → data.type === 'voiceprint'。progress を number と { percent: 0 } オブジェクトの両方に対応するようパース処理を補強。
+  2. diarizeAudio():
+     - pcm.length > 16000 → pcm.length > 8000（1 秒 → 0.5 秒閾値に下げ、短い発話も拾う）
+     - clusterEmbeddings(validEmbeddings, 0.6) → clusterEmbeddings(validEmbeddings, 0.5)（男性／小女孩など差異が大きい組み合わせを許容するよう閾値を緩和）
+- **結果**:
+  - rontend/src/App.vue: _jobUpdateListener のフィールド名修正 + progress パース強化
+  - rontend/electron/voiceprint.js: 最小 PCM 8000 + threshold 0.5
+  - Recorder-1.20.2-portable.exe 再ビルド（188,635,584 bytes、2026-06-30 03:16）+ コード署名
+  - git commit + push
+- **バックアップ**: backup-202606300316.zip
