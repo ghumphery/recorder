@@ -769,6 +769,7 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
       const args = ['-m', modelPath, '-f', audioPath, '--output-json', '-oj', outputJson, '-l', 'auto', '-t', String(os.cpus().length)]
       if (useGpu === false) args.push('--no-gpu')
       else if (gpuDevice !== undefined && gpuDevice !== '') args.push('-dev', String(gpuDevice))
+      const totalDurationSec = estimateAudioDuration(audioPath)
       const startTime = Date.now()
       const proc = spawn(whisperExe, args, { cwd: whisperDir, windowsHide: true })
       let stderr = ''
@@ -837,10 +838,8 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
             anySegmentOutput = true
             const endH = parseInt(match[4]), endM = parseInt(match[5]), endS = parseInt(match[6])
             const endSec = endH * 3600 + endM * 60 + endS
-            // 估算音檔總長度（從 stderr 最後一個時間戳推算）
-            // 使用簡單的啟發式：進度 = 目前處理到的秒數 / 預估總秒數
-            // 由於無法預知總長度，使用最後看到的時間戳作為進度參考
-            lastProgressPercent = Math.min(Math.round((endSec / Math.max(endSec, 1)) * 100), 99)
+            // 計算真實進度：目前處理到的秒數 / 音檔總長度
+            lastProgressPercent = Math.min(Math.round((endSec / Math.max(totalDurationSec, 1)) * 100), 99)
           }
         }
       })

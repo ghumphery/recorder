@@ -1198,3 +1198,15 @@
   - `frontend/electron/main.js` — 加入 `estimateAudioDuration()`、`getStallTimeoutMs()`（CPU 回傳 null）；停滯檢查使用動態 timeout；改進度間隔為 10 秒
   - `frontend/package.json` — 版本號更新為 1.17.3
   - 備份檔名: backup-202606291508.zip
+
+## [2026-06-29 15:48]
+- **version**: 1.17.4
+- **修改要求**：使用者回饋 Vulkan GPU 花了 681 秒完成辨識，但 UI 一直顯示 0%（921s），確認進度百分比計算 bug。
+- **修改規劃**：
+  1. 根因分析：`lastProgressPercent = Math.min(Math.round((endSec / Math.max(endSec, 1)) * 100), 99)` — 分子分母相同（都是 `endSec`），永遠等於 100% 後被 clamp 到 99%。當第一個 segment 時間戳出現時，UI 直接跳到 99%，在此之前一直顯示 0%。
+  2. 修復方案：用 `estimateAudioDuration(audioPath)` 推算的音檔總長度 `totalDurationSec` 作為分母，計算真實進度：`endSec / totalDurationSec * 100`。
+  3. 版本遞增 1.17.3 → 1.17.4
+- **修改結果**：
+  - `frontend/electron/main.js` — `runWhisper()` 中進度計算改為 `endSec / totalDurationSec * 100`
+  - `frontend/package.json` — 版本號更新為 1.17.4
+  - 備份檔名: backup-202606291548.zip
