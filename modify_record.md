@@ -1210,3 +1210,22 @@
   - `frontend/electron/main.js` — `runWhisper()` 中進度計算改為 `endSec / totalDurationSec * 100`
   - `frontend/package.json` — 版本號更新為 1.17.4
   - 備份檔名: backup-202606291548.zip
+
+## [2026-06-29 16:32]
+- **version**: 1.18.0
+- **修改要求**：
+  1. 使用者回饋 v1.17.4 在超過 700s 被強制中斷，log 顯示 `5 beams + best of 5` 導致 CPU 極慢
+  2. 錄音分段改為 default 30 分鐘，移除「不分段」選項，新增 60 分鐘選項
+  3. 進度百分比在大型音檔仍可能卡在 0%（whisper 尚未輸出時間戳時）
+- **修改規劃**：
+  1. `runWhisper()` args 加入 `-bs 1 -bo 1`（greedy 解碼），所有 GPU/CPU 模式都使用，預估 CPU 加速 3~5 倍
+  2. `segmentMinutes` 預設值從 0 改為 30；設定面板移除「不分段」選項，新增「60 分鐘」選項
+  3. 進度推送定時器中，若 `lastProgressPercent === 0` 且 `totalDurationSec > 0`，改用已耗時 / 音檔總長度估算進度
+  4. 版本遞增 1.17.4 → 1.18.0
+- **修改結果**：
+  - `frontend/electron/main.js` — `runWhisper()` args 加入 `-bs 1 -bo 1`；進度推送加入 elapsed/totalDuration 估算 fallback
+  - `frontend/src/App.vue` — `segmentMinutes` 預設值改為 30；設定面板移除不分段選項，新增 60 分鐘
+  - `frontend/src/i18n/zh-TW.js` — 新增 `settings.min60`
+  - `frontend/src/i18n/en.js` — 新增 `settings.min60`
+  - `frontend/package.json` — 版本號更新為 1.18.0
+  - 備份檔名: backup-202606291632.zip
