@@ -13,6 +13,7 @@ export default {
   'settings.min15': '15 分鐘',
   'settings.min30': '30 分鐘',
   'settings.min60': '60 分鐘',
+  'status.transcribingJob': '辨識 job 已提交: {id}（背景執行中）',
   'settings.gpuAccel': 'GPU 加速：',
   'settings.gpuEnabled': '啟用 (Vulkan)',
   'settings.gpuDisabled': '停用 (CPU)',

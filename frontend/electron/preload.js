@@ -18,6 +18,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('transcribe:progress', handler)
     return () => ipcRenderer.removeListener('transcribe:progress', handler)
   },
+  // Whisper Job Manager（非同步轉譯）
+  transcribeSubmit: (p) => ipcRenderer.invoke('transcribe:submit', p),
+  transcribeGetStatus: (p) => ipcRenderer.invoke('transcribe:jobStatus', p),
+  transcribeGetResult: (p) => ipcRenderer.invoke('transcribe:getResult', p),
+  transcribeList: () => ipcRenderer.invoke('transcribe:jobList'),
+  transcribeJobCancel: (p) => ipcRenderer.invoke('transcribe:jobCancel', p),
+  transcribeJobClear: () => ipcRenderer.invoke('transcribe:jobClear'),
+  onTranscribeEvent: (callback) => {
+    const handler = (event, data) => callback(data)
+    ipcRenderer.on('transcribe:event', handler)
+    return () => ipcRenderer.removeListener('transcribe:event', handler)
+  },
   exportSave: (p) => ipcRenderer.invoke('export:save', p),
   getLlmProviders: () => ipcRenderer.invoke('llm:providers'),
   llmOptimize: (p) => ipcRenderer.invoke('llm:optimize', p),

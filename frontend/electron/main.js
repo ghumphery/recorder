@@ -721,9 +721,244 @@ ipcMain.handle('settings:save', (event, settings) => {
   } catch (e) { return { success: false, error: e.message } }
 })
 
+// ── Whisper Job Manager ──
+
+class WhisperJobManager {
+  constructor() {
+    this.jobQueue = []
+    this.activeJob = null
+    this.jobHistory = []
+    this.maxHistory = 50
+    this.jobCounter = 0
+    this.persistPath = userDataPath('jobs.json')
+    this._loadFromDisk()
+  }
+
+  setMainWindow(win) { this.mainWindow = win }
+
+  _generateId() {
+    this.jobCounter++
+    const now = new Date()
+    return `tx_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}_${String(this.jobCounter).padStart(3,'0')}`
+  }
+
+  _log(job, message) {
+    const time = new Date().toTimeString().slice(0, 8)
+    job.log.push(`[${time}] ${message}`)
+    appLog('INFO', 'whisper-job', `[${job.id}] ${message}`)
+  }
+
+  _sendUpdate(job) {
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('transcribe:event', {
+        id: job.id,
+        type: 'transcribe',
+        status: job.status,
+        progress: job.progress,
+        log: job.log.slice(-20),
+        error: job.error,
+        audioPath: job.audioPath,
+        source: job.source,
+      })
+    }
+  }
+
+  _persist() {
+    try {
+      const data = {
+        version: 1,
+        savedAt: new Date().toISOString(),
+        transcribeJobs: this.jobHistory.slice(0, 50).map(j => ({
+          id: j.id, type: 'transcribe', audioPath: j.audioPath,
+          source: j.source, modelSize: j.modelSize, useGpu: j.useGpu,
+          status: j.status, progress: j.progress,
+          createdAt: j.createdAt, startedAt: j.startedAt, completedAt: j.completedAt,
+          error: j.error, log: j.log.slice(-10),
+        })),
+      }
+      fs.mkdirSync(path.dirname(this.persistPath), { recursive: true })
+      fs.writeFileSync(this.persistPath, JSON.stringify(data, null, 2), 'utf-8')
+    } catch (e) { appLog('WARN', 'whisper-job', `持久化失敗: ${e.message}`) }
+  }
+
+  _loadFromDisk() {
+    try {
+      if (fs.existsSync(this.persistPath)) {
+        const data = JSON.parse(fs.readFileSync(this.persistPath, 'utf-8'))
+        if (data.transcribeJobs) this.jobHistory = data.transcribeJobs
+      }
+    } catch (e) { appLog('WARN', 'whisper-job', `讀取持久化失敗: ${e.message}`) }
+  }
+
+  addJob({ audioPath, modelSize, useGpu, gpuDevice, source }) {
+    // 同檔案 in-flight 防護
+    const inFlight = this.jobQueue.find(j => j.audioPath === audioPath && (j.status === 'pending' || j.status === 'running'))
+    if (inFlight) return { success: false, error: '此音檔已在辨識中', jobId: inFlight.id }
+    if (this.activeJob && this.activeJob.audioPath === audioPath && this.activeJob.status === 'running') {
+      return { success: false, error: '此音檔已在辨識中', jobId: this.activeJob.id }
+    }
+    const job = {
+      id: this._generateId(),
+      type: 'transcribe',
+      status: 'pending',
+      progress: { percent: 0, elapsed: '0s' },
+      createdAt: new Date().toISOString(),
+      startedAt: null,
+      completedAt: null,
+      error: null,
+      result: null,
+      log: [],
+      audioPath,
+      modelSize,
+      useGpu,
+      gpuDevice,
+      source: source || 'manual',
+    }
+    this._log(job, `Job created: ${audioPath} (model=${modelSize}, gpu=${useGpu})`)
+    this.jobQueue.push(job)
+    this._sendUpdate(job)
+    this._persist()
+    this.processNext()
+    return { success: true, jobId: job.id }
+  }
+
+  async processNext() {
+    if (this.activeJob || this.jobQueue.length === 0) return
+    this.activeJob = this.jobQueue.shift()
+    this.activeJob.status = 'running'
+    this.activeJob.startedAt = new Date().toISOString()
+    this._log(this.activeJob, 'Job started')
+    this._sendUpdate(this.activeJob)
+    this._persist()
+    try {
+      await this._executeTranscribe(this.activeJob)
+      this.activeJob.status = 'completed'
+      this.activeJob.completedAt = new Date().toISOString()
+      this._log(this.activeJob, 'Job completed')
+      this._sendUpdate(this.activeJob)
+    } catch (e) {
+      this.activeJob.status = 'failed'
+      this.activeJob.error = e.message
+      this.activeJob.completedAt = new Date().toISOString()
+      this._log(this.activeJob, `Job failed: ${e.message}`)
+      this._sendUpdate(this.activeJob)
+    }
+    this.jobHistory.unshift({
+      id: this.activeJob.id, type: 'transcribe',
+      audioPath: this.activeJob.audioPath, source: this.activeJob.source,
+      modelSize: this.activeJob.modelSize, useGpu: this.activeJob.useGpu,
+      status: this.activeJob.status, progress: this.activeJob.progress,
+      createdAt: this.activeJob.createdAt, startedAt: this.activeJob.startedAt,
+      completedAt: this.activeJob.completedAt, error: this.activeJob.error,
+      result: this.activeJob.result, log: this.activeJob.log.slice(-10),
+    })
+    if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+    this.activeJob = null
+    this._persist()
+    this.processNext()
+  }
+
+  async _executeTranscribe(job) {
+    // 包裝 runWhisper，並在進度推送時更新 job
+    const { audioPath, modelSize, useGpu, gpuDevice } = job
+    const result = await runWhisper(audioPath, modelSize, useGpu, gpuDevice, (percent, elapsed, fallback) => {
+      job.progress = { percent, elapsed: `${elapsed}s` }
+      if (fallback) job.progress.fallback = true
+      this._sendUpdate(job)
+    })
+    // GPU 卡住時自動降級為 CPU 重試
+    if (!result.success && result.gpuStalled && useGpu !== false) {
+      appLog('WARN', 'whisper', `GPU 辨識卡住，自動降級為 CPU 重試: ${audioPath}`)
+      job.progress = { percent: 0, elapsed: '0s', fallback: true, message: 'GPU 辨識無回應，自動改用 CPU...' }
+      this._sendUpdate(job)
+      const retryResult = await runWhisper(audioPath, modelSize, false, '', (percent, elapsed) => {
+        job.progress = { percent, elapsed: `${elapsed}s` }
+        this._sendUpdate(job)
+      })
+      if (retryResult.success) { job.result = retryResult; return }
+      throw new Error(retryResult.error || 'CPU 辨識也失敗')
+    }
+    if (!result.success) throw new Error(result.error || '辨識失敗')
+    job.result = result
+  }
+
+  cancelJob(jobId) {
+    const idx = this.jobQueue.findIndex(j => j.id === jobId)
+    if (idx >= 0) {
+      const job = this.jobQueue.splice(idx, 1)[0]
+      job.status = 'cancelled'
+      job.completedAt = new Date().toISOString()
+      this._log(job, 'Job cancelled')
+      this._sendUpdate(job)
+      this.jobHistory.unshift({ id: job.id, type: 'transcribe', audioPath: job.audioPath, source: job.source, modelSize: job.modelSize, useGpu: job.useGpu, status: 'cancelled', createdAt: job.createdAt, completedAt: job.completedAt, log: job.log.slice(-10) })
+      if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+      this._persist()
+      return true
+    }
+    if (this.activeJob && this.activeJob.id === jobId) {
+      this.activeJob.status = 'cancelled'
+      this.activeJob.completedAt = new Date().toISOString()
+      this._log(this.activeJob, 'Job cancelled')
+      this._sendUpdate(this.activeJob)
+      // kill 子進程
+      if (this.activeJob._proc) { try { this.activeJob._proc.kill('SIGTERM') } catch {} }
+      this.jobHistory.unshift({ id: this.activeJob.id, type: 'transcribe', audioPath: this.activeJob.audioPath, source: this.activeJob.source, modelSize: this.activeJob.modelSize, useGpu: this.activeJob.useGpu, status: 'cancelled', createdAt: this.activeJob.createdAt, completedAt: this.activeJob.completedAt, log: this.activeJob.log.slice(-10) })
+      if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+      this.activeJob = null
+      this._persist()
+      this.processNext()
+      return true
+    }
+    return false
+  }
+
+  getStatus(jobId) {
+    if (this.activeJob && this.activeJob.id === jobId) return { ...this.activeJob, log: this.activeJob.log.slice(-20) }
+    const queued = this.jobQueue.find(j => j.id === jobId)
+    if (queued) return { ...queued, log: queued.log.slice(-20) }
+    const hist = this.jobHistory.find(j => j.id === jobId)
+    if (hist) return { ...hist, log: hist.log ? hist.log.slice(-20) : [] }
+    return null
+  }
+
+  listJobs() {
+    const all = [
+      ...(this.activeJob ? [{ ...this.activeJob, log: this.activeJob.log.slice(-5) }] : []),
+      ...this.jobQueue.map(j => ({ ...j, log: j.log.slice(-5) })),
+      ...this.jobHistory.slice(0, 20).map(j => ({ ...j, log: j.log ? j.log.slice(-5) : [] })),
+    ]
+    return all
+  }
+
+  cancelAll() {
+    // 取消所有 in-flight jobs
+    for (const job of this.jobQueue) {
+      job.status = 'cancelled'
+      job.completedAt = new Date().toISOString()
+      this._sendUpdate(job)
+    }
+    if (this.activeJob) {
+      this.activeJob.status = 'cancelled'
+      this.activeJob.completedAt = new Date().toISOString()
+      if (this.activeJob._proc) { try { this.activeJob._proc.kill('SIGTERM') } catch {} }
+      this._sendUpdate(this.activeJob)
+      this.activeJob = null
+    }
+    this.jobQueue = []
+    this._persist()
+  }
+
+  clearHistory() {
+    this.jobHistory = []
+    this._persist()
+  }
+}
+
+const whisperJobManager = new WhisperJobManager()
+
 // ── 語音辨識通用函式 ──
 
-// 追蹤正在執行的 whisper 子進程
+// 追蹤正在執行的 whisper 子進程（保留給 runWhisper 內部使用）
 const activeWhisperProcs = new Map() // key: audioPath, value: { proc, startTime, lastStderrTime, timer }
 
 const WHISPER_MAX_DURATION_MS = 90 * 60 * 1000  // 絕對超時 90 分鐘（適用所有模式）
@@ -1101,7 +1336,7 @@ ipcMain.handle('transcribe:segment', async (event, { audioPath, modelSize, useGp
   } catch (e) { return { success: false, error: e.message } }
 })
 
-// ── 取消辨識 ──
+// ── 取消辨識（舊版，保留向後相容） ──
 ipcMain.handle('transcribe:cancel', async (event, { audioPath }) => {
   appLog('INFO', 'whisper', `取消辨識: ${audioPath}`)
   const entry = activeWhisperProcs.get(audioPath)
@@ -1112,6 +1347,40 @@ ipcMain.handle('transcribe:cancel', async (event, { audioPath }) => {
     appLog('INFO', 'whisper', `辨識已取消: ${audioPath}`)
     return { success: true }
   } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── Whisper Job IPC Handlers（非同步） ──
+ipcMain.handle('transcribe:submit', async (event, { audioPath, modelSize, useGpu, gpuDevice, source }) => {
+  appLog('INFO', 'whisper', `提交辨識 job: ${audioPath} (model=${modelSize}, gpu=${useGpu})`)
+  const result = whisperJobManager.addJob({ audioPath, modelSize, useGpu, gpuDevice, source })
+  return result
+})
+
+ipcMain.handle('transcribe:jobStatus', async (event, { jobId }) => {
+  const status = whisperJobManager.getStatus(jobId)
+  return { success: true, job: status }
+})
+
+ipcMain.handle('transcribe:jobList', async () => {
+  const jobs = whisperJobManager.listJobs()
+  return { success: true, jobs }
+})
+
+ipcMain.handle('transcribe:jobCancel', async (event, { jobId }) => {
+  const cancelled = whisperJobManager.cancelJob(jobId)
+  return { success: true, cancelled }
+})
+
+ipcMain.handle('transcribe:jobClear', async () => {
+  whisperJobManager.clearHistory()
+  return { success: true }
+})
+
+ipcMain.handle('transcribe:getResult', async (event, { jobId }) => {
+  const job = whisperJobManager.getStatus(jobId)
+  if (!job) return { success: false, error: '找不到 job' }
+  if (job.status !== 'completed') return { success: false, error: 'job 尚未完成', status: job.status }
+  return { success: true, result: job.result }
 })
 
 // ── 錄音歷史與全文檢索（支援樹狀目錄） ──

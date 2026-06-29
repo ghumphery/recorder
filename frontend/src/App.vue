@@ -509,6 +509,8 @@ export default {
       jobList: [],
       _jobUpdateListener: null,
       _transcribingAudioPath: null,
+      _transcribingJobId: null,
+      _transcribeEventUnsub: null,
     }
   },
   computed: {
@@ -548,6 +550,7 @@ export default {
     await this.fetchLlmProviders()
     await this.loadSettings()
     this.initJobListener()
+    this.initTranscribeEventListener()
   },
   methods: {
     $t(key, params) {
@@ -839,46 +842,116 @@ export default {
         catch (e) { this.statusText = this.$t('status.downloadFail', { error: e.message }); this.statusError = true; this.showProgress = false; this.busy = false; return }
         await this.fetchModels()
       }
-      this.busy = true; this.showProgress = true; this.progressPercent = 0; this.statusText = this.$t('status.transcribing'); this.statusError = false
-      this._transcribingAudioPath = this.currentAudioPath
-      // 訂閱進度事件
-      const unsubProgress = window.electronAPI ? window.electronAPI.onTranscribeProgress((data) => {
-        if (data.audioPath === this._transcribingAudioPath) {
-          this.progressPercent = data.percent || 0
-          if (data.fallback) {
-            this.statusText = data.message || this.$t('status.gpuFallback')
-          } else {
-            this.statusText = this.$t('status.transcribingPercent', { percent: data.percent || 0, elapsed: data.elapsed || '' })
-          }
-        }
-      }) : null
+      if (!window.electronAPI || !window.electronAPI.transcribeSubmit) return
+      // 非同步模式：提交後立刻 return，背景執行
+      this.busy = true; this.showProgress = true; this.progressPercent = 0
+      this.statusText = this.$t('status.transcribing'); this.statusError = false
       try {
-        if (!window.electronAPI) return
-        const r = await window.electronAPI.transcribe({ audioPath: this.currentAudioPath, modelSize: this.selectedModel, useGpu: this.useGpu, gpuDevice: this.gpuDevice })
+        const r = await window.electronAPI.transcribeSubmit({
+          audioPath: this.currentAudioPath,
+          modelSize: this.selectedModel,
+          useGpu: this.useGpu,
+          gpuDevice: this.gpuDevice,
+          source: 'manual',
+        })
         if (r.success) {
-          this.transcriptionResults = r.segments; this.hasResult = true; this.showProgress = false
-          this.statusText = this.$t('status.transcribed', { count: r.segments.length }); this.progressPercent = 100
-          this.llmResults = { optimized: '', translated: '', summary: '' }
-          this.documents = []
-          this.llmHistory = { optimized: [], translated: [], summary: [] }
-          this.llmRedo = { optimized: [], translated: [], summary: [] }; this.activeSource = 'original'
-          await this.saveRecordingMeta(r.segments)
-        } else { this.statusText = this.$t('status.transcribeFail', { error: r.error }); this.statusError = true; this.showProgress = false }
-      } catch (e) { this.statusText = this.$t('status.transcribeFail', { error: e.message }); this.statusError = true; this.showProgress = false }
-      finally {
-        this.busy = false
-        this._transcribingAudioPath = null
-        if (unsubProgress) unsubProgress()
+          this._transcribingJobId = r.jobId
+          this._transcribingAudioPath = this.currentAudioPath
+          this.statusText = this.$t('status.transcribingJob', { id: r.jobId })
+        } else {
+          this.statusText = this.$t('status.transcribeFail', { error: r.error }); this.statusError = true
+          this.showProgress = false; this.busy = false
+        }
+      } catch (e) {
+        this.statusText = this.$t('status.transcribeFail', { error: e.message }); this.statusError = true
+        this.showProgress = false; this.busy = false
       }
     },
     async cancelTranscribe() {
-      if (!window.electronAPI || !this._transcribingAudioPath) return
-      this.statusText = this.$t('status.transcribingCancel'); this.statusError = false
-      try {
-        await window.electronAPI.transcribeCancel({ audioPath: this._transcribingAudioPath })
-        this.statusText = this.$t('status.transcribingCancelled'); this.showProgress = false; this.busy = false
+      if (!window.electronAPI) return
+      if (this._transcribingJobId) {
+        this.statusText = this.$t('status.transcribingCancel'); this.statusError = false
+        try {
+          await window.electronAPI.transcribeJobCancel({ jobId: this._transcribingJobId })
+          this.statusText = this.$t('status.transcribingCancelled')
+          this.showProgress = false; this.busy = false
+          this._transcribingJobId = null
+          this._transcribingAudioPath = null
+        } catch (e) { this.statusText = this.$t('status.transcribeFail', { error: e.message }); this.statusError = true }
+      } else if (this._transcribingAudioPath) {
+        // 退回使用舊版 cancel
+        this.statusText = this.$t('status.transcribingCancel'); this.statusError = false
+        try {
+          await window.electronAPI.transcribeCancel({ audioPath: this._transcribingAudioPath })
+          this.statusText = this.$t('status.transcribingCancelled')
+          this.showProgress = false; this.busy = false
+          this._transcribingAudioPath = null
+        } catch (e) { this.statusText = this.$t('status.transcribeFail', { error: e.message }); this.statusError = true }
+      }
+    },
+    async _onTranscribeEvent(data) {
+      // 只處理當前 jobs 的事件
+      if (data.id !== this._transcribingJobId) return
+      if (data.status === 'running' || data.status === 'pending') {
+        if (data.progress) {
+          this.progressPercent = data.progress.percent || 0
+          if (data.progress.fallback) {
+            this.statusText = this.$t('status.gpuFallback')
+          } else {
+            this.statusText = this.$t('status.transcribingPercent', { percent: data.progress.percent || 0, elapsed: data.progress.elapsed || '' })
+          }
+        }
+      } else if (data.status === 'completed') {
+        // job 完成，讀取結果
+        try {
+          const r = await window.electronAPI.transcribeGetResult({ jobId: this._transcribingJobId })
+          if (r.success && r.result) {
+            this.transcriptionResults = r.result.segments
+            this.hasResult = true
+            this.showProgress = false
+            this.statusText = this.$t('status.transcribed', { count: r.result.segments.length })
+            this.progressPercent = 100
+            this.llmResults = { optimized: '', translated: '', summary: '' }
+            this.documents = []
+            this.llmHistory = { optimized: [], translated: [], summary: [] }
+            this.llmRedo = { optimized: [], translated: [], summary: [] }
+            this.activeSource = 'original'
+            await this.saveRecordingMeta(r.result.segments)
+          } else {
+            this.statusText = this.$t('status.transcribeFail', { error: r.error || '未知錯誤' }); this.statusError = true
+            this.showProgress = false
+          }
+        } catch (e) {
+          this.statusText = this.$t('status.transcribeFail', { error: e.message }); this.statusError = true
+          this.showProgress = false
+        } finally {
+          this.busy = false
+          this._transcribingJobId = null
+          this._transcribingAudioPath = null
+        }
+      } else if (data.status === 'failed') {
+        this.statusText = this.$t('status.transcribeFail', { error: data.error || '未知錯誤' })
+        this.statusError = true
+        this.showProgress = false
+        this.busy = false
+        this._transcribingJobId = null
         this._transcribingAudioPath = null
-      } catch (e) { this.statusText = this.$t('status.transcribeFail', { error: e.message }); this.statusError = true }
+      } else if (data.status === 'cancelled') {
+        this.statusText = this.$t('status.transcribingCancelled')
+        this.showProgress = false
+        this.busy = false
+        this._transcribingJobId = null
+        this._transcribingAudioPath = null
+      }
+      // 同步更新 Job 面板
+      if (this.showJobPanel) this._refreshAllJobs()
+    },
+    async _refreshAllJobs() {
+      if (!window.electronAPI) return
+      try {
+        const r = await window.electronAPI.transcribeList()
+        if (r.success) this.transcribeJobList = r.jobs
+      } catch (e) {}
     },
     _addDocument(type, content, source, target) {
       const doc = {

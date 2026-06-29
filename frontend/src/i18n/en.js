@@ -12,6 +12,7 @@ export default {
   'settings.min15': '15 min',
   'settings.min30': '30 min',
   'settings.min60': '60 min',
+  'status.transcribingJob': 'Transcribe job submitted: {id} (running in background)',
   'settings.gpuAccel': 'GPU Accel:',
   'settings.gpuEnabled': 'Enabled (Vulkan)',
   'settings.gpuDisabled': 'Disabled (CPU)',
