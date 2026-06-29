@@ -86,6 +86,40 @@ export default {
   'llm.docSourceOptimized': '優化',
   'llm.docSourceSummary': '摘要',
 
+  // Jobs 面板（v1.20.0）
+  'jobs.panelTitle': '📋 非同步 Job 列表',
+  'jobs.transcribeTab': '轉譯',
+  'jobs.llmTab': 'LLM',
+  'jobs.stats': '進行中 {inflight} / 全部 {total}',
+  'jobs.empty': '尚無 Job 記錄',
+  'jobs.close': '關閉',
+  'jobs.status.pending': '⏳ 排隊中',
+  'jobs.status.running': '▶ 執行中',
+  'jobs.status.completed': '✓ 完成',
+  'jobs.status.failed': '✗ 失敗',
+  'jobs.status.cancelled': '⊘ 已取消',
+  'jobs.type.transcribe': '🎙️ 轉譯',
+  'jobs.type.optimize': '✨ 優化',
+  'jobs.type.translate': '🌐 翻譯',
+  'jobs.type.summary': '📋 摘要',
+  'jobs.type.aiQuery': '🔍 AI 查詢',
+  'jobs.action.stop': '⏹ 停止',
+  'jobs.action.showLog': '📜 顯示 Log',
+  'jobs.action.delete': '🗑 刪除',
+  'jobs.action.refresh': '🔄 重新整理',
+  'jobs.action.clearAll': '🗑 全部清除',
+  'jobs.confirmDelete': '確定刪除此 Job？（進行中的 Job 將先停止後刪除）',
+  'jobs.confirmClearAll': '確定清除所有歷史 Jobs？',
+  'jobs.logTitle': 'Job Log — {id} ({type})',
+  'jobs.logEnd': '結束於 {time}',
+  'jobs.badge': '{count} 個進行中',
+  'status.jobStopped': 'Job {id} 已停止',
+  'status.jobStopFail': '停止 Job 失敗：{error}',
+  'status.jobDeleted': 'Job {id} 已刪除',
+  'status.jobDeleteFail': '刪除 Job 失敗：{error}',
+  'status.jobsCleared': '已清除所有 Jobs',
+  'status.jobClearFail': '清除 Jobs 失敗：{error}',
+
   // 聲紋說話者標註
   'voiceprint.diarize': '👥 標註說話者',
   'voiceprint.processing': '👥 處理中',
@@ -250,6 +284,14 @@ export default {
   'status.llmError': '❌ {label} 異常: {message}',
   'status.llmDocDeleted': '✅ 文件已刪除',
   'status.llmDocDeleteFail': '❌ 刪除失敗: {error}',
+
+  // v1.20.2 聲紋說話者標註 (Voiceprint)
+  'status.voiceprintDone': '✅ 說話者標註完成：{count} 句',
+  'status.voiceprintFail': '❌ 說話者標註失敗: {error}',
+
+  // Jobs 面板類型 - v1.20.2 新增
+  'jobs.type.voiceprint': '👥 語者標註',
+  'jobs.voiceprintTab': 'Voiceprint',
 
   // 確認對話框
   'confirm.deleteRecording': '確定要刪除錄音記錄「{name}」嗎？\n此操作無法復原。',

@@ -1283,3 +1283,28 @@
   - `frontend/src/App.vue`：`initTranscribeEventListener()` 修正為 `(data) => { this._onTranscribeEvent(data) }`
   - `frontend/package.json`：版本號更新為 1.20.1
 - **備份檔名**: backup-202606292204.zip
+
+## [2026-06-29 23:55] v1.20.2 — 「歷史記錄 Review」無音檔誤判 + 聲紋模型檢查改進 + Voiceprint Job 化
+- **version**: 1.20.1 → 1.20.2（patch：修复 bug + 架構優化）
+- **修改要求**：
+  1. 從「歷史記錄 Review」進入後，點「標註說話者」出錯「❌ 無音檔，無法進行說話者標註」（實際有音檔）
+  2. 「標註說話者」若模型檔不完整會陷入「無法載入聲紋模型」狀態
+  3. 為求一致性與 UI 可觀察性，將「標註說話者」改為非同步 Job、列入 Jobs 面板與 Jobs 徽章統計
+- **根因分析**：
+  1. `App.vue` `doDiarize()` 直接使用 `this.currentAudioPath`，「Review」進來時該變數為 `null`，導致「無音檔」誤判
+  2. `voiceprint.js` `isModelCached()` 只檢查檔案存在，未驗證完整性（下載中斷 / 損壞會烙下 size 0 的檔案）
+  3. `voiceprintDiarize` IPC 是同步调用，前端在處理期間無法加入 Jobs 面板，使用者也要等待
+- **修正與增強**：
+  1. `App.vue doDiarize()` 补上 `recoLoadMeta` 補救，從 `currentRecordingId` 取得 `audioPath`
+  2. `voiceprint.js` `isModelCached()` 加檔案大小檢查（≥ 40MB → 視為有效），新增 `resetModel()`
+  3. 後端新增 `VoiceprintJobManager` 類別（包含 queue/active/history、persist、log、delete、cancel）與 IPC `voiceprint:jobSubmit/Status/List/Cancel/Delete`、`voiceprint:reset`
+  4. 前端 `App.vue`：`voiceprintJobList` 資料、`currentJobList` 計算屬性、`totalInFlightJobs/totalJobs` 多 tab 統計、Voiceprint tab UI、訂閱 `onVoiceprintJobUpdate`、`doDiarize` 改為背景 Job 提交、完成時寫回 speaker 到 `transcriptionResults`、逐字稿顯示 `👤 Speaker_X` 標籤
+- **三語言同步**：`zh-TW.js` / `en.js` / `ja.js` 新增 `status.voiceprintDone`、`status.voiceprintFail`、`jobs.type.voiceprint`、`jobs.voiceprintTab`
+- **修改結果**：
+  - `frontend/electron/main.js`：VoiceprintJobManager + 6 個 IPC handlers
+  - `frontend/electron/preload.js`：7 個新 bridge（voiceprintJobSubmit/Status/List/Cancel/Delete/Reset + onVoiceprintJobUpdate）
+  - `frontend/electron/voiceprint.js`：`isModelCached` 加檔案大小檢查；新增 `resetModel()`
+  - `frontend/src/App.vue`：`doDiarize` 改為 Job 模式；initJobListener 訂閱 `onVoiceprintJobUpdate`；refreshJobList 增載 `voiceprintJobList`；stopJob/deleteJob/openJobLog 新增 voiceprint 分支；逐字稿 speaker tag 顯示
+  - `frontend/src/i18n/{zh-TW,en,ja}.js`：新增 voiceprint 相關 i18n keys
+  - `frontend/package.json`：版本號更新為 1.20.2
+- **後續收尾**（同 session）：三語言 modify_record / readme / Product_Design_Guidelines 同步、`npm run electron:build` 重新編譯 + code sign + 建立備份 + git commit + push

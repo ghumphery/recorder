@@ -22,8 +22,34 @@ function ensureModelDir() {
   return dir
 }
 
+const MIN_MODEL_SIZE = 40 * 1024 * 1024 // 40 MB，預型檔約 50 MB，過小視為損壚
+
 function isModelCached() {
-  return fs.existsSync(modelPath())
+  try {
+    if (!fs.existsSync(modelPath())) return false
+    const size = fs.statSync(modelPath()).size
+    return size >= MIN_MODEL_SIZE
+  } catch (e) {
+    return false
+  }
+}
+
+function resetModel() {
+  try {
+    const mp = modelPath()
+    if (fs.existsSync(mp)) {
+      fs.unlinkSync(mp)
+      console.log('[voiceprint] 已刪除損壚模型檔案: ' + mp)
+    }
+    const tmp = mp + '.downloading'
+    if (fs.existsSync(tmp)) fs.unlinkSync(tmp)
+    modelLoaded = false
+    session = null
+    return true
+  } catch (e) {
+    console.error('[voiceprint] 重設失敗: ' + e.message)
+    return false
+  }
 }
 
 function downloadModel(progressCallback) {
@@ -458,6 +484,7 @@ module.exports = {
   isModelCached,
   downloadModel,
   loadModel,
+  resetModel,
   diarizeAudio,
   extractEmbedding,
   clusterEmbeddings,

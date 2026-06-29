@@ -1,7 +1,8 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.8.3
-> **最後更新日期**: 2026-06-29
+> **版本**: 1.8.4
+> **最後更新日期**: 2026-06-30
+- **v1.8.4 (2026-06-30)**：解 v1.20.2 增量功能。doDiarize() 改為提交非同步 Job、VoiceprintJobManager 類別與 6 個 IPC、Voiceprint tab UI、speaker badge、voiceprint i18n keys、refreshJobList 同時載入 voiceprintJobList、stopJob/deleteJob/openJobLog 新增 voiceprint 分支、isModelCached 加檔案大小檢查 + resetModel。
 
 ## 產品核心願景與哲學 (Product Vision & Philosophy)
 - **核心價值**：一句話 — 「離線、輕量、精準的 AI 會議記錄工具，讓每一場對話都有跡可循。」

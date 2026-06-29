@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   transcribeList: () => ipcRenderer.invoke('transcribe:jobList'),
   transcribeJobCancel: (p) => ipcRenderer.invoke('transcribe:jobCancel', p),
   transcribeJobClear: () => ipcRenderer.invoke('transcribe:jobClear'),
+  transcribeJobDelete: (p) => ipcRenderer.invoke('transcribe:jobDelete', p),
   onTranscribeEvent: (callback) => {
     const handler = (event, data) => callback(data)
     ipcRenderer.on('transcribe:event', handler)
@@ -45,6 +46,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   llmJobStatus: (p) => ipcRenderer.invoke('llm:jobStatus', p),
   llmJobList: () => ipcRenderer.invoke('llm:jobList'),
   llmJobCancel: (p) => ipcRenderer.invoke('llm:jobCancel', p),
+  llmJobDelete: (p) => ipcRenderer.invoke('llm:jobDelete', p),
   onLlmJobUpdate: (callback) => {
     ipcRenderer.on('llm:jobUpdate', (event, data) => callback(data))
   },
@@ -92,4 +94,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
    onVoiceprintProgress: (callback) => {
      ipcRenderer.on('voiceprint:progress', (event, data) => callback(data))
    },
-})
+   // Voiceprint Job Manager（v1.20.2）
+   voiceprintJobSubmit: (p) => ipcRenderer.invoke('voiceprint:jobSubmit', p),
+   voiceprintJobStatus: (p) => ipcRenderer.invoke('voiceprint:jobStatus', p),
+   voiceprintJobList: () => ipcRenderer.invoke('voiceprint:jobList'),
+   voiceprintJobCancel: (p) => ipcRenderer.invoke('voiceprint:jobCancel', p),
+   voiceprintJobDelete: (p) => ipcRenderer.invoke('voiceprint:jobDelete', p),
+   voiceprintReset: () => ipcRenderer.invoke('voiceprint:reset'),
+   onVoiceprintJobUpdate: (callback) => {
+     const handler = (event, data) => callback(data)
+     ipcRenderer.on('voiceprint:jobUpdate', handler)
+     return () => ipcRenderer.removeListener('voiceprint:jobUpdate', handler)
+   },
+ })

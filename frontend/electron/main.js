@@ -444,6 +444,40 @@ class LlmJobManager {
     return all
   }
 
+  deleteJob(jobId) {
+    // 1) active job：標記 cancelled、移入 history
+    if (this.activeJob && this.activeJob.id === jobId) {
+      this.activeJob.status = 'cancelled'
+      this.activeJob.completedAt = new Date().toISOString()
+      this._log(this.activeJob, 'Job deleted (was active)')
+      this._sendUpdate(this.activeJob)
+      this.jobHistory.unshift(this.activeJob)
+      if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+      this.activeJob = null
+      this.processNext()
+      return true
+    }
+    // 2) queued job：直接從 queue 移除
+    const qIdx = this.jobQueue.findIndex(j => j.id === jobId)
+    if (qIdx >= 0) {
+      const job = this.jobQueue.splice(qIdx, 1)[0]
+      job.status = 'cancelled'
+      job.completedAt = new Date().toISOString()
+      this._log(job, 'Job deleted (was queued)')
+      this._sendUpdate(job)
+      this.jobHistory.unshift(job)
+      if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+      return true
+    }
+    // 3) history job：直接從歷史移除
+    const hIdx = this.jobHistory.findIndex(j => j.id === jobId)
+    if (hIdx >= 0) {
+      this.jobHistory.splice(hIdx, 1)
+      return true
+    }
+    return false
+  }
+
   async _executeJob(job) {
     const { type } = job
     if (type === 'optimize') await this._executeOptimize(job)
@@ -680,6 +714,199 @@ class LlmJobManager {
 
 const llmJobManager = new LlmJobManager()
 
+// ── Voiceprint Job Manager（v1.20.2 新增） ──
+
+class VoiceprintJobManager {
+  constructor() {
+    this.jobQueue = []
+    this.activeJob = null
+    this.jobHistory = []
+    this.maxHistory = 50
+    this.jobCounter = 0
+  }
+
+  setMainWindow(win) { this.mainWindow = win }
+
+  _generateId() {
+    this.jobCounter++
+    const now = new Date()
+    return `vp_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}_${String(this.jobCounter).padStart(3,'0')}`
+  }
+
+  _log(job, message) {
+    const time = new Date().toTimeString().slice(0, 8)
+    job.log.push(`[${time}] ${message}`)
+    appLog('INFO', 'voiceprint-job', `[${job.id}] ${message}`)
+  }
+
+  _sendUpdate(job) {
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('voiceprint:jobUpdate', {
+        id: job.id,
+        type: job.type,
+        status: job.status,
+        progress: job.progress,
+        log: job.log.slice(-20),
+        error: job.error,
+        audioPath: job.audioPath,
+      })
+    }
+  }
+
+  addJob({ audioPath, segments, recordingId }) {
+    const job = {
+      id: this._generateId(),
+      type: 'voiceprint',
+      status: 'pending',
+      progress: { percent: 0 },
+      createdAt: new Date().toISOString(),
+      startedAt: null,
+      completedAt: null,
+      error: null,
+      result: null,
+      audioPath,
+      recordingId: recordingId || null,
+      params: { segments: segments || [] },
+      log: [],
+    }
+    this._log(job, `Job created (${(segments || []).length} segments)`)
+    this.jobQueue.push(job)
+    this._sendUpdate(job)
+    this.processNext()
+    return job.id
+  }
+
+  async processNext() {
+    if (this.activeJob || this.jobQueue.length === 0) return
+    this.activeJob = this.jobQueue.shift()
+    this.activeJob.status = 'running'
+    this.activeJob.startedAt = new Date().toISOString()
+    this._log(this.activeJob, 'Job started')
+    this._sendUpdate(this.activeJob)
+    try {
+      await this._executeJob(this.activeJob)
+      this.activeJob.status = 'completed'
+      this.activeJob.completedAt = new Date().toISOString()
+      this._log(this.activeJob, 'Job completed')
+      this._sendUpdate(this.activeJob)
+    } catch (e) {
+      this.activeJob.status = 'failed'
+      this.activeJob.error = e.message
+      this.activeJob.completedAt = new Date().toISOString()
+      this._log(this.activeJob, `Job failed: ${e.message}`)
+      this._sendUpdate(this.activeJob)
+    }
+    this.jobHistory.unshift(this.activeJob)
+    if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+    this.activeJob = null
+    this.processNext()
+  }
+
+  async _executeJob(job) {
+    const audioPath = job.audioPath
+    const segments = (job.params && job.params.segments) || []
+    const result = await voiceprint.diarizeAudio(audioPath, segments, (percent) => {
+      job.progress.percent = percent
+      this._sendUpdate(job)
+    })
+    job.result = { segments: result }
+
+    // 如果有 recordingId，自動寫回 metadata 的 segments[].speaker
+    if (job.recordingId) {
+      try {
+        const metaPath = path.join(recoDataPath(), `${job.recordingId}.json`)
+        if (fs.existsSync(metaPath)) {
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+          if (Array.isArray(meta.segments)) {
+            for (let i = 0; i < result.length && i < meta.segments.length; i++) {
+              meta.segments[i].speaker = result[i].speaker || meta.segments[i].speaker || ''
+            }
+            fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
+            this._log(job, '已寫回 metadata')
+          }
+        }
+      } catch (e) {
+        this._log(job, `寫回 metadata 失敗: ${e.message}`)
+      }
+    }
+  }
+
+  cancelJob(jobId) {
+    const idx = this.jobQueue.findIndex(j => j.id === jobId)
+    if (idx >= 0) {
+      const job = this.jobQueue.splice(idx, 1)[0]
+      job.status = 'cancelled'
+      job.completedAt = new Date().toISOString()
+      this._log(job, 'Job cancelled')
+      this._sendUpdate(job)
+      this.jobHistory.unshift(job)
+      if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+      return true
+    }
+    if (this.activeJob && this.activeJob.id === jobId) {
+      this.activeJob.status = 'cancelled'
+      this.activeJob.completedAt = new Date().toISOString()
+      this._log(this.activeJob, 'Job cancelled')
+      this._sendUpdate(this.activeJob)
+      this.jobHistory.unshift(this.activeJob)
+      if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+      this.activeJob = null
+      this.processNext()
+      return true
+    }
+    return false
+  }
+
+  getJobStatus(jobId) {
+    if (this.activeJob && this.activeJob.id === jobId) return { ...this.activeJob, log: this.activeJob.log.slice(-20) }
+    const queued = this.jobQueue.find(j => j.id === jobId)
+    if (queued) return { ...queued, log: queued.log.slice(-20) }
+    const hist = this.jobHistory.find(j => j.id === jobId)
+    if (hist) return { ...hist, log: hist.log.slice(-20) }
+    return null
+  }
+
+  listJobs() {
+    const all = [
+      ...(this.activeJob ? [{ ...this.activeJob, log: this.activeJob.log.slice(-5) }] : []),
+      ...this.jobQueue.map(j => ({ ...j, log: j.log.slice(-5) })),
+      ...this.jobHistory.slice(0, 20).map(j => ({ ...j, log: j.log.slice(-5) })),
+    ]
+    return all
+  }
+
+  deleteJob(jobId) {
+    if (this.activeJob && this.activeJob.id === jobId) {
+      this.activeJob.status = 'cancelled'
+      this.activeJob.completedAt = new Date().toISOString()
+      this._log(this.activeJob, 'Job deleted (was active)')
+      this.jobHistory.unshift(this.activeJob)
+      if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+      this.activeJob = null
+      this.processNext()
+      return true
+    }
+    const qIdx = this.jobQueue.findIndex(j => j.id === jobId)
+    if (qIdx >= 0) {
+      const job = this.jobQueue.splice(qIdx, 1)[0]
+      job.status = 'cancelled'
+      job.completedAt = new Date().toISOString()
+      this._log(job, 'Job deleted (was queued)')
+      this.jobHistory.unshift(job)
+      if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+      return true
+    }
+    const hIdx = this.jobHistory.findIndex(j => j.id === jobId)
+    if (hIdx >= 0) {
+      this.jobHistory.splice(hIdx, 1)
+      return true
+    }
+    return false
+  }
+}
+
+const voiceprintJobManager = new VoiceprintJobManager()
+
 // ── 設定檔持久化 ──
 
 const SETTINGS_VERSION = 2
@@ -861,25 +1088,37 @@ class WhisperJobManager {
   async _executeTranscribe(job) {
     // 包裝 runWhisper，並在進度推送時更新 job
     const { audioPath, modelSize, useGpu, gpuDevice } = job
-    const result = await runWhisper(audioPath, modelSize, useGpu, gpuDevice, (percent, elapsed, fallback) => {
-      job.progress = { percent, elapsed: `${elapsed}s` }
-      if (fallback) job.progress.fallback = true
-      this._sendUpdate(job)
-    })
-    // GPU 卡住時自動降級為 CPU 重試
-    if (!result.success && result.gpuStalled && useGpu !== false) {
-      appLog('WARN', 'whisper', `GPU 辨識卡住，自動降級為 CPU 重試: ${audioPath}`)
-      job.progress = { percent: 0, elapsed: '0s', fallback: true, message: 'GPU 辨識無回應，自動改用 CPU...' }
-      this._sendUpdate(job)
-      const retryResult = await runWhisper(audioPath, modelSize, false, '', (percent, elapsed) => {
+    // 定期把 activeWhisperProcs 中的 proc 指派給 job._proc，供 cancel/delete 終止使用
+    const procWatchTimer = setInterval(() => {
+      const entry = activeWhisperProcs.get(audioPath)
+      if (entry && entry.proc) {
+        job._proc = entry.proc
+        clearInterval(procWatchTimer)
+      }
+    }, 100)
+    try {
+      const result = await runWhisper(audioPath, modelSize, useGpu, gpuDevice, (percent, elapsed, fallback) => {
         job.progress = { percent, elapsed: `${elapsed}s` }
+        if (fallback) job.progress.fallback = true
         this._sendUpdate(job)
       })
-      if (retryResult.success) { job.result = retryResult; return }
-      throw new Error(retryResult.error || 'CPU 辨識也失敗')
+      // GPU 卡住時自動降級為 CPU 重試
+      if (!result.success && result.gpuStalled && useGpu !== false) {
+        appLog('WARN', 'whisper', `GPU 辨識卡住，自動降級為 CPU 重試: ${audioPath}`)
+        job.progress = { percent: 0, elapsed: '0s', fallback: true, message: 'GPU 辨識無回應，自動改用 CPU...' }
+        this._sendUpdate(job)
+        const retryResult = await runWhisper(audioPath, modelSize, false, '', (percent, elapsed) => {
+          job.progress = { percent, elapsed: `${elapsed}s` }
+          this._sendUpdate(job)
+        })
+        if (retryResult.success) { job.result = retryResult; return }
+        throw new Error(retryResult.error || 'CPU 辨識也失敗')
+      }
+      if (!result.success) throw new Error(result.error || '辨識失敗')
+      job.result = result
+    } finally {
+      clearInterval(procWatchTimer)
     }
-    if (!result.success) throw new Error(result.error || '辨識失敗')
-    job.result = result
   }
 
   cancelJob(jobId) {
@@ -951,6 +1190,48 @@ class WhisperJobManager {
   clearHistory() {
     this.jobHistory = []
     this._persist()
+  }
+
+  deleteJob(jobId) {
+    // 1) active job：先 kill 子進程、標記 cancelled、移入 history
+    if (this.activeJob && this.activeJob.id === jobId) {
+      if (this.activeJob._proc) { try { this.activeJob._proc.kill('SIGTERM') } catch {} }
+      this.activeJob.status = 'cancelled'
+      this.activeJob.completedAt = new Date().toISOString()
+      this._log(this.activeJob, 'Job deleted (was active)')
+      this.jobHistory.unshift({
+        id: this.activeJob.id, type: 'transcribe',
+        audioPath: this.activeJob.audioPath, source: this.activeJob.source,
+        modelSize: this.activeJob.modelSize, useGpu: this.activeJob.useGpu,
+        status: 'cancelled', createdAt: this.activeJob.createdAt,
+        completedAt: this.activeJob.completedAt, log: this.activeJob.log.slice(-10),
+      })
+      if (this.jobHistory.length > this.maxHistory) this.jobHistory.pop()
+      this._sendUpdate({ ...this.activeJob })
+      this.activeJob = null
+      this._persist()
+      this.processNext()
+      return true
+    }
+    // 2) queued job：直接從 queue 移除
+    const qIdx = this.jobQueue.findIndex(j => j.id === jobId)
+    if (qIdx >= 0) {
+      const job = this.jobQueue.splice(qIdx, 1)[0]
+      job.status = 'cancelled'
+      job.completedAt = new Date().toISOString()
+      this._log(job, 'Job deleted (was queued)')
+      this._sendUpdate(job)
+      this._persist()
+      return true
+    }
+    // 3) history job：直接從歷史移除
+    const hIdx = this.jobHistory.findIndex(j => j.id === jobId)
+    if (hIdx >= 0) {
+      this.jobHistory.splice(hIdx, 1)
+      this._persist()
+      return true
+    }
+    return false
   }
 }
 
@@ -1374,6 +1655,16 @@ ipcMain.handle('transcribe:jobCancel', async (event, { jobId }) => {
 ipcMain.handle('transcribe:jobClear', async () => {
   whisperJobManager.clearHistory()
   return { success: true }
+})
+
+ipcMain.handle('transcribe:jobDelete', async (event, { jobId }) => {
+  const deleted = whisperJobManager.deleteJob(jobId)
+  return { success: true, deleted }
+})
+
+ipcMain.handle('llm:jobDelete', async (event, { jobId }) => {
+  const deleted = llmJobManager.deleteJob(jobId)
+  return { success: true, deleted }
 })
 
 ipcMain.handle('transcribe:getResult', async (event, { jobId }) => {
@@ -1862,6 +2153,54 @@ ipcMain.handle('voiceprint:diarize', async (event, { audioPath, segments }) => {
   }
 })
 
+// ── Voiceprint Job IPC Handlers（v1.20.2） ──
+ipcMain.handle('voiceprint:jobSubmit', async (event, { audioPath, segments, recordingId }) => {
+  try {
+    const jobId = voiceprintJobManager.addJob({ audioPath, segments, recordingId })
+    return { success: true, jobId }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('voiceprint:jobStatus', async (event, { jobId }) => {
+  try {
+    const job = voiceprintJobManager.getJobStatus(jobId)
+    return { success: true, job }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('voiceprint:jobList', async () => {
+  try {
+    const jobs = voiceprintJobManager.listJobs()
+    return { success: true, jobs }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('voiceprint:jobCancel', async (event, { jobId }) => {
+  try {
+    const cancelled = voiceprintJobManager.cancelJob(jobId)
+    return { success: true, cancelled }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('voiceprint:jobDelete', async (event, { jobId }) => {
+  try {
+    const deleted = voiceprintJobManager.deleteJob(jobId)
+    return { success: true, deleted }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── Voiceprint 重設（清除損壚的模型檔案，v1.20.2） ──
+ipcMain.handle('voiceprint:reset', async () => {
+  appLog('INFO', 'voiceprint', '重設聲紋模型檔案')
+  try {
+    const ok = voiceprint.resetModel()
+    return { success: ok }
+  } catch (e) {
+    appLog('ERROR', 'voiceprint', `重設失敗: ${e.message}`)
+    return { success: false, error: e.message }
+  }
+})
+
 ipcMain.handle('reco:listAllFolders', async () => {
   appLog('INFO', 'reco', '列出所有子目錄')
   try {
@@ -1998,6 +2337,8 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   })
   llmJobManager.setMainWindow(mainWindow)
+  whisperJobManager.setMainWindow(mainWindow)
+  voiceprintJobManager.setMainWindow(mainWindow)
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => cb(['media', 'display-capture'].includes(permission)))
   session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ['screen', 'window'] }).then(sources => callback({ video: sources[0], audio: 'loopback' })).catch(() => callback({ video: null, audio: null }))

@@ -304,3 +304,28 @@
   - `frontend/src/App.vue`: `initTranscribeEventListener()` callback corrected to `(data) => { this._onTranscribeEvent(data) }`
   - `frontend/package.json`: Version bumped to 1.20.1
 - **Backup**: backup-202606292204.zip
+
+## [2026-06-29 23:55] v1.20.2 — Fix "No Audio" false-positive after Review + Voiceprint model integrity check + Voiceprint async Job
+- **version**: 1.20.1 → 1.20.2 (patch: bug fix + architecture improvement)
+- **requirement**:
+  1. After entering from History → Review, click "Diarize" raises "❌ No audio file" (although the audio actually exists).
+  2. If the voiceprint model file is corrupted/incomplete, "👥 Diarize" sticks at "Cannot load voiceprint model".
+  3. For consistency and UI observability, "Diarize" should be converted to an async Job and exposed in the Jobs panel + badge.
+- **root cause**:
+  1. `App.vue doDiarize()` reads `this.currentAudioPath` directly, but Review flow leaves it `null`, causing the false-positive.
+  2. `voiceprint.js isModelCached()` only checks file existence, not integrity (interrupted download leaves a 0-byte file).
+  3. `voiceprintDiarize` IPC is synchronous, so the UI cannot show progress in the Jobs panel while it runs.
+- **fix and enhancement**:
+  1. `doDiarize()` recovers audioPath via `recoLoadMeta({ recordingId })`.
+  2. `voiceprint.js isModelCached()` adds file-size check (≥40 MB → valid) and a new `resetModel()`.
+  3. Backend: new `VoiceprintJobManager` class (queue/active/history + persist + log + cancel/delete) plus IPCs `voiceprint:jobSubmit/Status/List/Cancel/Delete` and `voiceprint:reset`.
+  4. Frontend: `voiceprintJobList` data, `currentJobList` computed, `totalInFlightJobs/totalJobs` multi-tab stats, Voiceprint tab, subscribe `onVoiceprintJobUpdate`, `doDiarize` becomes background submission, segments get a `speaker` field on completion and transcript shows `👤 Speaker_X` tag.
+- **i18n sync**: Added `status.voiceprintDone`, `status.voiceprintFail`, `jobs.type.voiceprint`, `jobs.voiceprintTab` in zh-TW/en/ja.
+- **result**:
+  - `frontend/electron/main.js`: VoiceprintJobManager + 6 IPC handlers.
+  - `frontend/electron/preload.js`: 7 new bridges (voiceprintJobSubmit/Status/List/Cancel/Delete/Reset + onVoiceprintJobUpdate).
+  - `frontend/electron/voiceprint.js`: file-size check on `isModelCached`, new `resetModel()`.
+  - `frontend/src/App.vue`: Diarize → Job mode, voiceprint event subscription, voiceprint tab, speaker badge in transcript, voiceprint branches in stopJob/deleteJob/openJobLog.
+  - `frontend/src/i18n/{zh-TW,en,ja}.js`: new voiceprint i18n keys.
+  - `frontend/package.json`: version bumped to 1.20.2.
+- **follow-up** (same session): sync modify_record / readme / Product_Design_Guidelines 3 languages, rebuild `npm run electron:build`, code sign, backup, git commit + push.

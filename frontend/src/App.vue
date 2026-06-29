@@ -186,6 +186,9 @@
           <button class="job-tab" :class="{ active: jobPanelTab === 'llm' }" @click="jobPanelTab = 'llm'">
             🤖 {{ $t('jobs.llmTab') }} ({{ jobList.length }})
           </button>
+          <button class="job-tab" :class="{ active: jobPanelTab === 'voiceprint' }" @click="jobPanelTab = 'voiceprint'">
+            👥 Voiceprint ({{ voiceprintJobList.length }})
+          </button>
         </div>
         <div class="panel-body" style="max-height:450px;overflow-y:auto">
           <div v-if="currentJobList.length === 0" class="empty-hint">{{ $t('jobs.empty') }}</div>
@@ -266,6 +269,7 @@
         <div class="panel-body">
           <div v-for="(seg, idx) in transcriptionResults" :key="idx" class="segment" :class="{ 'segment-playing': playingSegmentIdx === idx }" @click="playSegment(idx)" :title="currentAudioUrl ? $t('transcript.clickToPlay') : ''">
             <span class="timestamp">[{{ formatTime(seg.start) }} - {{ formatTime(seg.end) }}]</span>
+            <span v-if="seg.speaker" class="speaker-tag">👤 {{ seg.speaker }}</span>
             <span class="text">{{ seg.text }}</span>
             <span v-if="playingSegmentIdx === idx" class="play-indicator">▶️</span>
           </div>
@@ -548,7 +552,10 @@ export default {
       activeJobProgress: { batch: 0, totalBatches: 0, percent: 0 },
       jobList: [],
       transcribeJobList: [],
+      voiceprintJobList: [],
+      _diarizeJobId: null,
       _jobUpdateListener: null,
+      _voiceprintEventUnsub: null,
       _transcribeEventUnsub: null,
       _transcribingAudioPath: null,
       _transcribingJobId: null,
@@ -586,15 +593,18 @@ export default {
       return parts.map((name, i) => ({ name, path: parts.slice(0, i + 1).join('/') }))
     },
     currentJobList() {
-      return this.jobPanelTab === 'transcribe' ? this.transcribeJobList : this.jobList
+      if (this.jobPanelTab === 'transcribe') return this.transcribeJobList
+      if (this.jobPanelTab === 'voiceprint') return this.voiceprintJobList
+      return this.jobList
     },
     totalInFlightJobs() {
       const t = (this.transcribeJobList || []).filter(j => j.status === 'pending' || j.status === 'running').length
       const l = (this.jobList || []).filter(j => j.status === 'pending' || j.status === 'running').length
-      return t + l
+      const v = (this.voiceprintJobList || []).filter(j => j.status === 'pending' || j.status === 'running').length
+      return t + l + v
     },
     totalJobs() {
-      return (this.transcribeJobList?.length || 0) + (this.jobList?.length || 0)
+      return (this.transcribeJobList?.length || 0) + (this.jobList?.length || 0) + (this.voiceprintJobList?.length || 0)
     },
   },
   async mounted() {
@@ -1156,6 +1166,35 @@ export default {
       if (!window.electronAPI) return
       if (this._jobUpdateListener) return
       this._jobUpdateListener = (data) => {
+        // Voiceprint Job 更新：更新進度條 / 完成時寫回 segments
+        if (data && data.jobType === 'voiceprint') {
+          if (data.status === 'running' || data.status === 'pending') {
+            this.voiceprintBusy = true
+            this.voiceprintProgress = data.progress || 0
+          }
+          if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+            this.voiceprintBusy = false
+            this.voiceprintProgress = 0
+            if (data.status === 'completed') {
+              // 完成：將 segments 套回 transcriptionResults
+              if (data.segments && Array.isArray(data.segments)) {
+                for (let i = 0; i < data.segments.length; i++) {
+                  if (this.transcriptionResults[i]) {
+                    this.transcriptionResults[i].speaker = data.segments[i].speaker || ''
+                  }
+                }
+                this.statusText = this.$t('status.voiceprintDone', { count: data.segments.length })
+                this.saveRecordingMeta(this.transcriptionResults)
+              }
+            } else if (data.status === 'failed') {
+              this.statusText = this.$t('status.voiceprintFail', { error: data.error || '未知錯誤' })
+              this.statusError = true
+            }
+          }
+          if (this.showJobPanel) this.refreshJobList()
+          return
+        }
+        // LLM Job 更新
         if (data.status === 'running' || data.status === 'pending') {
           this.activeJobId = data.id
           this.activeJobProgress = data.progress || { batch: 0, totalBatches: 0, percent: 0 }
@@ -1174,19 +1213,27 @@ export default {
         if (this.showJobPanel) this.refreshJobList()
       }
       window.electronAPI.onLlmJobUpdate(this._jobUpdateListener)
+      if (window.electronAPI.onVoiceprintJobUpdate) {
+        window.electronAPI.onVoiceprintJobUpdate(this._jobUpdateListener)
+      }
     },
     async refreshJobList() {
       if (!window.electronAPI) return
       try {
-        const [llmR, txR] = await Promise.all([window.electronAPI.llmJobList(), window.electronAPI.transcribeList()])
-        if (llmR.success) this.jobList = llmR.jobs
-        if (txR.success) this.transcribeJobList = txR.jobs
+        const tasks = [window.electronAPI.llmJobList(), window.electronAPI.transcribeList()]
+        if (window.electronAPI.voiceprintJobList) tasks.push(window.electronAPI.voiceprintJobList())
+        const results = await Promise.all(tasks)
+        const [llmR, txR, vpR] = results
+        if (llmR && llmR.success) this.jobList = llmR.jobs
+        if (txR && txR.success) this.transcribeJobList = txR.jobs
+        if (vpR && vpR.success) this.voiceprintJobList = vpR.jobs || []
       } catch (e) {}
     },
     async stopJob(job) {
       if (!window.electronAPI) return
       try {
         if (job.type === 'transcribe') await window.electronAPI.transcribeJobCancel({ jobId: job.id })
+        else if (job.type === 'voiceprint' && window.electronAPI.voiceprintJobCancel) await window.electronAPI.voiceprintJobCancel({ jobId: job.id })
         else await window.electronAPI.llmJobCancel({ jobId: job.id })
         this.statusText = this.$t('status.jobStopped', { id: job.id })
         await this.refreshJobList()
@@ -1197,6 +1244,7 @@ export default {
       if (!confirm(this.$t('jobs.confirmDelete'))) return
       try {
         if (job.type === 'transcribe') await window.electronAPI.transcribeJobDelete({ jobId: job.id })
+        else if (job.type === 'voiceprint' && window.electronAPI.voiceprintJobDelete) await window.electronAPI.voiceprintJobDelete({ jobId: job.id })
         else await window.electronAPI.llmJobDelete({ jobId: job.id })
         this.statusText = this.$t('status.jobDeleted', { id: job.id })
         await this.refreshJobList()
@@ -1214,10 +1262,10 @@ export default {
     async openJobLog(job) {
       if (!window.electronAPI) return
       try {
-        const isTx = job.type === 'transcribe'
-        const r = isTx
-          ? await window.electronAPI.transcribeGetStatus({ jobId: job.id })
-          : await window.electronAPI.llmJobStatus({ jobId: job.id })
+        let r
+        if (job.type === 'transcribe') r = await window.electronAPI.transcribeGetStatus({ jobId: job.id })
+        else if (job.type === 'voiceprint' && window.electronAPI.voiceprintJobStatus) r = await window.electronAPI.voiceprintJobStatus({ jobId: job.id })
+        else r = await window.electronAPI.llmJobStatus({ jobId: job.id })
         this.logModalJob = r.success && r.job ? r.job : job
         this.showJobLogModal = true
       } catch (e) {
@@ -1281,8 +1329,22 @@ export default {
 
     // ── 聲紋說話者標註 ──
     async doDiarize() {
-      if (!window.electronAPI || !this.hasResult || !this.currentAudioPath) {
-        this.statusText = '❌ 無音檔或逐字稿，無法進行說話者標註'
+      if (!window.electronAPI || !this.hasResult) {
+        this.statusText = '❌ 無逐字稿，無法進行說話者標註'
+        this.statusError = true
+        return
+      }
+      // 補救：從 metadata 取得 audioPath（處理從歷史記錄 Review 進入的情況）
+      if (!this.currentAudioPath && this.currentRecordingId) {
+        try {
+          const meta = await window.electronAPI.recoLoadMeta({ recordingId: this.currentRecordingId })
+          if (meta.success && meta.meta && meta.meta.audioPath) {
+            this.currentAudioPath = meta.meta.audioPath
+          }
+        } catch (e) { console.warn('載入錄音 metadata 失敗:', e) }
+      }
+      if (!this.currentAudioPath) {
+        this.statusText = '❌ 無音檔路徑，無法進行說話者標註'
         this.statusError = true
         return
       }
@@ -1312,38 +1374,30 @@ export default {
         return
       }
 
+      // 提交到背景 Job Manager（v1.20.2）
       this.voiceprintBusy = true
       this.voiceprintProgress = 0
-      this.statusText = '正在進行說話者標註...'
+      this.statusText = '正在進行說話者標註（背景執行）...'
       this.statusError = false
-
-      if (window.electronAPI.onVoiceprintProgress) {
-        window.electronAPI.onVoiceprintProgress((data) => {
-          this.voiceprintProgress = data.percent
-        })
-      }
-
       try {
         const segments = this.transcriptionResults.map(s => ({ start: s.start, end: s.end, text: s.text }))
-        const r = await window.electronAPI.voiceprintDiarize({ audioPath: this.currentAudioPath, segments })
-        if (r.success && r.segments) {
-          for (let i = 0; i < r.segments.length; i++) {
-            if (this.transcriptionResults[i]) {
-              this.transcriptionResults[i].speaker = r.segments[i].speaker || ''
-            }
-          }
-          this.statusText = `✅ 說話者標註完成：${r.segments.length} 句`
-          await this.saveRecordingMeta(this.transcriptionResults)
+        const r = await window.electronAPI.voiceprintJobSubmit({
+          audioPath: this.currentAudioPath,
+          segments,
+          recordingId: this.currentRecordingId || null,
+        })
+        if (r.success) {
+          this._diarizeJobId = r.jobId
+          this.statusText = `👥 已提交標註 job（${r.jobId.slice(-12)}），稍候從 Jobs 面板查看進度`
         } else {
-          this.statusText = `❌ 說話者標註失敗: ${r.error || '未知錯誤'}`
+          this.statusText = `❌ 提交失敗: ${r.error || '未知錯誤'}`
           this.statusError = true
+          this.voiceprintBusy = false
         }
       } catch (e) {
-        this.statusText = `❌ 說話者標註異常: ${e.message}`
+        this.statusText = `❌ 提交異常: ${e.message}`
         this.statusError = true
-      } finally {
         this.voiceprintBusy = false
-        this.voiceprintProgress = 0
       }
     },
 
@@ -1694,6 +1748,7 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .segment:hover[title] { background: #f5f5f5; border-radius: 4px; }
 .play-indicator { margin-left: 6px; font-size: 11px; color: #1565C0; }
 .playing-badge { margin-left: 8px; font-size: 11px; color: #e53935; font-weight: bold; animation: blink 1s infinite; }
+.speaker-tag { display: inline-block; background: #FF5722; color: white; padding: 1px 6px; border-radius: 8px; font-size: 10px; font-weight: bold; margin-right: 4px; }
 
 /* Label 相關樣式 */
 .label-filter-bar { display: flex; align-items: center; gap: 6px; padding: 4px 0; }

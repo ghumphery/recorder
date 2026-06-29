@@ -301,3 +301,28 @@
   - `frontend/src/App.vue`: `initTranscribeEventListener()` のコールバックを `(data) => { this._onTranscribeEvent(data) }` に修正
   - `frontend/package.json`: バージョン番号を 1.20.1 に更新
 - **バックアップファイル名**: backup-202606292204.zip
+
+## [2026-06-29 23:55] v1.20.2 — 「履歴 Review」後の無音ファイル誤判定修正 + Voiceprint モデル完全性検査 + Voiceprint 非同期 Job 化
+- **version**: 1.20.1 → 1.20.2（patch：バグ修正＋アーキテクチャ最適化）
+- **修正要求**:
+  1. 履歴 → Review 從入後、「話者識別」をクリックすると「❌ 無音ファイル」エラーが出る（実際は音ファイルあり）
+  2. Voiceprint モデルファイルが不完全な場合、「話者識別」が「モデルを読み込めません」でスタックする
+  3. 一貫性と UI 可視性のため、「話者識別」を非同期 Job に変換し、Jobs パネルとバッジカウントに表示
+- **根本原因**:
+  1. `App.vue doDiarize()` が `this.currentAudioPath` を直接参照しているが、Review フローでは `null` のままのため誤判定
+  2. `voiceprint.js isModelCached()` はファイルの存在のみチェックし、完全性を検証していない（ダウンロード中断で 0 バイトファイルが残る）
+  3. `voiceprintDiarize` IPC が同期呼び出しのため、UI は Jobs パネルで進捗を表示できず、ユーザーは待つしかない
+- **修正と增强**:
+  1. `doDiarize()` に `recoLoadMeta({ recordingId })` からの audioPath 補救処理を追加
+  2. `voiceprint.js isModelCached()` にファイルサイズ検査を追加（≥40MB → 有効）、`resetModel()` を追加
+  3. バックエンドに `VoiceprintJobManager` クラス（queue/active/history + persist + log + cancel/delete）と IPC `voiceprint:jobSubmit/Status/List/Cancel/Delete`、`voiceprint:reset` を追加
+  4. フロントエンド: `voiceprintJobList` データ、`currentJobList` 計算属性、`totalInFlightJobs/totalJobs` マルチタブ統計、Voiceprint tab UI、`onVoiceprintJobUpdate` 購読、`doDiarize` をバックグラウンド Job 送信に変更、完了時に speaker を `transcriptionResults` に書き戻し、文字起こしに `👤 Speaker_X` タグを表示
+- **三言語同期**: `zh-TW.js` / `en.js` / `ja.js` に `status.voiceprintDone`、`status.voiceprintFail`、`jobs.type.voiceprint`、`jobs.voiceprintTab` を追加
+- **修正結果**:
+  - `frontend/electron/main.js`: VoiceprintJobManager + 6 IPC ハンドラー
+  - `frontend/electron/preload.js`: 7 個の新規 bridge（voiceprintJobSubmit/Status/List/Cancel/Delete/Reset + onVoiceprintJobUpdate）
+  - `frontend/electron/voiceprint.js`: `isModelCached` にファイルサイズ検査、追加 `resetModel()`
+  - `frontend/src/App.vue`: `doDiarize` を Job モードに変更、initJobListener で `onVoiceprintJobUpdate` を購読、refreshJobList で `voiceprintJobList` をロード、stopJob/deleteJob/openJobLog に voiceprint 分岐を追加、文字起こしに speaker tag 表示
+  - `frontend/src/i18n/{zh-TW,en,ja}.js`: voiceprint 関連 i18n keys を追加
+  - `frontend/package.json`: バージョン番号を 1.20.2 に更新
+- **後続收尾**（同セッション）: 三言語 modify_record / readme / Product_Design_Guidelines 同期、`npm run electron:build` 再コンパイル + code sign + バックアップ作成 + git commit + push
