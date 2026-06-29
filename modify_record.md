@@ -1121,4 +1121,26 @@
   - `frontend/src/App.vue` — 加入「👥 標註說話者」按鈕（橙色 #FF5722）+ `doDiarize()` 方法（含模型下載檢查、進度監聽、結果寫入 segments[].speaker）
   - `frontend/package.json` — 版本號更新為 1.16.0，加入 `onnxruntime-node` 依賴
   - 編譯成功：`frontend/dist-electron-build2/Recorder-1.16.0-portable.exe`（188 MB，已 code sign）
-  - 備份檔名: backup-202606291139.zip
+   - 備份檔名: backup-202606291139.zip
+
+## [2026-06-29 12:30]
+- **version**: 1.17.0
+- **修改要求**：UI 重構 — 1) 首頁「混音」改為「混音錄音」；2) 將「麥克風錄音」和「混音錄音」改為「錄音模式」radio 二選一 + 單一「開始錄音」按鈕；3) 「匯入」改為「音檔匯入」；4) Whisper 模型選擇與下載管理移至系統設定介面；5) 首頁「匯出」移至錄音記錄管理介面；6) Whisper 模型預設值全域改為 small。
+- **修改規劃**：
+  1. 控制列改為 radio 單選群組（🎙️ 麥克風 / 🖥️ 混音錄音）+ 單一動態切換按鈕（⏺ 開始錄音 / ⏹️ 停止錄音）
+  2. 移除首頁的模型下拉選單、下載按鈕、匯出按鈕
+  3. 設定面板新增「Whisper 模型」區段（下拉選單 + 下載按鈕）+「已下載模型管理」列表（含刪除按鈕）
+  4. 錄音記錄工具列與搜尋結果新增「💾 匯出」按鈕
+  5. 新增 IPC `model:delete` 支援模型刪除
+  6. 三語言 i18n 同步更新（zh-TW/en/ja）
+  7. 版本遞增 1.16.0 → 1.17.0
+- **修改結果**：
+  - `frontend/src/App.vue` — 控制列重構（radio + 單一按鈕）、設定面板新增 Whisper 模型管理區段、移除首頁匯出/模型下拉/下載按鈕、錄音記錄工具列與搜尋結果新增匯出按鈕、`selectedModel` 預設值改為 `'small'`、新增 `deleteModel()`/`exportFromToolbar()`/`exportFromHistory()` 方法
+  - `frontend/electron/main.js` — 新增 `model:delete` IPC handler（含路徑安全檢查）、`models:list` 回傳欄位 `size_mb` 改為 `sizeMB`
+  - `frontend/electron/preload.js` — 暴露 `deleteModel` bridge 方法
+  - `frontend/src/i18n/zh-TW.js` — 新增 15 個 i18n keys（錄音模式、模型管理、匯出位置等）、修改 `control.mixRecord`/`control.import`/`control.mix`/`history.mix` 等值
+  - `frontend/src/i18n/en.js` — 同步新增 15 個 i18n keys
+  - `frontend/src/i18n/ja.js` — 同步新增 15 個 i18n keys
+  - `frontend/package.json` — 版本號更新為 1.17.0
+  - `Product_Design_Guidelines.md` — 更新至 v1.8.0，記錄 UI 重構變更
+  - 備份檔名: backup-202606291230.zip

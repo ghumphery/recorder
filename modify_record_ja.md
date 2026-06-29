@@ -180,3 +180,25 @@
   - `frontend/index.html` — ファビコン `<link>` タグを追加
   - `frontend/package.json` — バージョンを 1.15.0 に更新
 - バックアップ: backup-202606261702.zip
+
+## [2026-06-29 12:30]
+- **version**: 1.17.0
+- **要件**: UI リファクタリング — 1) ホームページの「ミックス」を「ミックス録音」に変更；2) 「マイク録音」と「ミックス録音」を「録音モード」ラジオグループ + 単一の開始/停止ボタンに変更；3) 「インポート」を「音声インポート」に変更；4) Whisper モデル選択とダウンロード管理を設定パネルに移動；5) 「エクスポート」をホームページから録音記録管理インターフェースに移動；6) Whisper モデルのデフォルトをグローバルに `small` に変更。
+- **計画**:
+  1. コントロールバー：ラジオグループ（🎙️ マイク / 🖥️ ミックス録音）+ 単一の動的ボタン（⏺ 録音開始 / ⏹️ 録音停止）
+  2. ホームページからモデルドロップダウン、ダウンロードボタン、エクスポートボタンを削除
+  3. 設定パネル：「Whisper モデル」セクション（ドロップダウン + ダウンロードボタン）+「ダウンロード済みモデル」リスト（削除ボタン付き）を追加
+  4. 録音記録ツールバーと検索結果に「💾 エクスポート」ボタンを追加
+  5. モデル削除用の IPC `model:delete` を追加
+  6. zh-TW/en/ja の i18n を同期更新
+  7. バージョン 1.16.0 → 1.17.0
+- **結果**:
+  - `frontend/src/App.vue` — コントロールバーをリファクタリング（ラジオ + 単一ボタン）、設定パネルに Whisper モデル管理セクションを追加、ホームページのエクスポート/モデルドロップダウン/ダウンロードボタンを削除、録音記録ツールバーと検索結果にエクスポートボタンを追加、`selectedModel` のデフォルトを `'small'` に変更、`deleteModel()`/`exportFromToolbar()`/`exportFromHistory()` メソッドを追加
+  - `frontend/electron/main.js` — `model:delete` IPC ハンドラを追加（パス安全チェック付き）、`models:list` のレスポンスフィールド `size_mb` を `sizeMB` に変更
+  - `frontend/electron/preload.js` — `deleteModel` ブリッジメソッドを公開
+  - `frontend/src/i18n/zh-TW.js` — 15 個の i18n キーを追加（録音モード、モデル管理、エクスポート位置など）、`control.mixRecord`/`control.import`/`control.mix`/`history.mix` の値を変更
+  - `frontend/src/i18n/en.js` — 15 個の新しい i18n キーを同期
+  - `frontend/src/i18n/ja.js` — 15 個の新しい i18n キーを同期
+  - `frontend/package.json` — バージョンを 1.17.0 に更新
+  - `Product_Design_Guidelines.md` — v1.8.0 に更新、UI リファクタリングの変更を記録
+  - バックアップ: backup-202606291230.zip

@@ -183,3 +183,25 @@
   - `frontend/index.html` — Added favicon `<link>` tag
   - `frontend/package.json` — Version updated to 1.15.0
 - Backup: backup-202606261702.zip
+
+## [2026-06-29 12:30]
+- **version**: 1.17.0
+- **Requirement**: UI refactoring — 1) Rename "Mix" to "Mix Recording" on homepage; 2) Change "Mic Recording" and "Mix Recording" to a "Recording Mode" radio group with a single start/stop button; 3) Rename "Import" to "Audio Import"; 4) Move Whisper model selection and download management to the Settings panel; 5) Move "Export" from homepage to the Recording History management interface; 6) Change Whisper model default to `small` globally.
+- **Plan**:
+  1. Control bar: radio group (🎙️ Mic / 🖥️ Mix Recording) + single dynamic button (⏺ Start Recording / ⏹️ Stop Recording)
+  2. Remove model dropdown, download button, and export button from homepage
+  3. Settings panel: add "Whisper Model" section (dropdown + download button) + "Downloaded Models" list (with delete button)
+  4. Recording History toolbar and search results: add "💾 Export" button
+  5. Add IPC `model:delete` for model deletion
+  6. Sync i18n updates across zh-TW/en/ja
+  7. Version 1.16.0 → 1.17.0
+- **Result**:
+  - `frontend/src/App.vue` — Control bar refactored (radio + single button), settings panel added Whisper model management section, removed homepage export/model dropdown/download buttons, added export buttons to recording history toolbar and search results, `selectedModel` default changed to `'small'`, added `deleteModel()`/`exportFromToolbar()`/`exportFromHistory()` methods
+  - `frontend/electron/main.js` — Added `model:delete` IPC handler (with path safety check), `models:list` response field `size_mb` changed to `sizeMB`
+  - `frontend/electron/preload.js` — Exposed `deleteModel` bridge method
+  - `frontend/src/i18n/zh-TW.js` — Added 15 i18n keys (recording mode, model management, export location, etc.), modified `control.mixRecord`/`control.import`/`control.mix`/`history.mix` values
+  - `frontend/src/i18n/en.js` — Synced 15 new i18n keys
+  - `frontend/src/i18n/ja.js` — Synced 15 new i18n keys
+  - `frontend/package.json` — Version updated to 1.17.0
+  - `Product_Design_Guidelines.md` — Updated to v1.8.0, documented UI refactoring changes
+  - Backup: backup-202606291230.zip

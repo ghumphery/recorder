@@ -1,7 +1,7 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.7.1
-> **最後更新日期**: 2026-06-27
+> **版本**: 1.8.0
+> **最後更新日期**: 2026-06-29
 
 ## 產品核心願景與哲學 (Product Vision & Philosophy)
 - **核心價值**：一句話 — 「離線、輕量、精準的 AI 會議記錄工具，讓每一場對話都有跡可循。」
@@ -21,9 +21,10 @@
 - **音訊處理**：ffmpeg.exe（音檔轉換為 16kHz mono WAV）
 - **模型下載**：Node.js `https` 模組直接下載 GGML 格式模型
 - **簡轉繁轉換**：opencc-js（辨識結果從簡體中文自動轉為繁體中文）
-- **錄音模式**：
+- **錄音模式**（v1.17.0 重構）：
+  - 控制列以 radio 單選群組切換「🎙️ 麥克風」/「🖥️ 混音錄音」，搭配單一「⏺ 開始錄音 / ⏹️ 停止錄音」按鈕
   - **麥克風錄音**：`navigator.mediaDevices.getUserMedia({ audio: true })` → MediaRecorder (WebM/Opus) → ffmpeg → whisper-cli
-  - **線上會議混音**：`getDisplayMedia({ audio: true })`（系統音效）+ `getUserMedia({ audio: true })`（麥克風）→ Web Audio API 混音 → MediaRecorder → ffmpeg → whisper-cli
+  - **混音錄音**：`getDisplayMedia({ audio: true })`（系統音效）+ `getUserMedia({ audio: true })`（麥克風）→ Web Audio API 混音 → MediaRecorder → ffmpeg → whisper-cli
 - **版本號管理**：
   - 版本號定義於 `frontend/package.json` 的 `version` 欄位
   - Electron 視窗標題動態讀取版本號：`Recorder v{version} — AI 會議記錄`（設定於 `frontend/electron/main.js` 的 `BrowserWindow title`）
@@ -289,15 +290,16 @@
 ### 8. 前端 Vue.js 元件 (`frontend/src/App.vue`)
 - **框架**：Vue 3 + Vite 6
 - **通訊方式**：透過 `window.electronAPI` (preload script 暴露的 contextBridge) 呼叫 Electron IPC
-- **主介面元素**：
-  - 🎙️ 麥克風錄音按鈕（紅色） — 僅錄製本機麥克風，透過 IPC `save:recorded` 送出
-  - 🖥️ 線上會議混音按鈕（橙色） — 錄製系統音效 + 麥克風混音
-  - 📂 匯入音檔按鈕 — 透過 IPC `dialog:openFile` → `import:audio` 進行 ffmpeg 轉換
-  - 模型選擇下拉選單 (tiny/base/small) — 資料來自 IPC `models:list`
+- **主介面元素**（v1.17.0 重構）：
+  - ⚙️ 設定按鈕 — 開啟/關閉設定面板（含 Whisper 模型管理、LLM 設定、GPU 設定）
+  - 錄音模式 radio 群組 — 🎙️ 麥克風 / 🖥️ 混音錄音（二選一）
+  - ⏺ 開始錄音 / ⏹️ 停止錄音按鈕（紅色/橙色，依模式動態切換）
+  - 📂 音檔匯入按鈕 — 透過 IPC `dialog:openFile` → `import:audio` 進行 ffmpeg 轉換
   - 🤖 開始辨識按鈕 — 透過 IPC `transcribe:start` 呼叫 whisper-cli
-  - 💾 匯出按鈕 — 透過 IPC `dialog:saveFile` → `export:save`
-  - 錄音計時器 — 顯示即時錄音時間與模式（麥克風/混音）
+  - 錄音計時器 — 顯示即時錄音時間與模式（麥克風/混音錄音）
   - 逐字稿顯示區 — 繁體中文，含時間戳和統計資訊
+  - **Whisper 模型管理**（移至設定面板）：下拉選單 (tiny/base/small，預設 small) + 下載按鈕 + 已下載模型列表（含刪除按鈕）
+  - **💾 匯出按鈕**（移至錄音記錄工具列與搜尋結果）：透過 IPC `dialog:saveFile` → `export:save`
 - **狀態管理**：使用 Vue `data()` 管理前端狀態：
   - `isRecording` / `recordingMode` — 錄音中狀態
   - `audioLoaded` — 已匯入音檔
@@ -305,12 +307,12 @@
   - `showProgress` — 進度條顯示
   - `transcriptionResults` — 辨識結果陣列
   - `statusText` — 狀態列訊息
-- **操作流程**：
-  1. 🎙️ 點擊「麥克風錄音」或 🖥️ 點擊「線上會議混音」→ 授權裝置 → 開始錄製
+- **操作流程**（v1.17.0 重構）：
+  1. 選擇錄音模式（radio 切換 🎙️ 麥克風 / 🖥️ 混音錄音）→ 點擊「⏺ 開始錄音」→ 授權裝置 → 開始錄製
   2. 錄音中按鈕變為「⏹️ 停止錄音」，點擊停止 → MediaRecorder 停止 → ffmpeg 轉換 → 設定音檔
-  3. 選擇辨識模型 → 🤖 點擊「開始辨識」→ 檢查模型快取 → 需要則下載 → 呼叫 whisper-cli → opencc 簡轉繁
+  3. 在設定面板選擇辨識模型（預設 small）→ 🤖 點擊「開始辨識」→ 檢查模型快取 → 需要則下載 → 呼叫 whisper-cli → opencc 簡轉繁
   4. 辨識完成後顯示繁體中文逐字稿
-  5. 💾 點擊「匯出」→ Electron 存檔對話框 → 寫入檔案
+  5. 切換至「📚 歷史記錄」→ 工具列點擊「💾 匯出」或搜尋結果點擊「💾 匯出此段」→ Electron 存檔對話框 → 寫入檔案
 
 ## UI/UX 與交互規範 (UI/UX & Interaction Principles)
 - **錯誤處理**：IPC 呼叫失敗時，前端顯示 `statusText` 狀態列訊息，不崩潰
@@ -324,5 +326,5 @@
 - **錄音授權**：首次點擊錄音時瀏覽器自動請求麥克風/畫面權限，拒絕時顯示明確錯誤訊息
 - **視窗標題**：格式為 `Recoder v{版本號} — AI 會議記錄`，動態讀取 `frontend/package.json` 的 `version` 欄位
 - **介面語言**：支援繁體中文 (zh-TW)、English (en)、日本語 (ja)，可在設定面板切換或首次啟動時選擇
-- **色彩**：麥克風錄音紅色 (#e53935)、混音錄音橙色 (#FF6F00)、匯入灰色 (#607D8B)、辨識藍色 (#2196F3)、匯出綠色 (#4CAF50)
+- **色彩**：麥克風錄音紅色 (#e53935)、混音錄音橙色 (#FF6F00)、匯入灰色 (#607D8B)、辨識藍色 (#2196F3)、匯出綠色 (#4CAF50)、設定灰色 (#78909C)
 - **Electron 視窗**：最小尺寸 720x500，預設 960x720

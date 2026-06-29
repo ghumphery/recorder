@@ -60,6 +60,25 @@
         <span class="reco-dir-path">{{ recoDir || $t('settings.workDirDefault') }}</span>
         <button class="btn btn-small" @click="selectRecoDir" style="background:#1565C0">{{ $t('settings.selectDir') }}</button>
       </div>
+      <!-- Whisper 模型管理 -->
+      <div class="setting-section-title">{{ $t('settings.whisperModel') }}</div>
+      <div class="setting-row">
+        <select v-model="selectedModel" class="model-select">
+          <option v-for="m in models" :key="m.name" :value="m.name">{{ m.name }} {{ m.cached ? $t('control.modelDownloaded') : $t('control.modelNotDownloaded') }}</option>
+        </select>
+        <button class="btn btn-small btn-download" @click="downloadModel" :disabled="busy || selectedModelCached" :title="selectedModelCached ? $t('control.downloadTitle') : $t('control.downloadTitleAlt')">
+          {{ selectedModelCached ? $t('control.downloadBtn') : $t('control.downloadBtnAlt') }}
+        </button>
+      </div>
+      <div class="setting-section-title">{{ $t('settings.modelManager') }}</div>
+      <div class="model-list">
+        <div v-for="m in models" :key="m.name" class="model-item">
+          <span class="model-name">ggml-{{ m.name }}.bin</span>
+          <span class="model-size" v-if="m.sizeMB">{{ $t('settings.modelSize', { size: m.sizeMB }) }}</span>
+          <span class="model-status">{{ m.cached ? '✅' : '⬇️' }}</span>
+          <button v-if="m.cached" class="btn btn-tiny" @click="deleteModel(m.name)" style="background:#e53935">{{ $t('settings.modelDelete') }}</button>
+        </div>
+      </div>
       <div class="setting-row" style="justify-content:flex-end;gap:6px">
         <button class="btn btn-small btn-save" @click="saveSettings">{{ $t('settings.save') }}</button>
         <button class="btn btn-small" @click="showSettings = false">{{ $t('settings.close') }}</button>
@@ -69,26 +88,24 @@
     <!-- 控制列 -->
     <div class="control-bar">
       <button class="btn btn-settings" @click="showSettings = !showSettings">⚙️</button>
-      <button v-if="isRecording && recordingMode === 'mic'" class="btn btn-record" @click="stopRecording">{{ $t('control.stopRecording') }}</button>
-      <button v-else class="btn btn-record" @click="toggleRecording('mic')" :disabled="busy || (isRecording && recordingMode !== 'mic')">{{ $t('control.micRecord') }}</button>
-      <button v-if="isRecording && recordingMode === 'mix'" class="btn btn-mix" @click="stopRecording">{{ $t('control.stopRecording') }}</button>
-      <button v-else class="btn btn-mix" @click="toggleRecording('mix')" :disabled="busy || (isRecording && recordingMode !== 'mix')">{{ $t('control.mixRecord') }}</button>
+      <span class="recording-mode-label">{{ $t('control.recordingMode') }}</span>
+      <label class="radio-label" :class="{ disabled: isRecording }">
+        <input type="radio" value="mic" v-model="recordingMode" :disabled="isRecording" />
+        {{ $t('control.micMode') }}
+      </label>
+      <label class="radio-label" :class="{ disabled: isRecording }">
+        <input type="radio" value="mix" v-model="recordingMode" :disabled="isRecording" />
+        {{ $t('control.mixMode') }}
+      </label>
+      <button v-if="isRecording" class="btn" :class="recordingMode === 'mix' ? 'btn-mix' : 'btn-record'" @click="stopRecording">{{ $t('control.stopRecording') }}</button>
+      <button v-else class="btn" :class="recordingMode === 'mix' ? 'btn-mix' : 'btn-record'" @click="startRecording(recordingMode)" :disabled="busy">{{ $t('control.startRecord') }}</button>
       <span v-if="isRecording" class="recording-indicator">
         <span class="rec-dot"></span>
         {{ recordingMode === 'mix' ? $t('control.mix') : $t('control.mic') }} {{ recordingTime }}
         <span v-if="segmentMinutes > 0" class="seg-badge">{{ $t('control.segment', { num: currentSegment, min: segmentMinutes }) }}</span>
       </span>
       <button class="btn btn-import" @click="importAudio" :disabled="busy || isRecording">{{ $t('control.import') }}</button>
-      <div class="model-select">
-        <select v-model="selectedModel" :disabled="busy || isRecording">
-          <option v-for="m in models" :key="m.name" :value="m.name">{{ m.name }} {{ m.cached ? $t('control.modelDownloaded') : $t('control.modelNotDownloaded') }}</option>
-        </select>
-      </div>
-      <button class="btn btn-download" @click="downloadModel" :disabled="busy || isRecording || selectedModelCached" :title="selectedModelCached ? $t('control.downloadTitle') : $t('control.downloadTitleAlt')">
-        {{ selectedModelCached ? $t('control.downloadBtn') : $t('control.downloadBtnAlt') }}
-      </button>
       <button class="btn btn-transcribe" @click="startTranscribe" :disabled="busy || !audioLoaded || isRecording">{{ $t('control.transcribe') }}</button>
-      <button class="btn btn-export" @click="exportResult" :disabled="busy || !hasResult">{{ $t('control.export') }}</button>
     </div>
 
     <!-- LLM 動作列 -->
@@ -247,6 +264,7 @@
                 <span v-for="l in r.labels" :key="l" class="label-tag label-tag-sm">{{ l }}</span>
               </span>
               <button class="btn btn-tiny btn-jump" @click="jumpToSearchResult(r)" :title="'📖 ' + r.filename">{{ $t('history.jumpTo') }}</button>
+              <button class="btn btn-tiny" @click="exportFromHistory(r)" style="background:#4CAF50">{{ $t('history.exportSearchItem') }}</button>
             </div>
           </div>
         </div>
@@ -294,6 +312,8 @@
             <button v-if="selectedRecordings.size > 0" class="btn btn-small btn-batch-delete" @click="batchDeleteSelected">{{ $t('history.batchDelete', { count: selectedRecordings.size }) }}</button>
             <button v-if="historyList.length > 0" class="btn btn-small" @click="selectAll" style="background:#888">{{ $t('history.selectAll') }}</button>
             <button v-if="selectedRecordings.size > 0" class="btn btn-small" @click="deselectAll" style="background:#888">{{ $t('history.deselectAll') }}</button>
+            <span class="sep"></span>
+            <button class="btn btn-small btn-export" @click="exportFromToolbar" :disabled="!hasResult" style="background:#4CAF50">{{ $t('history.exportFromToolbar') }}</button>
           </div>
 
           <!-- Folder 列表 -->
@@ -432,13 +452,13 @@ export default {
       showLangSelect: false,
       languages: LANGUAGES,
       uiLanguage: 'zh-TW',
-      models: [], selectedModel: 'tiny',
+      models: [], selectedModel: 'small',
       audioLoaded: false, hasResult: false, busy: false,
       showProgress: false, progressPercent: 0,
       statusText: '就緒', statusError: false,
       audioInfo: null, transcriptionResults: [], currentAudioPath: null,
       // 錄音
-      isRecording: false, recordingMode: null, recordingTime: '00:00',
+      isRecording: false, recordingMode: 'mic', recordingTime: '00:00',
       mediaRecorder: null, audioChunks: [], recordingTimer: null,
       recordingSeconds: 0, audioContext: null, recordingStream: null,
       segmentMinutes: 0, currentSegment: 0, segmentBlobs: [],
@@ -555,6 +575,15 @@ export default {
       } catch (e) { this.statusText = this.$t('status.downloadFail', { error: e.message }); this.statusError = true }
       finally { this.busy = false; setTimeout(() => { if (!this.busy) this.showProgress = false }, 2000) }
     },
+    async deleteModel(name) {
+      if (!window.electronAPI) return
+      if (!confirm(this.$t('settings.modelDeleteConfirm', { name }))) return
+      try {
+        const r = await window.electronAPI.deleteModel(name)
+        if (r.success) { this.statusText = this.$t('settings.modelDeleted'); await this.fetchModels() }
+        else { this.statusText = this.$t('settings.modelDeleteFail', { error: r.error }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('settings.modelDeleteFail', { error: e.message }); this.statusError = true }
+    },
     async fetchLlmProviders() {
       try {
         if (window.electronAPI) {
@@ -614,6 +643,7 @@ export default {
           this.llmRedo = { optimized: [], translated: [], summary: [] }
           this.activeSource = 'original'; this.currentAudioPath = null; this.audioLoaded = false
           this.audioInfo = { filename: r.meta.filename || id }; this.activeTab = 'transcript'
+          this.currentRecordingId = id
           this.statusText = this.$t('status.loaded', { count: r.meta.segments.length })
         } else { this.statusText = this.$t('status.loadFail', { error: r.error || '無資料' }); this.statusError = true }
       } catch (e) { this.statusText = this.$t('status.loadError', { message: e.message }); this.statusError = true }
@@ -673,7 +703,6 @@ export default {
       if (this.audioContext) this.audioContext.close().catch(() => {})
       this.mediaRecorder = null; this.recordingStream = null; this.segmentBlobs = []
     },
-    async toggleRecording(mode) { if (this.isRecording) { this.stopRecording(); return }; await this.startRecording(mode) },
     async startRecording(mode) {
       try {
         this.audioChunks = []; this.recordingSeconds = 0; this.recordingTime = '00:00'
@@ -695,7 +724,7 @@ export default {
           finalStream = s; this.recordingStream = s; this._systemStream = null; this._micStream = null
         }
         this.startMediaRecorder(finalStream, mode)
-      } catch (e) { this.cleanupRecording(); this.isRecording = false; this.recordingMode = null; this.statusText = e.name === 'NotAllowedError' ? this.$t('status.denied') : `❌ ${e.message}`; this.statusError = true }
+      } catch (e) { this.cleanupRecording(); this.isRecording = false; this.statusText = e.name === 'NotAllowedError' ? this.$t('status.denied') : `❌ ${e.message}`; this.statusError = true }
     },
     startMediaRecorder(stream, mode) {
       if (this.recordingTimer) clearInterval(this.recordingTimer)
@@ -728,13 +757,13 @@ export default {
           if (this.segmentMinutes > 0) {
             if (blob.size > 0) { const segIdx = this._segmentCount; this._segmentCount++; this.currentSegment = this._segmentCount; await this.transcribeBlob(blob, this._segmentMimeType, segIdx) }
             this.statusText = this.$t('status.recordDoneSeg', { count: this.transcriptionResults.length }); this.currentAudioPath = null; this.audioLoaded = true
-            this.audioInfo = { filename: `${mode === 'mix' ? '混音' : '麥克風'}錄音（分段）` }
+            this.audioInfo = { filename: `${mode === 'mix' ? '混音錄音' : '麥克風'}錄音（分段）` }
           } else {
             if (blob.size > 0 && window.electronAPI) {
               const buf = Array.from(new Uint8Array(await blob.arrayBuffer()))
-              const label = mode === 'mix' ? '混音' : '麥克風'
+              const label = mode === 'mix' ? '混音錄音' : '麥克風'
               const result = await window.electronAPI.saveRecorded({ buffer: buf, ext: 'webm' })
-              if (result.success) { this.currentAudioPath = result.path; this.audioLoaded = true; this.audioInfo = { filename: `${label}錄音.webm` }; this.hasResult = false; this.transcriptionResults = []; this.statusText = this.$t('status.recordDone', { label, time: this.recordingTime }); await this.startTranscribe() }
+              if (result.success) { this.currentAudioPath = result.path; this.audioLoaded = true; this.audioInfo = { filename: `${label}.webm` }; this.hasResult = false; this.transcriptionResults = []; this.statusText = this.$t('status.recordDone', { label, time: this.recordingTime }); await this.startTranscribe() }
               else { this.statusText = this.$t('status.recordFail', { error: result.error }); this.statusError = true }
             }
           }
@@ -768,7 +797,7 @@ export default {
     },
     stopRecording() {
       if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') { this._segmentStop = false; this.mediaRecorder.stop() }
-      else { this.cleanupRecording(); this.isRecording = false; this.recordingMode = null }
+      else { this.cleanupRecording(); this.isRecording = false }
     },
 
     // ── 匯入 ──
@@ -837,11 +866,11 @@ export default {
       const id = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}_${this.recordingMode || 'import'}`
       const duration = segments.length > 0 ? segments[segments.length-1].end : 0
       const audioPath = this.currentAudioPath || ''
-      // 深度克隆避免 Vue reactive Proxy 無法被 IPC 結構化克隆
       const clonedSegments = JSON.parse(JSON.stringify(segments))
       const clonedLlmResults = JSON.parse(JSON.stringify(llmResults || this.llmResults))
       const clonedDocuments = JSON.parse(JSON.stringify(this.documents))
       await window.electronAPI.recoSaveMeta({ recordingId: id, filename: `${id}.webm`, recordingMode: this.recordingMode || 'import', recordedAt: now.toISOString(), duration, modelSize: this.selectedModel, segments: clonedSegments, llmResults: clonedLlmResults, audioPath, documents: clonedDocuments })
+      this.currentRecordingId = id
     },
 
     // ── LLM ──
@@ -853,7 +882,6 @@ export default {
     async doOptimize() {
       if (!window.electronAPI) return; this.pushHistory('optimized'); this.llmBusy = true; this.statusText = this.$t('status.optimizing')
       try {
-        // 使用 Job Manager 進行逐句優化（保留時間戳）
         const apiKey = this.apiKeys[this.llmProvider] || ''
         const r = await window.electronAPI.llmJobSubmit({
           type: 'optimize',
@@ -861,13 +889,12 @@ export default {
         })
         if (r.success) {
           this.activeJobId = r.jobId
-          // 輪詢等待 job 完成
           this._pollJobResult(r.jobId, 'optimized')
         } else { this.statusText = this.$t('status.llmFail', { label: '✨ 優化', error: r.error }); this.statusError = true; this.llmBusy = false }
       } catch (e) { this.statusText = this.$t('status.llmError', { label: '✨ 優化', message: e.message }); this.statusError = true; this.llmBusy = false }
     },
     async _pollJobResult(jobId, type) {
-      const maxAttempts = 600 // 最多等 5 分鐘
+      const maxAttempts = 600
       for (let i = 0; i < maxAttempts; i++) {
         await new Promise(r => setTimeout(r, 500))
         try {
@@ -876,9 +903,7 @@ export default {
           const job = status.job
           if (job.status === 'completed') {
             if (type === 'optimized') {
-              // 逐句優化結果：job.result 是含 optimizedText 的 segments 陣列
               if (Array.isArray(job.result) && job.result.length > 0) {
-                // 將優化後的文字組合成可讀格式
                 const lines = job.result.map((s, i) => {
                   const t = this.formatTime(s.start)
                   const e = this.formatTime(s.end)
@@ -895,7 +920,6 @@ export default {
               this.llmResults.summary = job.result || ''
             }
             this.activeSource = type
-            // 將完成的 LLM 結果存入文件管理
             const typeToJobType = { optimized: 'optimize', translated: 'translate', summary: 'summary' }
             const jobType = typeToJobType[type] || type
             const source = type === 'translated' ? 'translated' : type
@@ -921,13 +945,11 @@ export default {
             this.statusText = this.$t('status.ready')
             return
           }
-          // 更新進度
           if (job.progress) {
             this.activeJobProgress = job.progress
           }
         } catch (e) {}
       }
-      // Timeout
       this.llmBusy = false
       this.activeJobId = null
       this.activeJobProgress = { batch: 0, totalBatches: 0, percent: 0 }
@@ -1014,7 +1036,6 @@ export default {
       if (this.showJobPanel) this.refreshJobList()
     },
     viewLlmDoc(doc) {
-      // 將文件內容設為 activeSource 對應的 llmResults
       const typeMap = { optimize: 'optimized', translate: 'translated', summary: 'summary' }
       const targetType = typeMap[doc.type] || doc.type
       this.llmResults[targetType] = doc.content
@@ -1053,7 +1074,6 @@ export default {
         this.statusError = true
         return
       }
-      // 檢查模型是否已下載
       try {
         const status = await window.electronAPI.voiceprintStatus()
         if (!status.cached) {
@@ -1061,7 +1081,6 @@ export default {
           this.voiceprintBusy = true
           this.voiceprintProgress = 0
           this.statusText = '正在下載聲紋模型...'
-          // 監聽下載進度
           if (window.electronAPI.onVoiceprintDownloadProgress) {
             window.electronAPI.onVoiceprintDownloadProgress((data) => {
               this.voiceprintProgress = data.percent
@@ -1081,13 +1100,11 @@ export default {
         return
       }
 
-      // 執行說話者標註
       this.voiceprintBusy = true
       this.voiceprintProgress = 0
       this.statusText = '正在進行說話者標註...'
       this.statusError = false
 
-      // 監聽進度
       if (window.electronAPI.onVoiceprintProgress) {
         window.electronAPI.onVoiceprintProgress((data) => {
           this.voiceprintProgress = data.percent
@@ -1098,14 +1115,12 @@ export default {
         const segments = this.transcriptionResults.map(s => ({ start: s.start, end: s.end, text: s.text }))
         const r = await window.electronAPI.voiceprintDiarize({ audioPath: this.currentAudioPath, segments })
         if (r.success && r.segments) {
-          // 更新 transcriptionResults 的 speaker 欄位
           for (let i = 0; i < r.segments.length; i++) {
             if (this.transcriptionResults[i]) {
               this.transcriptionResults[i].speaker = r.segments[i].speaker || ''
             }
           }
           this.statusText = `✅ 說話者標註完成：${r.segments.length} 句`
-          // 儲存 metadata
           await this.saveRecordingMeta(this.transcriptionResults)
         } else {
           this.statusText = `❌ 說話者標註失敗: ${r.error || '未知錯誤'}`
@@ -1134,6 +1149,20 @@ export default {
         if (r.success) this.statusText = this.$t('status.exported', { path: fp }); else { this.statusText = this.$t('status.exportFail', { error: r.error }); this.statusError = true }
       } catch (e) { this.statusText = this.$t('status.exportFail', { error: e.message }); this.statusError = true }
       finally { this.busy = false }
+    },
+    async exportFromToolbar() {
+      if (!this.hasResult) {
+        alert(this.$t('history.exportNeedReview'))
+        return
+      }
+      await this.exportResult()
+    },
+    async exportFromHistory(r) {
+      if (!window.electronAPI) return
+      await this.reviewRecording(r.recordingId)
+      try { const meta = await window.electronAPI.recoLoadMeta({ recordingId: r.recordingId }); if (meta.success && meta.meta && meta.meta.audioPath) { await this.loadAudioUrl(meta.meta.audioPath) } }
+      catch (e) { console.warn('載入音檔 URL 失敗:', e) }
+      await this.exportResult()
     },
 
     // ── 歷史記錄（樹狀目錄） ──
@@ -1192,7 +1221,6 @@ export default {
         else { this.statusText = this.$t('status.folderRenameFail', { error: r.error }); this.statusError = true }
       } catch (e) { this.statusText = this.$t('status.folderRenameFail', { error: e.message }); this.statusError = true }
     },
-    // 多選
     toggleSelectRecording(id) {
       const s = new Set(this.selectedRecordings)
       if (s.has(id)) s.delete(id); else s.add(id)
@@ -1200,7 +1228,6 @@ export default {
     },
     selectAll() { this.selectedRecordings = new Set(this.historyList.map(item => item.id)) },
     deselectAll() { this.selectedRecordings = new Set() },
-    // 批次移動
     async moveToFolder(target) { this.moveTargetFolder = target },
     async executeMove() {
       if (!window.electronAPI || this.selectedRecordings.size === 0) return
@@ -1211,7 +1238,6 @@ export default {
         else { this.statusText = this.$t('status.moveFail', { error: r.error }); this.statusError = true }
       } catch (e) { this.statusText = this.$t('status.moveFail', { error: e.message }); this.statusError = true }
     },
-    // 批次刪除
     async batchDeleteSelected() {
       if (!window.electronAPI || this.selectedRecordings.size === 0) return
       if (!confirm(this.$t('confirm.batchDelete', { count: this.selectedRecordings.size }))) return
@@ -1334,10 +1360,16 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .settings-bar { display: flex; flex-direction: column; gap: 6px; background: #f0f0f0; border-radius: 6px; padding: 8px 12px; }
 .setting-row { display: flex; align-items: center; gap: 8px; }
 .setting-row label { font-size: 12px; font-weight: bold; white-space: nowrap; }
+.setting-section-title { font-size: 12px; font-weight: bold; color: #555; margin-top: 4px; padding-top: 4px; border-top: 1px solid #ddd; }
 .api-key-input { width: 200px; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; }
 .model-input { width: 200px; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; }
 .setting-row select { padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; }
 .lang-select-small { padding: 4px 8px; border: 1px solid #1565C0; border-radius: 4px; font-size: 12px; background: white; font-weight: bold; color: #1565C0; }
+.model-list { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; }
+.model-item { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 2px 0; }
+.model-name { font-family: monospace; color: #333; min-width: 140px; }
+.model-size { color: #888; min-width: 60px; }
+.model-status { min-width: 24px; }
 
 .control-bar { display: flex; align-items: center; gap: 6px; background: #f5f5f5; border-radius: 6px; padding: 6px 10px; flex-wrap: wrap; }
 .btn { padding: 6px 14px; border: none; border-radius: 5px; font-size: 13px; font-weight: bold; cursor: pointer; color: white; transition: background .2s; white-space: nowrap; }
@@ -1369,6 +1401,12 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .btn-search:hover { background: #0D47A1; }
 .btn-ai { background: #6A1B9A; }
 .btn-ai:hover { background: #4A148C; }
+
+.recording-mode-label { font-size: 12px; font-weight: bold; color: #555; white-space: nowrap; }
+.radio-label { font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 4px; }
+.radio-label:hover { background: #e0e0e0; }
+.radio-label.disabled { opacity: 0.5; cursor: not-allowed; }
+.radio-label input[type="radio"] { accent-color: #1565C0; }
 
 .llm-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .llm-spinner { font-size: 12px; color: #9C27B0; font-weight: bold; }

@@ -847,7 +847,8 @@ ipcMain.handle('models:list', async () => {
   for (const name of ['tiny', 'base', 'small']) {
     const p = path.join(modelDir, `ggml-${name}.bin`)
     const cached = fs.existsSync(p) && fs.statSync(p).size > 0
-    models.push({ name, size_mb: name === 'tiny' ? 77 : (name === 'base' ? 148 : 488), cached })
+    const sizeMB = name === 'tiny' ? 77 : (name === 'base' ? 148 : 488)
+    models.push({ name, sizeMB, cached })
   }
   return { models }
 })
@@ -861,6 +862,18 @@ ipcMain.handle('model:download', async (event, modelSize) => {
     await downloadFile(`https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${modelSize}.bin`, dest, (percent) => {
       if (mainWindow) mainWindow.webContents.send('model:download-progress', { percent })
     })
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('model:delete', async (event, modelSize) => {
+  appLog('INFO', 'model', `刪除模型: ${modelSize}`)
+  try {
+    const modelDir = userDataPath('model')
+    const p = path.join(modelDir, `ggml-${modelSize}.bin`)
+    if (!fs.existsSync(p)) return { success: false, error: '模型檔案不存在' }
+    fs.unlinkSync(p)
+    appLog('INFO', 'model', `模型已刪除: ${modelSize}`)
     return { success: true }
   } catch (e) { return { success: false, error: e.message } }
 })

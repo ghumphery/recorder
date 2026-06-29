@@ -9,15 +9,16 @@
 
 Recorder is a fully **offline** AI meeting notes application:
 
-- 📂 **Import Audio** — Supports WAV / MP3 / Opus / OGG / FLAC / M4A (ffmpeg)
-- 🤖 **Speech-to-Text** — Uses whisper.cpp CLI (CPU / Vulkan GPU acceleration)
-- 🎙️ **Recording** — Microphone recording + Online meeting mix (system audio + mic)
+- 📂 **Audio Import** — Supports WAV / MP3 / Opus / OGG / FLAC / M4A (ffmpeg)
+- 🤖 **Speech-to-Text** — Uses whisper.cpp CLI (CPU / Vulkan GPU acceleration, default small model)
+- 🎙️ **Recording Mode** — Mic recording / Mix recording (system audio + mic) radio selection
 - ✨ **LLM Post-processing** — Text optimization, multi-language translation (Chinese/English/Japanese), summarization (Ollama local/cloud, OpenRouter, SiliconFlow, Gemini)
 - 🔑 **Independent API Keys** — Each AI provider stores its own API Key
 - 🎮 **GPU Control** — Enable/disable Vulkan GPU acceleration and select GPU device
 - ▶️ **Audio Playback** — Click transcript sentences to play corresponding audio segments
 - 🗑️ **Delete Management** — Delete specific recordings and audio files
-- 📄 **Export Transcript** — Plain text (.txt) or Markdown (.md) format
+- 📄 **Export Transcript** — Export from recording history interface, plain text (.txt) or Markdown (.md) format
+- 📦 **Model Management** — Manage Whisper models in settings panel (download/delete)
 - 🔒 **Zero Network Dependency** — Download model once, then fully offline (no Flask / port 5199 / Python)
 
 ## 🚀 Development Mode
@@ -39,14 +40,14 @@ npm run electron:dev
 
 ### Download Release
 
-Download the latest `Recorder-1.15.0-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
+Download the latest `Recorder-1.17.0-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
 
 ### Build from Source
 
 ```bash
 cd frontend
 npm run electron:build
-# Output: frontend/dist-electron-build2/Recorder-1.15.0-portable.exe
+# Output: frontend/dist-electron-build2/Recorder-1.17.0-portable.exe
 ```
 
 ### Run Packaged Version

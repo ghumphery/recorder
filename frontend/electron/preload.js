@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveRecorded: (p) => ipcRenderer.invoke('save:recorded', p),
   listModels: () => ipcRenderer.invoke('models:list'),
   downloadModel: (s) => ipcRenderer.invoke('model:download', s),
+  deleteModel: (s) => ipcRenderer.invoke('model:delete', s),
   transcribe: (p) => ipcRenderer.invoke('transcribe:start', p),
   transcribeSegment: (p) => ipcRenderer.invoke('transcribe:segment', p),
   exportSave: (p) => ipcRenderer.invoke('export:save', p),

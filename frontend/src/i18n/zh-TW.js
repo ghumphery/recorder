@@ -22,23 +22,35 @@ export default {
   'settings.save': '💾 儲存設定',
   'settings.close': '關閉',
   'settings.uiLanguage': '🌐 介面語言：',
+  'settings.whisperModel': 'Whisper 模型：',
+  'settings.downloadModel': '⬇️ 下載選定模型',
+  'settings.modelManager': '📦 已下載模型管理',
+  'settings.modelSize': '{size} MB',
+  'settings.modelDelete': '🗑️ 刪除',
+  'settings.modelDeleteConfirm': '確定刪除模型 {name}？下次使用需重新下載。',
+  'settings.modelDeleted': '✅ 模型已刪除',
+  'settings.modelDeleteFail': '❌ 刪除失敗: {error}',
 
   // 控制列
   'control.stopRecording': '⏹️ 停止錄音',
   'control.micRecord': '🎙️ 麥克風錄音',
-  'control.mixRecord': '🖥️ 混音',
-  'control.mix': '混音',
+  'control.mixRecord': '🖥️ 混音錄音',
+  'control.mix': '混音錄音',
   'control.mic': '麥克風',
   'control.segment': '分段{num}/{min}分',
-  'control.import': '📂 匯入',
+  'control.import': '📂 音檔匯入',
   'control.modelDownloaded': '✅',
   'control.modelNotDownloaded': '⬇️',
   'control.downloadBtn': '✅ 已下載',
   'control.downloadBtnAlt': '⬇️ 下載',
   'control.downloadTitle': '模型已下載',
   'control.downloadTitleAlt': '手動下載模型',
-  'control.transcribe': '🤖 辨識',
+  'control.transcribe': '🤖 開始辨識',
   'control.export': '💾 匯出',
+  'control.recordingMode': '錄音模式：',
+  'control.micMode': '🎙️ 麥克風',
+  'control.mixMode': '🖥️ 混音錄音',
+  'control.startRecord': '⏺ 開始錄音',
 
   // LLM 動作列
   'llm.source': '來源：',
@@ -71,6 +83,10 @@ export default {
   'llm.docSourceOptimized': '優化',
   'llm.docSourceSummary': '摘要',
 
+  // 聲紋說話者標註
+  'voiceprint.diarize': '👥 標註說話者',
+  'voiceprint.processing': '👥 處理中',
+
   // Tab
   'tab.transcript': '📝 逐字稿',
   'tab.history': '📚 歷史記錄',
@@ -79,7 +95,7 @@ export default {
   'transcript.header': '📝 原始逐字稿（{count} 句）',
   'transcript.playing': '▶️ 播放中',
   'transcript.stopPlayback': '⏹️ 停止播放',
-  'transcript.empty': '🎙️ 麥克風錄音 / 🖥️ 混音錄音 / 📂 匯入音檔 → 🤖 開始辨識',
+  'transcript.empty': '🎙️ 麥克風錄音 / 🖥️ 混音錄音 / 📂 音檔匯入 → 🤖 開始辨識',
   'transcript.clickToPlay': '點擊播放此句',
 
   // 歷史記錄
@@ -103,7 +119,7 @@ export default {
   'history.selectAll': '☑️ 全選',
   'history.deselectAll': '⬜ 取消全選',
   'history.recordings': '📚 錄音記錄（{count} 筆）',
-  'history.mix': '🖥️ 混音',
+  'history.mix': '🖥️ 混音錄音',
   'history.mic': '🎙️ 麥克風',
   'history.hasAudio': '🟢 有音檔',
   'history.noAudio': '🔴 無音檔',
@@ -117,6 +133,9 @@ export default {
   'history.transcribeAudio': '🤖 辨識',
   'history.audioEmpty': '尚無音檔',
   'history.jumpTo': '📖 跳轉',
+  'history.exportFromToolbar': '💾 匯出',
+  'history.exportSearchItem': '💾 匯出此段',
+  'history.exportNeedReview': '⚠️ 請先載入錄音記錄（按 📖 Review）',
 
   // Label 編輯
   'labelEditor.title': '🏷️ 編輯標籤 — {id}',
@@ -158,7 +177,7 @@ export default {
   'status.imported': '✅ {name}',
   'status.importFail': '❌ {error}',
   'status.recording': '🔴 {mode}錄音中...',
-  'status.recordingMix': '混音',
+  'status.recordingMix': '混音錄音',
   'status.recordingMic': '麥克風',
   'status.recordDone': '✅ {label}錄音完成 ({time})',
   'status.recordDoneSeg': '✅ 錄音完成，共 {count} 句',
@@ -221,6 +240,8 @@ export default {
   'status.llmDone': '✅ {label} 完成',
   'status.llmFail': '❌ {label} 失敗: {error}',
   'status.llmError': '❌ {label} 異常: {message}',
+  'status.llmDocDeleted': '✅ 文件已刪除',
+  'status.llmDocDeleteFail': '❌ 刪除失敗: {error}',
 
   // 確認對話框
   'confirm.deleteRecording': '確定要刪除錄音記錄「{name}」嗎？\n此操作無法復原。',

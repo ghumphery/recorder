@@ -9,15 +9,16 @@
 
 Recorder 是一款完全**離線**的 AI 會議記錄程式，支援：
 
-- 📂 **匯入音檔** — 支援 WAV / MP3 / Opus / OGG / FLAC / M4A 等格式 (ffmpeg)
-- 🤖 **語音轉文字** — 使用 whisper.cpp CLI（支援 CPU / Vulkan GPU 加速）
-- 🎙️ **錄音支援** — 麥克風錄音 + 線上會議混音（系統音效 + 麥克風）
+- 📂 **音檔匯入** — 支援 WAV / MP3 / Opus / OGG / FLAC / M4A 等格式 (ffmpeg)
+- 🤖 **語音轉文字** — 使用 whisper.cpp CLI（支援 CPU / Vulkan GPU 加速，預設 small 模型）
+- 🎙️ **錄音模式** — 麥克風錄音 / 混音錄音（系統音效 + 麥克風）二選一
 - ✨ **LLM 後處理** — 語句優化、多語言翻譯（中文/英文/日文）、重點整理（支援 Ollama 本地/雲端、OpenRouter、SiliconFlow、Gemini）
 - 🔑 **獨立 API Key** — 每個 AI provider 可各自儲存 API Key
 - 🎮 **GPU 控制** — 可選擇啟用/停用 Vulkan GPU 加速及指定 GPU 編號
 - ▶️ **音檔播放** — 逐字稿句子點擊播放對應時段，歷史記錄標示音檔存在狀態
 - 🗑️ **刪除管理** — 支援刪除特定錄音記錄與錄音檔
-- 📄 **匯出逐字稿** — 純文字 (.txt) 或 Markdown (.md) 格式
+- 📄 **匯出逐字稿** — 從錄音記錄管理介面匯出，支援純文字 (.txt) 或 Markdown (.md) 格式
+- 📦 **模型管理** — 在設定面板中管理 Whisper 模型（下載/刪除）
 - 🔒 **零網路依賴** — 模型下載一次後，完全離線執行（無需 Flask / port 5199 / Python）
 
 ## 🚀 開發模式執行
@@ -39,14 +40,14 @@ npm run electron:dev
 
 ### 下載打包版
 
-從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.15.0-portable.exe`，直接執行即可。
+從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.17.0-portable.exe`，直接執行即可。
 
 ### 自行打包
 
 ```bash
 cd frontend
 npm run electron:build
-# 產出：frontend/dist-electron-build2/Recorder-1.15.0-portable.exe
+# 產出：frontend/dist-electron-build2/Recorder-1.17.0-portable.exe
 ```
 
 ### 直接運行打包版

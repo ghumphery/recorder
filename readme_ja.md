@@ -10,14 +10,15 @@
 Recorder は完全**オフライン**の AI 会議記録ツールです：
 
 - 📂 **音声インポート** — WAV / MP3 / Opus / OGG / FLAC / M4A 対応 (ffmpeg)
-- 🤖 **音声認識** — whisper.cpp CLI（CPU / Vulkan GPU アクセラレーション対応）
-- 🎙️ **録音** — マイク録音 + オンライン会議ミックス（システム音声 + マイク）
+- 🤖 **音声認識** — whisper.cpp CLI（CPU / Vulkan GPU アクセラレーション対応、デフォルト small モデル）
+- 🎙️ **録音モード** — マイク録音 / ミックス録音（システム音声 + マイク）ラジオ選択
 - ✨ **LLM 後処理** — 文章最適化、多言語翻訳（中文/English/日本語）、要約（Ollama ローカル/クラウド、OpenRouter、SiliconFlow、Gemini）
 - 🔑 **独立 API Key** — AI プロバイダーごとに個別の API Key を保存
 - 🎮 **GPU 制御** — Vulkan GPU アクセラレーションの有効/無効、GPU デバイス選択
 - ▶️ **音声再生** — 文字起こしの文をクリックして対応する音声を再生
 - 🗑️ **削除管理** — 録音記録と音声ファイルの削除
-- 📄 **文字起こし出力** — プレーンテキスト (.txt) または Markdown (.md) 形式
+- 📄 **文字起こし出力** — 録音記録管理インターフェースからエクスポート、プレーンテキスト (.txt) または Markdown (.md) 形式
+- 📦 **モデル管理** — 設定パネルで Whisper モデルを管理（ダウンロード/削除）
 - 🔒 **ネットワーク不要** — モデルを一度ダウンロードすれば完全オフライン（Flask / port 5199 / Python 不要）
 
 ## 🚀 開発モード
@@ -39,14 +40,14 @@ npm run electron:dev
 
 ### リリース版のダウンロード
 
-[GitHub Releases](https://github.com/ghumphery/recorder/releases) から最新の `Recorder-1.15.0-portable.exe` をダウンロード。
+[GitHub Releases](https://github.com/ghumphery/recorder/releases) から最新の `Recorder-1.17.0-portable.exe` をダウンロード。
 
 ### ソースからビルド
 
 ```bash
 cd frontend
 npm run electron:build
-# 出力: frontend/dist-electron-build2/Recorder-1.15.0-portable.exe
+# 出力: frontend/dist-electron-build2/Recorder-1.17.0-portable.exe
 ```
 
 ### パッケージ版の実行
