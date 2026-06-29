@@ -785,10 +785,16 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
       const progressTimer = setInterval(() => {
         if (resolved) return
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(0)
+        // 若尚未有時間戳輸出，用已耗時 / 音檔總長度估算進度
+        let percent = lastProgressPercent
+        if (percent === 0 && totalDurationSec > 0) {
+          const elapsedSec = parseInt(elapsed)
+          percent = Math.min(Math.round((elapsedSec / totalDurationSec) * 100), 99)
+        }
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('transcribe:progress', {
             audioPath,
-            percent: lastProgressPercent,
+            percent,
             elapsed: `${elapsed}s`,
           })
         }
