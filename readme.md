@@ -96,6 +96,7 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 版本歷史
 
+- **v1.16.0** — 新增聲紋說話者標註功能：基於 ONNX Runtime + DirectML GPU 加速，使用 campplus-zh-en 模型（~50MB，支援中英日）對每個 segment 抽取 speaker embedding 並聚類分群，自動標註 Speaker_1、Speaker_2...
 - **v1.15.2** — 補完 LLM 文件管理功能：LLM 優化/翻譯/摘要完成後自動存入 documents 歷史陣列，支援檢視、刪除、持久化儲存；關閉 App 重新開啟後仍可檢視歷史 LLM 文件
 - **v1.15.1** — 製作個人自簽 code sign 憑證，對 portable.exe 進行數位簽署；更新設計指引與 workrule.md 加入 Code Sign 簽署規範
 - **v1.15.0** — 更換應用程式圖示：左上角視窗 icon 與主程式 .exe icon 更新為麥克風圖示；使用 PIL 產生多尺寸 .ico（16/24/32/48/64/96/128/256）與 256x256 PNG；`BrowserWindow` 加入 `icon` 屬性；`index.html` 加入 favicon

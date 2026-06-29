@@ -1097,3 +1097,28 @@
   - i18n 無需修改（zh-TW/en/ja 翻譯 key 已完整）
   - 功能驗證：LLM 優化/翻譯/摘要完成後自動新增文件記錄，關閉重開後仍可檢視
   - 備份檔名: backup-202606271348.zip
+
+## [2026-06-29 11:39]
+- **version**: 1.16.0
+- **修改要求**：新增聲紋說話者標註功能 — 基於 ONNX Runtime + DirectML GPU 加速，對每個 segment 抽取 speaker embedding 並聚類分群。
+- **修改規劃**：
+  1. 安裝 `onnxruntime-node` 套件（支援 DirectML GPU 加速）
+  2. 建立 `frontend/electron/voiceprint.js` 核心模組（模型下載、fbank 特徵抽取、ONNX 推理、cosine similarity 聚類）
+  3. `frontend/electron/main.js` 加入 `voiceprint` require + 3 個 IPC handler（status/download/diarize）
+  4. `frontend/electron/preload.js` 加入 5 個 bridge 方法（含進度監聽）
+  5. `frontend/src/App.vue` 加入「👥 標註說話者」按鈕 + `doDiarize()` 方法
+  6. 版本遞增 1.15.2 → 1.16.0
+  7. 更新文件、編譯、簽署、同步 GitHub
+- **修改結果**：
+  - `frontend/electron/voiceprint.js` — 新增聲紋核心模組（~350 行）：
+    - `campplus-zh-en.onnx` 模型下載（~50MB，200k 說話者訓練，支援中英日）
+    - 80-dim fbank 特徵抽取（純 JS 實作，無 Python 依賴）
+    - ONNX Runtime 推理（優先 DML GPU，fallback CPU）
+    - Cosine similarity + 貪婪聚類分群（threshold=0.6）
+    - ffmpeg 依 segment 時間區間切割音訊
+  - `frontend/electron/main.js` — 加入 `voiceprint` require + 3 個 IPC handler
+  - `frontend/electron/preload.js` — 加入 5 個 bridge 方法
+  - `frontend/src/App.vue` — 加入「👥 標註說話者」按鈕（橙色 #FF5722）+ `doDiarize()` 方法（含模型下載檢查、進度監聽、結果寫入 segments[].speaker）
+  - `frontend/package.json` — 版本號更新為 1.16.0，加入 `onnxruntime-node` 依賴
+  - 編譯成功：`frontend/dist-electron-build2/Recorder-1.16.0-portable.exe`（188 MB，已 code sign）
+  - 備份檔名: backup-202606291139.zip

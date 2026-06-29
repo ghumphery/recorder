@@ -239,6 +239,34 @@
   - 🗑️ 刪除按鈕（紅色，點擊後彈出 confirm 對話框）
   - 音檔列表每筆也有 🗑️ 刪除按鈕
 
+### 10. 聲紋說話者標註 (`frontend/electron/voiceprint.js` + `frontend/electron/main.js`)
+- **功能**：基於 ONNX Runtime 對每個 segment 抽取 speaker embedding，透過 cosine similarity 聚類分群，自動標註 Speaker_1、Speaker_2...
+- **模型**：`campplus-zh-en.onnx`（~50MB，200k 說話者訓練，支援中英日，Apache-2.0）
+- **推理引擎**：`onnxruntime-node`（優先 DirectML GPU，fallback CPU）
+- **特徵抽取**：80-dim fbank + CMVN（純 JS 實作，無 Python 依賴）
+- **分群演算法**：Cosine similarity + 貪婪聚類（threshold=0.6）
+- **音檔切割**：ffmpeg 依 segment 時間區間切割為獨立 WAV
+- **處理流程**：
+  ```
+  segments → ffmpeg 切割每個 segment 的 PCM
+          → 80-dim fbank 特徵抽取
+          → ONNX Runtime 抽取 192 維 embedding
+          → Cosine similarity 計算相鄰段落相似度
+          → 貪婪聚類分群
+          → 標註 Speaker_1, Speaker_2, ...
+          → 寫入 segments[].speaker
+  ```
+- **後端 IPC**：
+  - `voiceprint:status` — 檢查模型是否已下載
+  - `voiceprint:download` — 下載聲紋模型（含進度推送）
+  - `voiceprint:diarize` — 執行說話者標註（含進度推送）
+- **前端 UI**：
+  - LLM 動作列新增「👥 標註說話者」按鈕（橙色 #FF5722）
+  - 首次使用提示下載模型（~50MB）
+  - 處理中顯示進度百分比
+  - 完成後逐字稿每句顯示 Speaker 標籤
+- **GPU 加速**：`onnxruntime-node` 支援 DirectML EP（Windows），與現有 Vulkan GPU 加速機制一致
+
 ### 9. LLM 文件管理 (`frontend/src/App.vue` + `frontend/electron/main.js`)
 - **功能**：將 LLM 優化/翻譯/摘要結果自動存入 documents 歷史陣列，支援檢視、刪除、持久化儲存
 - **資料模型**：每筆 document 物件結構 `{ id, type, source, target?, content, createdAt }`
