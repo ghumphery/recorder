@@ -766,7 +766,7 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
       if (!fs.existsSync(whisperExe)) return resolve({ success: false, error: 'whisper-cli.exe 不存在' })
       if (!fs.existsSync(modelPath)) return resolve({ success: false, error: `模型 ${modelSize} 尚未下載` })
       const outputJson = path.join(os.tmpdir(), `recoder_result_${Date.now()}.json`)
-      const args = ['-m', modelPath, '-f', audioPath, '--output-json', '-oj', outputJson, '-l', 'auto', '-t', String(os.cpus().length)]
+      const args = ['-m', modelPath, '-f', audioPath, '--output-json', '-oj', outputJson, '-l', 'auto', '-t', String(os.cpus().length), '-bs', '1', '-bo', '1']
       if (useGpu === false) args.push('--no-gpu')
       else if (gpuDevice !== undefined && gpuDevice !== '') args.push('-dev', String(gpuDevice))
       const totalDurationSec = estimateAudioDuration(audioPath)

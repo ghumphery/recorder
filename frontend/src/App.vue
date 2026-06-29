@@ -39,11 +39,11 @@
       <div class="setting-row">
         <label>{{ $t('settings.segmentMinutes') }}</label>
         <select v-model="segmentMinutes">
-          <option :value="0">{{ $t('settings.noSegment') }}</option>
           <option :value="5">{{ $t('settings.min5') }}</option>
           <option :value="10">{{ $t('settings.min10') }}</option>
           <option :value="15">{{ $t('settings.min15') }}</option>
           <option :value="30">{{ $t('settings.min30') }}</option>
+          <option :value="60">{{ $t('settings.min60') }}</option>
         </select>
       </div>
       <div class="setting-row">
@@ -462,7 +462,7 @@ export default {
       isRecording: false, recordingMode: 'mic', recordingTime: '00:00',
       mediaRecorder: null, audioChunks: [], recordingTimer: null,
       recordingSeconds: 0, audioContext: null, recordingStream: null,
-      segmentMinutes: 0, currentSegment: 0, segmentBlobs: [],
+      segmentMinutes: 30, currentSegment: 0, segmentBlobs: [],
       _segmentStop: false, _segmentCount: 0, _segmentMimeType: '', _segmentElapsed: 0,
       // LLM
       llmProviders: [], llmProvider: 'ollama', llmModel: '',

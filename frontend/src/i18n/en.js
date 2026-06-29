@@ -11,6 +11,7 @@ export default {
   'settings.min10': '10 min',
   'settings.min15': '15 min',
   'settings.min30': '30 min',
+  'settings.min60': '60 min',
   'settings.gpuAccel': 'GPU Accel:',
   'settings.gpuEnabled': 'Enabled (Vulkan)',
   'settings.gpuDisabled': 'Disabled (CPU)',
