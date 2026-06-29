@@ -71,7 +71,7 @@ function fetchWithRedirects(url, redirectsLeft = REDIRECT_LIMIT) {
     try {
       const lib = url.startsWith('https:') ? https : http
       req = lib.get(url, { headers: { 'User-Agent': USER_AGENT } }, (response) => {
-        // 重新導向
+        // 重新導向（Header Location）
         if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
           response.resume() // 重要：消耗 body 以釋放 socket
           if (redirectsLeft <= 0) {
@@ -82,6 +82,28 @@ function fetchWithRedirects(url, redirectsLeft = REDIRECT_LIMIT) {
         }
         if (response.statusCode < 200 || response.statusCode >= 300) {
           return safeReject(new Error(`HTTP ${response.statusCode} ${response.statusMessage} (${url})`))
+        }
+        // 領 HuggingFace LFS xet-bridge 偶爾會回 200 OK + Content-Type: text/plain
+        // 但 body 為 "Found. Redirecting to <URL>"。這種情況需要看 body 解析 URL 並重試。
+        const ct = response.headers['content-type'] || ''
+        if (/text\/(plain|html)/.test(ct)) {
+          let peekBuf = Buffer.alloc(0)
+          response.on('data', (chunk) => { peekBuf = Buffer.concat([peekBuf, chunk]) })
+          response.on('end', () => {
+            const text = peekBuf.toString('utf-8')
+            const m = text.match(/Found\.\s*Redirecting to\s*(\S+)/i)
+            if (m && redirectsLeft > 0) {
+              const next = m[1]
+              if (redirectsLeft <= 0) {
+                return safeReject(new Error(`重定向次數超過 ${REDIRECT_LIMIT}`))
+              }
+              return fetchWithRedirects(next, redirectsLeft - 1).then(safeResolve, safeReject)
+            }
+            // 非預期 text/plain：视为 HTML 頁面（可能是 HF 限流或查閱問題）
+            safeReject(new Error(`伺服器回傳非預期 HTML/text 內容 (前 100 chars: ${text.slice(0, 100)})`))
+          })
+          response.on('error', (err) => safeReject(err))
+          return
         }
         safeResolve(response)
       })
@@ -118,6 +140,8 @@ function downloadModel(progressCallback) {
     }
 
     fetchWithRedirects(MODEL_URL).then((response) => {
+      // 此處 response 已經跟隨「Found. Redirecting to ...」重定向 + 3xx header
+      // 一定是真實二進位內容 response（Content-Type 是 application/octet-stream）
       const cl = response.headers['content-length']
       totalBytes = cl ? parseInt(cl, 10) : 0
 
