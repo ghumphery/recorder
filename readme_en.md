@@ -40,14 +40,14 @@ npm run electron:dev
 
 ### Download Release
 
-Download the latest `Recorder-1.17.0-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
+Download the latest `Recorder-1.17.1-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
 
 ### Build from Source
 
 ```bash
 cd frontend
 npm run electron:build
-# Output: frontend/dist-electron-build2/Recorder-1.17.0-portable.exe
+# Output: frontend/dist-electron-build2/Recorder-1.17.1-portable.exe
 ```
 
 ### Run Packaged Version

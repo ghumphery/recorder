@@ -205,6 +205,7 @@
     <div v-if="showProgress" class="progress-container">
       <div class="progress-bar"><div class="progress-fill" :style="{ width: progressPercent + '%' }"></div></div>
       <div class="progress-text">{{ progressPercent }}%</div>
+      <button v-if="busy && _transcribingAudioPath" class="btn btn-small" @click="cancelTranscribe" style="background:#e53935;margin-left:8px">{{ $t('control.cancelTranscribe') }}</button>
     </div>
     <div v-if="audioInfo" class="audio-info">📄 {{ audioInfo.filename }}</div>
 
@@ -507,6 +508,7 @@ export default {
       activeJobProgress: { batch: 0, totalBatches: 0, percent: 0 },
       jobList: [],
       _jobUpdateListener: null,
+      _transcribingAudioPath: null,
     }
   },
   computed: {
@@ -824,6 +826,11 @@ export default {
     // ── 辨識 ──
     async startTranscribe() {
       if (!this.audioLoaded || !this.currentAudioPath) return
+      // 重複觸發防護
+      if (this.busy && this._transcribingAudioPath === this.currentAudioPath) {
+        this.statusText = this.$t('status.transcribingBusy'); this.statusError = true
+        return
+      }
       const model = this.models.find(m => m.name === this.selectedModel)
       if (model && !model.cached) {
         if (!window.electronAPI) return
@@ -833,6 +840,14 @@ export default {
         await this.fetchModels()
       }
       this.busy = true; this.showProgress = true; this.progressPercent = 0; this.statusText = this.$t('status.transcribing'); this.statusError = false
+      this._transcribingAudioPath = this.currentAudioPath
+      // 訂閱進度事件
+      const unsubProgress = window.electronAPI ? window.electronAPI.onTranscribeProgress((data) => {
+        if (data.audioPath === this._transcribingAudioPath) {
+          this.progressPercent = data.percent || 0
+          this.statusText = this.$t('status.transcribingPercent', { percent: data.percent || 0, elapsed: data.elapsed || '' })
+        }
+      }) : null
       try {
         if (!window.electronAPI) return
         const r = await window.electronAPI.transcribe({ audioPath: this.currentAudioPath, modelSize: this.selectedModel, useGpu: this.useGpu, gpuDevice: this.gpuDevice })
@@ -846,7 +861,20 @@ export default {
           await this.saveRecordingMeta(r.segments)
         } else { this.statusText = this.$t('status.transcribeFail', { error: r.error }); this.statusError = true; this.showProgress = false }
       } catch (e) { this.statusText = this.$t('status.transcribeFail', { error: e.message }); this.statusError = true; this.showProgress = false }
-      finally { this.busy = false }
+      finally {
+        this.busy = false
+        this._transcribingAudioPath = null
+        if (unsubProgress) unsubProgress()
+      }
+    },
+    async cancelTranscribe() {
+      if (!window.electronAPI || !this._transcribingAudioPath) return
+      this.statusText = this.$t('status.transcribingCancel'); this.statusError = false
+      try {
+        await window.electronAPI.transcribeCancel({ audioPath: this._transcribingAudioPath })
+        this.statusText = this.$t('status.transcribingCancelled'); this.showProgress = false; this.busy = false
+        this._transcribingAudioPath = null
+      } catch (e) { this.statusText = this.$t('status.transcribeFail', { error: e.message }); this.statusError = true }
     },
     _addDocument(type, content, source, target) {
       const doc = {

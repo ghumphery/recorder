@@ -1143,4 +1143,24 @@
   - `frontend/src/i18n/ja.js` — 同步新增 15 個 i18n keys
   - `frontend/package.json` — 版本號更新為 1.17.0
   - `Product_Design_Guidelines.md` — 更新至 v1.8.0，記錄 UI 重構變更
-  - 備份檔名: backup-202606291230.zip
+   - 備份檔名: backup-202606291230.zip
+
+## [2026-06-29 13:50]
+- **version**: 1.17.1
+- **修改要求**：修正語音辨識長時間執行時 UI 永久卡在「辨識中...」的問題。根因：whisper-cli.exe 處理大音檔時可能 hang（GPU loading=0 但程序不退出），且無進度回報、無取消機制、無超時保護，導致使用者只能重啟應用。
+- **修改規劃**：
+  1. 後端 `runWhisper()` 加入 stderr 進度解析與推送（每 5 秒）、卡住偵測（5 分鐘無輸出自動終止）、絕對超時保護（90 分鐘）
+  2. 後端新增 `activeWhisperProcs` Map 追蹤子進程，`transcribe:start` 加入同檔案 in-flight 防護，新增 `transcribe:cancel` IPC handler
+  3. 前端 `startTranscribe()` 訂閱 `transcribe:progress` 事件更新進度條與狀態文字，新增取消按鈕與 `cancelTranscribe()` 方法，加入重複觸發防護
+  4. preload 新增 `transcribeCancel`、`onTranscribeProgress` 介面
+  5. i18n 三語言新增 5 個狀態字串（進度百分比、忙碌提示、取消中、已取消）及 1 個控制按鈕字串
+  6. 版本遞增 1.17.0 → 1.17.1
+- **修改結果**：
+  - `frontend/electron/main.js` — `runWhisper()` 重構：加入 `activeWhisperProcs` Map、進度定時推送（`transcribe:progress`）、stderr 停滯偵測（30 秒檢查一次，5 分鐘無輸出自動 kill）、絕對超時（90 分鐘）、`transcribe:start` 同檔案 in-flight 防護、新增 `transcribe:cancel` IPC handler
+  - `frontend/electron/preload.js` — 新增 `transcribeCancel`、`onTranscribeProgress`（含 unsubscribe 回傳）
+  - `frontend/src/App.vue` — `startTranscribe()` 加入重複觸發防護、訂閱進度事件更新 `progressPercent` 與狀態文字、`cancelTranscribe()` 方法、進度條旁新增取消按鈕、data 新增 `_transcribingAudioPath`
+  - `frontend/src/i18n/zh-TW.js` — 新增 `control.cancelTranscribe`、`status.transcribingPercent`、`status.transcribingBusy`、`status.transcribingCancel`、`status.transcribingCancelled`
+  - `frontend/src/i18n/en.js` — 同步新增 6 個 i18n keys
+  - `frontend/src/i18n/ja.js` — 同步新增 6 個 i18n keys
+  - `frontend/package.json` — 版本號更新為 1.17.1
+  - 備份檔名: backup-202606291350.zip

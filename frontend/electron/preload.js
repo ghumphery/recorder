@@ -12,6 +12,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteModel: (s) => ipcRenderer.invoke('model:delete', s),
   transcribe: (p) => ipcRenderer.invoke('transcribe:start', p),
   transcribeSegment: (p) => ipcRenderer.invoke('transcribe:segment', p),
+  transcribeCancel: (p) => ipcRenderer.invoke('transcribe:cancel', p),
+  onTranscribeProgress: (callback) => {
+    const handler = (event, data) => callback(data)
+    ipcRenderer.on('transcribe:progress', handler)
+    return () => ipcRenderer.removeListener('transcribe:progress', handler)
+  },
   exportSave: (p) => ipcRenderer.invoke('export:save', p),
   getLlmProviders: () => ipcRenderer.invoke('llm:providers'),
   llmOptimize: (p) => ipcRenderer.invoke('llm:optimize', p),

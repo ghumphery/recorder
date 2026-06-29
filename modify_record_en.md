@@ -205,3 +205,21 @@
   - `frontend/package.json` — Version updated to 1.17.0
   - `Product_Design_Guidelines.md` — Updated to v1.8.0, documented UI refactoring changes
   - Backup: backup-202606291230.zip
+
+## [2026-06-29 13:50]
+- **version**: 1.17.1
+- **Requirement**: Fix UI permanently stuck at "Transcribing..." when whisper runs for a long time. Root cause: whisper-cli.exe may hang on large audio files (GPU loading=0 but process doesn't exit), with no progress feedback, no cancel mechanism, and no timeout protection.
+- **Plan**:
+  1. Backend `runWhisper()`: add stderr progress parsing & push (every 5s), stall detection (auto-kill after 5min no output), absolute timeout (90min)
+  2. Backend: add `activeWhisperProcs` Map for process tracking, `transcribe:start` in-flight protection, new `transcribe:cancel` IPC handler
+  3. Frontend `startTranscribe()`: subscribe to `transcribe:progress` events, add cancel button & `cancelTranscribe()` method, add duplicate trigger protection
+  4. preload: add `transcribeCancel`, `onTranscribeProgress` interfaces
+  5. i18n: add 5 status strings + 1 control button string across 3 languages
+  6. Version 1.17.0 → 1.17.1
+- **Result**:
+  - `frontend/electron/main.js` — `runWhisper()` refactored with progress push, stall detection, absolute timeout, in-flight protection, cancel IPC
+  - `frontend/electron/preload.js` — added `transcribeCancel`, `onTranscribeProgress`
+  - `frontend/src/App.vue` — progress subscription, cancel button, duplicate trigger protection, `_transcribingAudioPath` data field
+  - `frontend/src/i18n/zh-TW.js` / `en.js` / `ja.js` — 6 new i18n keys each
+  - `frontend/package.json` — version updated to 1.17.1
+- Backup: backup-202606291350.zip

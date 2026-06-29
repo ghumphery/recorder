@@ -40,14 +40,14 @@ npm run electron:dev
 
 ### 下載打包版
 
-從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.17.0-portable.exe`，直接執行即可。
+從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.17.1-portable.exe`，直接執行即可。
 
 ### 自行打包
 
 ```bash
 cd frontend
 npm run electron:build
-# 產出：frontend/dist-electron-build2/Recorder-1.17.0-portable.exe
+# 產出：frontend/dist-electron-build2/Recorder-1.17.1-portable.exe
 ```
 
 ### 直接運行打包版

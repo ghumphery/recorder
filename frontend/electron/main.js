@@ -723,6 +723,13 @@ ipcMain.handle('settings:save', (event, settings) => {
 
 // ── 語音辨識通用函式 ──
 
+// 追蹤正在執行的 whisper 子進程
+const activeWhisperProcs = new Map() // key: audioPath, value: { proc, startTime, lastStderrTime, timer }
+
+const WHISPER_MAX_DURATION_MS = 90 * 60 * 1000 // 絕對超時 90 分鐘
+const WHISPER_STALL_TIMEOUT_MS = 5 * 60 * 1000  // stderr 停滯 5 分鐘視為卡住
+const WHISPER_PROGRESS_INTERVAL_MS = 5000        // 每 5 秒推送進度
+
 function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
   return new Promise((resolve, reject) => {
     try {
@@ -738,9 +745,81 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
       const startTime = Date.now()
       const proc = spawn(whisperExe, args, { cwd: whisperDir, windowsHide: true })
       let stderr = ''
-      proc.stderr.on('data', d => stderr += d.toString())
+      let lastStderrTime = Date.now()
+      let lastProgressPercent = 0
+      let resolved = false
+
+      // 註冊到 active map
+      activeWhisperProcs.set(audioPath, { proc, startTime, lastStderrTime: lastStderrTime })
+
+      // 進度推送定時器
+      const progressTimer = setInterval(() => {
+        if (resolved) return
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(0)
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('transcribe:progress', {
+            audioPath,
+            percent: lastProgressPercent,
+            elapsed: `${elapsed}s`,
+          })
+        }
+      }, WHISPER_PROGRESS_INTERVAL_MS)
+
+      // 絕對超時保護
+      const maxTimer = setTimeout(() => {
+        if (resolved) return
+        appLog('WARN', 'whisper', `辨識超時 (${WHISPER_MAX_DURATION_MS / 60000} 分鐘): ${audioPath}`)
+        try { proc.kill('SIGTERM') } catch {}
+        resolved = true
+        clearInterval(progressTimer)
+        activeWhisperProcs.delete(audioPath)
+        resolve({ success: false, error: `辨識超時（超過 ${WHISPER_MAX_DURATION_MS / 60000} 分鐘），已自動終止` })
+      }, WHISPER_MAX_DURATION_MS)
+
+      // stderr 停滯偵測
+      const stallCheckTimer = setInterval(() => {
+        if (resolved) return
+        const now = Date.now()
+        if (now - lastStderrTime > WHISPER_STALL_TIMEOUT_MS) {
+          appLog('WARN', 'whisper', `辨識停滯 (${WHISPER_STALL_TIMEOUT_MS / 60000} 分鐘無輸出): ${audioPath}`)
+          try { proc.kill('SIGTERM') } catch {}
+          resolved = true
+          clearInterval(progressTimer)
+          clearInterval(stallCheckTimer)
+          clearTimeout(maxTimer)
+          activeWhisperProcs.delete(audioPath)
+          resolve({ success: false, error: `辨識無回應（${WHISPER_STALL_TIMEOUT_MS / 60000} 分鐘無輸出），已自動終止` })
+        }
+      }, 30000) // 每 30 秒檢查一次
+
+      proc.stderr.on('data', d => {
+        const chunk = d.toString()
+        stderr += chunk
+        lastStderrTime = Date.now()
+        // 嘗試從 stderr 解析進度（whisper-cli 輸出格式: [00:00:00.000 --> 00:00:05.000] text...）
+        const lines = chunk.split('\n')
+        for (const line of lines) {
+          const match = line.match(/\[(\d{2}):(\d{2}):(\d{2})\.\d{3}\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.\d{3}\]/)
+          if (match) {
+            const endH = parseInt(match[4]), endM = parseInt(match[5]), endS = parseInt(match[6])
+            const endSec = endH * 3600 + endM * 60 + endS
+            // 估算音檔總長度（從 stderr 最後一個時間戳推算）
+            // 使用簡單的啟發式：進度 = 目前處理到的秒數 / 預估總秒數
+            // 由於無法預知總長度，使用最後看到的時間戳作為進度參考
+            lastProgressPercent = Math.min(Math.round((endSec / Math.max(endSec, 1)) * 100), 99)
+          }
+        }
+      })
+
       proc.on('close', code => {
+        if (resolved) return
+        resolved = true
+        clearInterval(progressTimer)
+        clearInterval(stallCheckTimer)
+        clearTimeout(maxTimer)
+        activeWhisperProcs.delete(audioPath)
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+        appLog('INFO', 'whisper', `辨識完成: ${audioPath} (${elapsed}s, exit=${code})`)
         let jf = outputJson
         if (!fs.existsSync(jf)) { const alt = audioPath + '.json'; if (fs.existsSync(alt)) jf = alt }
         if (!fs.existsSync(jf)) { return resolve({ success: false, error: stderr.slice(-500) }) }
@@ -754,7 +833,15 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
           resolve({ success: true, segments })
         } catch (e) { resolve({ success: false, error: `JSON 解析失敗: ${e.message}` }) }
       })
-      proc.on('error', e => resolve({ success: false, error: e.message }))
+      proc.on('error', e => {
+        if (resolved) return
+        resolved = true
+        clearInterval(progressTimer)
+        clearInterval(stallCheckTimer)
+        clearTimeout(maxTimer)
+        activeWhisperProcs.delete(audioPath)
+        resolve({ success: false, error: e.message })
+      })
     } catch (e) { reject(e) }
   })
 }
@@ -944,6 +1031,11 @@ ipcMain.handle('llm:summary', async (event, { provider, apiKey, model, text }) =
 
 ipcMain.handle('transcribe:start', async (event, { audioPath, modelSize, useGpu, gpuDevice }) => {
   appLog('INFO', 'whisper', `辨識開始: ${audioPath} (model=${modelSize}, gpu=${useGpu}, device=${gpuDevice})`)
+  // 同檔案 in-flight 防護
+  if (activeWhisperProcs.has(audioPath)) {
+    appLog('WARN', 'whisper', `同檔案已在辨識中，拒絕重複請求: ${audioPath}`)
+    return { success: false, error: '此音檔已在辨識中，請稍候或取消現有辨識' }
+  }
   try {
     return await runWhisper(audioPath, modelSize, useGpu, gpuDevice)
   } catch (e) { return { success: false, error: e.message } }
@@ -955,6 +1047,19 @@ ipcMain.handle('transcribe:segment', async (event, { audioPath, modelSize, useGp
     const result = await runWhisper(audioPath, modelSize, useGpu, gpuDevice)
     if (result.success) { appLog('INFO', 'whisper', `分段辨識完成: ${result.segments.length} 句`) }
     return result
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── 取消辨識 ──
+ipcMain.handle('transcribe:cancel', async (event, { audioPath }) => {
+  appLog('INFO', 'whisper', `取消辨識: ${audioPath}`)
+  const entry = activeWhisperProcs.get(audioPath)
+  if (!entry) return { success: false, error: '找不到正在執行的辨識程序' }
+  try {
+    entry.proc.kill('SIGTERM')
+    activeWhisperProcs.delete(audioPath)
+    appLog('INFO', 'whisper', `辨識已取消: ${audioPath}`)
+    return { success: true }
   } catch (e) { return { success: false, error: e.message } }
 })
 

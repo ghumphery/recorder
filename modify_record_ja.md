@@ -202,3 +202,21 @@
   - `frontend/package.json` — バージョンを 1.17.0 に更新
   - `Product_Design_Guidelines.md` — v1.8.0 に更新、UI リファクタリングの変更を記録
   - バックアップ: backup-202606291230.zip
+
+## [2026-06-29 13:50]
+- **version**: 1.17.1
+- **要件**: 長時間の音声認識でUIが「文字起こし中...」のまま固まる問題を修正。根本原因: whisper-cli.exe が大きな音声ファイルでハングする可能性があり（GPU使用率=0だがプロセスが終了しない）、進捗報告・キャンセル機能・タイムアウト保護がない。
+- **計画**:
+  1. バックエンド `runWhisper()`: stderr進捗解析とプッシュ（5秒毎）、ストール検出（5分間出力なしで自動終了）、絶対タイムアウト（90分）
+  2. バックエンド: `activeWhisperProcs` Mapでプロセス追跡、`transcribe:start` の重複防止、`transcribe:cancel` IPCハンドラ追加
+  3. フロントエンド `startTranscribe()`: `transcribe:progress` イベント購読、キャンセルボタンと `cancelTranscribe()` メソッド追加、重複トリガー防止
+  4. preload: `transcribeCancel`、`onTranscribeProgress` インターフェース追加
+  5. i18n: 3言語で5つのステータス文字列と1つのコントロールボタン文字列を追加
+  6. バージョン 1.17.0 → 1.17.1
+- **結果**:
+  - `frontend/electron/main.js` — `runWhisper()` を進捗プッシュ、ストール検出、絶対タイムアウト、重複防止、キャンセルIPC付きでリファクタリング
+  - `frontend/electron/preload.js` — `transcribeCancel`、`onTranscribeProgress` を追加
+  - `frontend/src/App.vue` — 進捗購読、キャンセルボタン、重複トリガー防止、`_transcribingAudioPath` データフィールド追加
+  - `frontend/src/i18n/zh-TW.js` / `en.js` / `ja.js` — 各6つの新i18nキー
+  - `frontend/package.json` — バージョンを1.17.1に更新
+- バックアップ: backup-202606291350.zip

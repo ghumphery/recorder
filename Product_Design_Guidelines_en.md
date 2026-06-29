@@ -1,7 +1,7 @@
 # Product Design Guidelines
 
-> **Version**: 1.7.0
-> **Last Updated**: 2026-06-26
+> **Version**: 1.8.1
+> **Last Updated**: 2026-06-29
 
 ## Product Vision & Philosophy
 - **Core Value**: "An offline, lightweight, and accurate AI meeting notes tool — making every conversation traceable."
