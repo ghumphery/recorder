@@ -97,6 +97,27 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 版本歷史
 
+### v1.19.0 (2026-06-29) — WhisperJobManager 非同步機制
+
+**重大架構升級**：將語音轉文字從同步 IPC 改為背景非同步處理。
+
+- **WhisperJobManager 類別**（後端）：管理 `jobQueue` / `activeJob` / `jobHistory` 三段式狀態
+- **Fire-and-forget 模式**：`startTranscribe()` 立即回傳 `jobId`，UI 不再被 IPC 鎖住
+- **同檔案 in-flight 防護**：避免重複觸發同音檔辨識
+- **事件推送 (`transcribe:event`)**：running / completed / failed / cancelled 即時通知前端
+- **持久化至 `~/.recoder/jobs.json`**：最近 50 筆 jobs 紀錄
+- **App 關閉時 `cancelAll()`**：統一取消所有 in-flight jobs，避免殭屍進程
+- **多工支援**：可排隊多個音檔依序背景執行
+- **未阻塞 UI**：105 分鐘音檔轉譯期間可同時搜尋、檢視歷史、編輯其他錄音
+
+### v1.18.0 (2026-06-29) — 5 beams 修正 + 進度估算
+
+- **whisper-cli 改用 greedy 解碼（`-bs 1 -bo 1`）**：移除 beam search 預設值，CPU 模式加速 3~5 倍
+- **進度估算 fallback**：當 whisper 尚未輸出時間戳時，使用「已耗時/音檔總長度」估算進度（修正 v1.17.4 進度卡 0% 的 bug）
+- **錄音分段預設改為 30 分鐘**：移除「不分段」選項，新增「60 分鐘」選項
+- **設定面板優化**：分段選項調整為 5/10/15/30/60 分鐘
+- **i18n 三語言**：新增 `settings.min60` 翻譯 key
+
 - **v1.16.0** — 新增聲紋說話者標註功能：基於 ONNX Runtime + DirectML GPU 加速，使用 campplus-zh-en 模型（~50MB，支援中英日）對每個 segment 抽取 speaker embedding 並聚類分群，自動標註 Speaker_1、Speaker_2...
 - **v1.15.2** — 補完 LLM 文件管理功能：LLM 優化/翻譯/摘要完成後自動存入 documents 歷史陣列，支援檢視、刪除、持久化儲存；關閉 App 重新開啟後仍可檢視歷史 LLM 文件
 - **v1.15.1** — 製作個人自簽 code sign 憑證，對 portable.exe 進行數位簽署；更新設計指引與 workrule.md 加入 Code Sign 簽署規範

@@ -109,6 +109,13 @@
 
 ## 功能模組與業務邏輯 (Functional Modules & Business Logic)
 
+
+### 11. v1.19.0 新增 — WhisperJobManager 非同步轉譯（後端）
+`frontend/electron/main.js` 內的 `WhisperJobManager` 類別管理轉譯 job queue/active/history 三段式狀態；前端 `startTranscribe()` 改為 fire-and-forget，提交後立即回傳 `jobId`，背景執行；透過 `transcribe:event` 推送 `running / completed / failed / cancelled` 狀態；持久化至 `~/.recoder/jobs.json`（最近 50 筆）；App 關閉時 `cancelAll()` 統一取消 in-flight jobs。
+
+### 12. v1.18.0 修正 — whisper-cli greedy 解碼
+`runWhisper()` 的 args 加入 `-bs 1 -bo 1`，所有模式（CPU/GPU）都使用 greedy 解碼，CPU 模式加速 3~5 倍。進度推送 fallback：當 `lastProgressPercent === 0` 且音檔總長 > 0，改用「已耗時/音檔總長」估算進度。
+
 ### 1. 音檔轉換 (`electron/main.js` → ffmpeg)
 - **功能**：使用 ffmpeg.exe 將使用者匯入的各種音檔格式轉換為 16kHz mono WAV
 - **支援格式**：WAV、MP3、Opus、OGG、FLAC、M4A（ffmpeg 支援的所有格式）

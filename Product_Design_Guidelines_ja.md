@@ -108,6 +108,13 @@
 
 ## 機能モジュールとビジネスロジック (Functional Modules & Business Logic)
 
+
+### 11. v1.19.0 新規 — WhisperJobManager 非同期文字起こし（バックエンド）
+`frontend/electron/main.js` 内の `WhisperJobManager` クラスが jobQueue / activeJob / jobHistory の 3 段状態管理。フロントエンドの `startTranscribe()` は fire-and-forget になり、即座に `jobId` を返却してバックグラウンド実行。`transcribe:event` で running / completed / failed / cancelled を通知。`~/.recoder/jobs.json` に永続化（最新 50 件）。App 終了時に `cancelAll()` で in-flight ジョブを統一キャンセル。
+
+### 12. v1.18.0 修正 — whisper-cli greedy デコード
+`runWhisper()` の args に `-bs 1 -bo 1` を追加、全モード（CPU/GPU）で greedy デコードを使用し、CPU モードで 3~5 倍高速化。進捗プッシュフォールバック：`lastProgressPercent === 0` かつ音声総長 > 0 の場合、「経過時間 / 総時間」で進捗を推定。
+
 ### 1. 音声変換 (`electron/main.js` → ffmpeg)
 - **機能**: ffmpeg.exe を使用してユーザーがインポートした音声ファイルを 16kHz mono WAV に変換
 - **対応形式**: WAV、MP3、Opus、OGG、FLAC、M4A（ffmpeg がサポートするすべての形式）

@@ -254,3 +254,27 @@
   - `frontend/electron/main.js` — `estimateAudioDuration()`、`getStallTimeoutMs()`（CPU は null を返す）を追加；ストールチェックは動的タイムアウトを使用；進捗間隔を 10 秒に変更
   - `frontend/package.json` — バージョンを 1.17.3 に更新
   - バックアップ: backup-202606291508.zip
+
+## [2026-06-29 17:18]
+- **version**: 1.19.0
+- **要件**：ユーザーから「本バージョンに非同期文字起こし機構は実装されていますか」 → WhisperJobManager 非同期機構を実装し、UI フリーズを防止、複数音声ファイルのキュー処理をサポート。
+- **実装計画**：
+  1. `WhisperJobManager` クラス（バックエンド）を作成：`jobQueue` / `activeJob` / `jobHistory` 3 段状態管理
+  2. `addJob()` は即座に `jobId` を返却、バックグラウンドの `processNext()` で逐次実行
+  3. 同ファイル in-flight 防止 + App 終了時の `cancelAll()` 統一キャンセル
+  4. `~/.recoder/jobs.json` へ永続化（最新 50 件）
+  5. 7 個の新しい IPC ハンドラ（submit/status/list/cancel/clear/getResult/event）
+  6. フロントエンド `startTranscribe()` を fire-and-forget モードに変更、`onTranscribeEvent` を購読
+  7. フロントエンド `_onTranscribeEvent()` で running/completed/failed/cancelled 状態を処理
+  8. i18n 3 言語に `status.transcribingJob` を追加
+  9. バージョン 1.18.0 → 1.19.0
+- **実装結果**：
+  - `frontend/electron/main.js` — `WhisperJobManager` クラス（約 300 行）；7 個の IPC ハンドラ；GPU 自動フォールバック統合；`setMainWindow` / `cancelAll`
+  - `frontend/electron/preload.js` — 6 個の新しいブリッジメソッド（transcribeSubmit/GetStatus/GetResult/List/JobCancel/JobClear + onTranscribeEvent）
+  - `frontend/src/App.vue` — `startTranscribe()` を fire-and-forget に；新しい `_onTranscribeEvent`；新しい `initTranscribeEventListener`
+  - `frontend/src/i18n/zh-TW.js` — `status.transcribingJob` を追加
+  - `frontend/src/i18n/en.js` — `status.transcribingJob` を追加
+  - `frontend/package.json` — バージョン 1.19.0
+  - ビルド成功：`frontend/dist-electron-build2/Recorder-1.19.0-portable.exe`（188 MB、コード署名済み）
+  - git commit `65e2054` を GitHub origin master にプッシュ
+  - バックアップ：backup-202606291717.zip

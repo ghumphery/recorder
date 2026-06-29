@@ -97,6 +97,27 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 Version History
 
+### v1.19.0 (2026-06-29) — WhisperJobManager Async Mechanism
+
+**Major Architecture Upgrade**: Transformed voice-to-text from synchronous IPC to background async processing.
+
+- **WhisperJobManager class** (backend): manages `jobQueue` / `activeJob` / `jobHistory` three-state machine
+- **Fire-and-forget mode**: `startTranscribe()` returns `jobId` immediately, UI is no longer blocked by IPC
+- **Same-file in-flight protection**: prevents duplicate transcribe triggers on the same audio file
+- **Event push (`transcribe:event`)**: running / completed / failed / cancelled notifications to frontend
+- **Persistence to `~/.recoder/jobs.json`**: last 50 job records
+- **`cancelAll()` on App close**: unified cancellation of all in-flight jobs to avoid zombie processes
+- **Multi-task support**: queue multiple audio files for sequential background execution
+- **Non-blocking UI**: during 105-minute audio transcription, can simultaneously search, view history, edit other recordings
+
+### v1.18.0 (2026-06-29) — 5 Beams Fix + Progress Estimation
+
+- **whisper-cli greedy decoding (`-bs 1 -bo 1`)**: removed default beam search, 3-5x CPU speedup
+- **Progress estimation fallback**: when whisper hasn't output timestamps yet, use `elapsed/total_duration` to estimate progress (fixes v1.17.4 progress stuck at 0% bug)
+- **Recording segment default changed to 30 min**: removed "no segment" option, added "60 min" option
+- **Settings panel optimization**: segment options adjusted to 5/10/15/30/60 minutes
+- **i18n three languages**: added `settings.min60` translation key
+
 - **v1.15.0** — Replace application icons: top-left window icon and main .exe icon updated to microphone icon; multi-size .ico (16/24/32/48/64/96/128/256) and 256x256 PNG generated via PIL; `BrowserWindow` added `icon` property; `index.html` added favicon
 - **v1.14.3** — Add LLM document management panel: list/review/delete documents generated from original transcripts (optimize/translate/summary), distinguished by generation time; translation supports any document (original/optimized/summary); auto-refresh Job panel on open
 - **v1.14.2** — Fix LLM batch processing (optimize) "The user aborted a request" error caused by 30-second timeout: increased `callLLM()` AbortController timeout from 30s to 120s; added CSMA/CD-style exponential backoff retry (Slot Time=2s, max 16 retries), retry only on timeout, wait time = `Random(0, 2^k - 1) × Slot Time`

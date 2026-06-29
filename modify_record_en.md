@@ -257,3 +257,27 @@
   - `frontend/electron/main.js` — Added `estimateAudioDuration()`, `getStallTimeoutMs()` (CPU returns null); stall check uses dynamic timeout; progress interval changed to 10s
   - `frontend/package.json` — version updated to 1.17.3
   - Backup: backup-202606291508.zip
+
+## [2026-06-29 17:18]
+- **version**: 1.19.0
+- **Requirement**: User feedback "Does this version have async transcription?" — Confirmed implementing WhisperJobManager async mechanism to prevent UI from being stuck and support queueing multiple audio files.
+- **Implementation Plan**:
+  1. Create `WhisperJobManager` class (backend): manage `jobQueue` / `activeJob` / `jobHistory` three-state machine
+  2. `addJob()` returns `jobId` immediately, background `processNext()` runs serially
+  3. Same-file in-flight protection + `cancelAll()` on App close
+  4. Persist to `~/.recoder/jobs.json` (last 50 records)
+  5. 7 new IPC handlers (submit/status/list/cancel/clear/getResult/event)
+  6. Frontend `startTranscribe()` fire-and-forget mode, subscribe to `onTranscribeEvent`
+  7. Frontend `_onTranscribeEvent()` handles running/completed/failed/cancelled states
+  8. i18n three languages add `status.transcribingJob`
+  9. Version bump 1.18.0 → 1.19.0
+- **Results**:
+  - `frontend/electron/main.js` — `WhisperJobManager` class (~300 lines); 7 IPC handlers; GPU auto-fallback integration; `setMainWindow` / `cancelAll`
+  - `frontend/electron/preload.js` — 6 new bridge methods (transcribeSubmit/GetStatus/GetResult/List/JobCancel/JobClear + onTranscribeEvent)
+  - `frontend/src/App.vue` — `startTranscribe()` fire-and-forget; new `_onTranscribeEvent`; new `initTranscribeEventListener`
+  - `frontend/src/i18n/zh-TW.js` — add `status.transcribingJob`
+  - `frontend/src/i18n/en.js` — add `status.transcribingJob`
+  - `frontend/package.json` — version 1.19.0
+  - Build success: `frontend/dist-electron-build2/Recorder-1.19.0-portable.exe` (188 MB, code signed)
+  - git commit `65e2054` pushed to GitHub origin master
+  - Backup: backup-202606291717.zip

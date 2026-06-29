@@ -1229,3 +1229,26 @@
   - `frontend/src/i18n/en.js` — 新增 `settings.min60`
   - `frontend/package.json` — 版本號更新為 1.18.0
   - 備份檔名: backup-202606291632.zip
+## [2026-06-29 17:18]
+- **version**: 1.19.0
+- **修改要求**：使用者回饋「這版本有建立辨識非同步機制嗎」 — 確認要實作 WhisperJobManager 非同步機制，讓 UI 不再卡住、可排隊多個音檔
+- **修改規劃**：
+  1. 建立 `WhisperJobManager` 類別（後端）：管理 `jobQueue` / `activeJob` / `jobHistory` 三段式狀態
+  2. `addJob()` 立即回傳 `jobId`，背景 `processNext()` 串行執行
+  3. 同檔案 in-flight 防護 + App 關閉時 `cancelAll()` 統一取消
+  4. 持久化至 `~/.recoder/jobs.json`（最近 50 筆）
+  5. 新增 7 個 IPC handlers（submit/status/list/cancel/clear/getResult/event）
+  6. 前端 `startTranscribe()` 改為 fire-and-forget 模式，訂閱 `onTranscribeEvent` 事件
+  7. 前端 `_onTranscribeEvent()` 處理 running/completed/failed/cancelled 狀態
+  8. i18n 三語言新增 `status.transcribingJob`
+  9. 版本遞增 1.18.0 → 1.19.0
+- **修改結果**：
+  - `frontend/electron/main.js` — `WhisperJobManager` 類別（~300 行）；7 個 IPC handlers；GPU 自動 fallback 整合；`setMainWindow` / `cancelAll`
+  - `frontend/electron/preload.js` — 新增 6 個 bridge 方法（transcribeSubmit/GetStatus/GetResult/List/JobCancel/JobClear + onTranscribeEvent）
+  - `frontend/src/App.vue` — `startTranscribe()` 改為 fire-and-forget；新增 `_onTranscribeEvent` 處理事件；新增 `initTranscribeEventListener`
+  - `frontend/src/i18n/zh-TW.js` — 新增 `status.transcribingJob`
+  - `frontend/src/i18n/en.js` — 新增 `status.transcribingJob`
+  - `frontend/package.json` — 版本號更新為 1.19.0
+  - 編譯成功：`frontend/dist-electron-build2/Recorder-1.19.0-portable.exe`（188 MB，已 code sign）
+  - git commit `65e2054` 並 push 至 GitHub origin master
+  - 備份檔名: backup-202606291717.zip

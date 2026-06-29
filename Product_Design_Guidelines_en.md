@@ -108,6 +108,13 @@
 
 ## Functional Modules & Business Logic
 
+
+### 11. v1.19.0 new — WhisperJobManager async transcription (backend)
+The `WhisperJobManager` class in `frontend/electron/main.js` manages three-state machine: jobQueue / activeJob / jobHistory. Frontend `startTranscribe()` is now fire-and-forget, returns `jobId` immediately, and runs in background. Uses `transcribe:event` to push running / completed / failed / cancelled states. Persists to `~/.recoder/jobs.json` (last 50 records). On App close, `cancelAll()` cancels all in-flight jobs.
+
+### 12. v1.18.0 fix — whisper-cli greedy decoding
+`runWhisper()` args now include `-bs 1 -bo 1`, using greedy decoding for all modes (CPU/GPU), achieving 3-5x CPU speedup. Progress push fallback: when `lastProgressPercent === 0` and audio total duration > 0, fall back to "elapsed / total duration" estimation.
+
 ### 1. Audio Conversion (`electron/main.js` → ffmpeg)
 - **Function**: Uses ffmpeg.exe to convert user-imported audio files to 16kHz mono WAV
 - **Supported Formats**: WAV, MP3, Opus, OGG, FLAC, M4A (all ffmpeg-supported formats)
