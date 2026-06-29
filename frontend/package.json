@@ -63,6 +63,11 @@
     },
     "portable": {
       "artifactName": "Recorder-${version}-portable.exe"
-    }
+    },
+    "asarUnpack": [
+      "node_modules/onnxruntime-node/**/*",
+      "whisper_cli/**/*",
+      "ffmpeg/**/*"
+    ]
   }
 }

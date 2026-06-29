@@ -400,8 +400,19 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
   }
 
   // 載入模型
-  if (!await loadModel()) {
-    throw new Error('無法載入聲紋模型，請先下載模型')
+  try {
+    if (!await loadModel()) {
+      // 先檢查模型檔是否存在
+      const mp = modelPath()
+      if (!fs.existsSync(mp)) {
+        throw new Error(`聲紋模型檔不存在 (${mp})，請先在設定中下載模型`)
+      }
+      // 模型檔存在 → 表示是 onnxruntime-node 載入 native binary 失敗
+      const stat = fs.statSync(mp)
+      throw new Error(`聲紋模型檔已下載但 InferenceSession 建立失敗 (檔案大小: ${(stat.size / 1024 / 1024).toFixed(1)} MB)；請檢查 onnxruntime-node native binary 是否被 asar 打包、或是 CPU 不支援。建議到開發者控制台查看完整錯誤。`)
+    }
+  } catch (e) {
+    throw e
   }
 
   const total = segments.length
