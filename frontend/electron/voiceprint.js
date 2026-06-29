@@ -1,8 +1,17 @@
 const path = require('path')
 const fs = require('fs')
+const http = require('http')
 const https = require('https')
 const { spawn } = require('child_process')
 const os = require('os')
+
+// 處理 HTTPS 重定向上限（node 原生 https.get 不自動 follow）
+const REDIRECT_LIMIT = 5
+const REQUEST_TIMEOUT_MS = 120000 // 120 秒
+const USER_AGENT = 'Recorder/1.20.4 (Electron; onnxruntime-node)'
+// 模型最低合法大小（低位門檻為主要檢查）
+const MIN_VALID_MODEL_SIZE = 1 * 1024 * 1024 // 1 MB（見需求為安全檢查閾值，但未被增為 MIN_MODEL_SIZE）
+const REAL_MIN_MODEL_SIZE = 40 * 1024 * 1024 // 40 MB，預型檔約 50 MB
 
 let ort = null
 let session = null
@@ -52,22 +61,72 @@ function resetModel() {
   }
 }
 
+function fetchWithRedirects(url, redirectsLeft = REDIRECT_LIMIT) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const safeReject = (err) => { if (settled) return; settled = true; reject(err) }
+    const safeResolve = (val) => { if (settled) return; settled = true; resolve(val) }
+
+    let req
+    try {
+      const lib = url.startsWith('https:') ? https : http
+      req = lib.get(url, { headers: { 'User-Agent': USER_AGENT } }, (response) => {
+        // 重新導向
+        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+          response.resume() // 重要：消耗 body 以釋放 socket
+          if (redirectsLeft <= 0) {
+            return safeReject(new Error(`重定向次數超過 ${REDIRECT_LIMIT}`))
+          }
+          const next = new URL(response.headers.location, url).toString()
+          return fetchWithRedirects(next, redirectsLeft - 1).then(safeResolve, safeReject)
+        }
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          return safeReject(new Error(`HTTP ${response.statusCode} ${response.statusMessage} (${url})`))
+        }
+        safeResolve(response)
+      })
+    } catch (e) {
+      return safeReject(e)
+    }
+
+    req.on('error', (err) => safeReject(err))
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      try { req.destroy() } catch (_) {}
+      safeReject(new Error(`請求逾時 (${REQUEST_TIMEOUT_MS / 1000}s)`))
+    })
+  })
+}
+
 function downloadModel(progressCallback) {
   return new Promise((resolve, reject) => {
     ensureModelDir()
     const dest = modelPath()
     const temp = dest + '.downloading'
+    // 清掉可能殘留的 .downloading
+    try { fs.unlinkSync(temp) } catch (_) {}
 
     const file = fs.createWriteStream(temp)
     let receivedBytes = 0
     let totalBytes = 0
+    let settled = false
+    const cleanup = (err) => {
+      if (settled) return
+      settled = true
+      try { file.destroy() } catch (_) {}
+      try { fs.unlinkSync(temp) } catch (_) {}
+      reject(err)
+    }
 
-    https.get(MODEL_URL, (response) => {
-      totalBytes = parseInt(response.headers['content-length'] || '0', 10)
+    fetchWithRedirects(MODEL_URL).then((response) => {
+      const cl = response.headers['content-length']
+      totalBytes = cl ? parseInt(cl, 10) : 0
 
       response.on('data', (chunk) => {
         receivedBytes += chunk.length
-        file.write(chunk)
+        if (!file.write(chunk)) {
+          response.pause()
+          file.once('drain', () => response.resume())
+        }
         if (totalBytes > 0 && progressCallback) {
           progressCallback(Math.round((receivedBytes / totalBytes) * 100))
         }
@@ -75,21 +134,28 @@ function downloadModel(progressCallback) {
 
       response.on('end', () => {
         file.end()
-        fs.renameSync(temp, dest)
-        if (progressCallback) progressCallback(100)
-        resolve(true)
+        // 完整性檢查
+        if (receivedBytes < MIN_VALID_MODEL_SIZE) {
+          return cleanup(new Error(`下載不完整 (只收到 ${receivedBytes} bytes)；HuggingFace 是否連線失敗？請重試。`))
+        }
+        try {
+          // 若 server 有回 Content-Length 且不相符 → 視為不完整
+          if (totalBytes > 0 && receivedBytes !== totalBytes) {
+            return cleanup(new Error(`下載不完整 (收到 ${receivedBytes}/${totalBytes} bytes)；請重試。`))
+          }
+          fs.renameSync(temp, dest)
+          if (progressCallback) progressCallback(100)
+          if (settled) return
+          settled = true
+          resolve(true)
+        } catch (e) {
+          cleanup(e)
+        }
       })
 
-      response.on('error', (err) => {
-        file.close()
-        fs.unlinkSync(temp)
-        reject(err)
-      })
-    }).on('error', (err) => {
-      file.close()
-      try { fs.unlinkSync(temp) } catch (e) {}
-      reject(err)
-    })
+      response.on('error', (err) => cleanup(err))
+      file.on('error', (err) => cleanup(err))
+    }).catch((err) => cleanup(err))
   })
 }
 
@@ -402,13 +468,18 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
   // 載入模型
   try {
     if (!await loadModel()) {
-      // 先檢查模型檔是否存在
+      // 先檢查模型檔是否存在與完整性
       const mp = modelPath()
       if (!fs.existsSync(mp)) {
         throw new Error(`聲紋模型檔不存在 (${mp})，請先在設定中下載模型`)
       }
-      // 模型檔存在 → 表示是 onnxruntime-node 載入 native binary 失敗
       const stat = fs.statSync(mp)
+      // 小於最低有效大小的模型檔（例如下載中斷成 0 bytes）→ 自動重設並要求使用者重下載
+      if (stat.size < MIN_VALID_MODEL_SIZE) {
+        resetModel()
+        throw new Error(`聲紋模型檔不完整 (大小: ${(stat.size / 1024 / 1024).toFixed(2)} MB)，已自動重設。請重新下載模型。`)
+      }
+      // 模型檔存在 + 大小正常 → 表示是 onnxruntime-node 載入 native binary 失敗
       throw new Error(`聲紋模型檔已下載但 InferenceSession 建立失敗 (檔案大小: ${(stat.size / 1024 / 1024).toFixed(1)} MB)；請檢查 onnxruntime-node native binary 是否被 asar 打包、或是 CPU 不支援。建議到開發者控制台查看完整錯誤。`)
     }
   } catch (e) {
