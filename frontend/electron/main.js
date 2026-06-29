@@ -726,9 +726,36 @@ ipcMain.handle('settings:save', (event, settings) => {
 // 追蹤正在執行的 whisper 子進程
 const activeWhisperProcs = new Map() // key: audioPath, value: { proc, startTime, lastStderrTime, timer }
 
-const WHISPER_MAX_DURATION_MS = 90 * 60 * 1000 // 絕對超時 90 分鐘
-const WHISPER_STALL_TIMEOUT_MS = 5 * 60 * 1000  // stderr 停滯 5 分鐘視為卡住
-const WHISPER_PROGRESS_INTERVAL_MS = 5000        // 每 5 秒推送進度
+const WHISPER_MAX_DURATION_MS = 90 * 60 * 1000  // 絕對超時 90 分鐘（適用所有模式）
+const WHISPER_PROGRESS_INTERVAL_MS = 10000       // 每 10 秒推送進度（降低開銷）
+
+/**
+ * 根據 WAV 檔案大小估算音檔時長（秒）
+ * 16kHz mono s16pcm: 1 byte = 1 sample (2 bytes per sample), 32000 bytes/s
+ */
+function estimateAudioDuration(audioPath) {
+  try {
+    const stat = fs.statSync(audioPath)
+    if (stat.size < 44) return 0 // 太小的 WAV
+    // WAV 16kHz mono s16 = 32000 bytes/sec payload (exclude 44-byte header)
+    const payloadBytes = stat.size - 44
+    return Math.floor(payloadBytes / 32000)
+  } catch { return 0 }
+}
+
+/**
+ * 計算 GPU 停滯 timeout
+ * GPU 模式：min(audioDuration * 0.5, 30min)，最少 5 分鐘，最多 30 分鐘
+ * CPU 模式：回傳 null（不停滯 kill）
+ */
+function getStallTimeoutMs(audioPath, useGpu) {
+  if (useGpu === false) return null // CPU 模式：不停滯 kill，只靠絕對超時
+  const durationSec = estimateAudioDuration(audioPath)
+  const durationMin = durationSec / 60
+  // GPU：音檔時長的 50% 作為停滯上限，最少 5 分鐘，最多 30 分鐘
+  const stallMin = Math.max(5, Math.min(Math.round(durationMin * 0.5), 30))
+  return stallMin * 60 * 1000
+}
 
 function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
   return new Promise((resolve, reject) => {
@@ -779,11 +806,14 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
       }, WHISPER_MAX_DURATION_MS)
 
       // stderr 停滯偵測
+      const stallTimeoutMs = getStallTimeoutMs(audioPath, useGpu)
       const stallCheckTimer = setInterval(() => {
         if (resolved) return
+        if (stallTimeoutMs === null) return // CPU 模式：不停滯 kill
         const now = Date.now()
-        if (now - lastStderrTime > WHISPER_STALL_TIMEOUT_MS) {
-          appLog('WARN', 'whisper', `辨識停滯 (${WHISPER_STALL_TIMEOUT_MS / 60000} 分鐘無輸出): ${audioPath}`)
+        if (now - lastStderrTime > stallTimeoutMs) {
+          const stallMin = Math.round(stallTimeoutMs / 60000)
+          appLog('WARN', 'whisper', `GPU 辨識停滯 (${stallMin} 分鐘無輸出): ${audioPath}`)
           try { proc.kill('SIGTERM') } catch {}
           resolved = true
           clearInterval(progressTimer)
@@ -791,7 +821,7 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
           clearTimeout(maxTimer)
           activeWhisperProcs.delete(audioPath)
           const isGpuStall = useGpu !== false && !anySegmentOutput
-          resolve({ success: false, gpuStalled: isGpuStall, error: `辨識無回應（${WHISPER_STALL_TIMEOUT_MS / 60000} 分鐘無輸出），已自動終止` })
+          resolve({ success: false, gpuStalled: isGpuStall, error: `GPU 辨識無回應（${stallMin} 分鐘無輸出），已自動終止` })
         }
       }, 30000) // 每 30 秒檢查一次
 

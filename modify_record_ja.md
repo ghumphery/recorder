@@ -239,3 +239,18 @@
   - `frontend/package.json` — バージョンを1.17.2に更新
   - テスト：元の105分の会議音声→GPUは4回ともハング、CPUは正常に認識完了
   - バックアップ: backup-202606291448.zip
+
+## [2026-06-29 15:08]
+- **version**: 1.17.3
+- **要件**: ユーザーから v1.17.1/v1.17.2 の CPU モードも失敗するとの報告 — CPU (model=small) で 105 分の音声を処理する際、進捗テキストの出力開始まで 5 分以上かかり、ストール検出によりプロセスが強制終了されていた。ストール検出戦略の修正が必要。
+- **計画**:
+  1. WAV ペイロードサイズから音声長を計算する `estimateAudioDuration()` 関数を追加（16kHz s16pcm = 32000 bytes/sec）
+  2. `getStallTimeoutMs()` 関数を追加：
+     - CPU モード: `null` を返す（ストール Kill なし、90 分絶対タイムアウトのみ）
+     - GPU モード: 音声長に基づく動的タイムアウト、式 = `min(audioDuration × 0.5, 30分)`、最小 5 分
+  3. 進捗プッシュ間隔を 5 秒から 10 秒に変更（オーバーヘッド削減）
+  4. バージョン 1.17.2 → 1.17.3
+- **結果**:
+  - `frontend/electron/main.js` — `estimateAudioDuration()`、`getStallTimeoutMs()`（CPU は null を返す）を追加；ストールチェックは動的タイムアウトを使用；進捗間隔を 10 秒に変更
+  - `frontend/package.json` — バージョンを 1.17.3 に更新
+  - バックアップ: backup-202606291508.zip

@@ -1183,3 +1183,18 @@
   - `frontend/package.json` — 版本號更新為 1.17.2
   - 實測驗證：原始 105 分鐘會議錄音，GPU 模式下 4 次全部 hang，CPU 模式完整正常辨識
   - 備份檔名: backup-202606291448.zip
+
+## [2026-06-29 15:08]
+- **version**: 1.17.3
+- **修改要求**：使用者回饋 v1.17.1/v1.17.2 的 CPU 模式也失敗 — CPU (model=small) 處理 105 分鐘音檔超過 5 分鐘才開始輸出進度文字，被停滯偵測強制終止。需要修正停滯偵測策略。
+- **修改規劃**：
+  1. 加入 `estimateAudioDuration()` 函式，根據 WAV payload 大小與 16kHz s16pcm 碼率推算音檔時長
+  2. 加入 `getStallTimeoutMs()` 函式：
+     - CPU 模式：回傳 `null`（完全不停滯 kill，只靠 90 分鐘絕對超時保護）
+     - GPU 模式：根據音檔時長動態計算上限，公式 = `min(audioDuration × 0.5, 30min)`，下限 5 分鐘
+  3. 進度推送間隔從 5 秒改為 10 秒，降低開銷
+  4. 版本遞增 1.17.2 → 1.17.3
+- **修改結果**：
+  - `frontend/electron/main.js` — 加入 `estimateAudioDuration()`、`getStallTimeoutMs()`（CPU 回傳 null）；停滯檢查使用動態 timeout；改進度間隔為 10 秒
+  - `frontend/package.json` — 版本號更新為 1.17.3
+  - 備份檔名: backup-202606291508.zip

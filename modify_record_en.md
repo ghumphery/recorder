@@ -242,3 +242,18 @@
   - `frontend/package.json` — version updated to 1.17.2
   - Tested: original 105-minute meeting audio → GPU hangs all 4 times, CPU completes correctly
   - Backup: backup-202606291448.zip
+
+## [2026-06-29 15:08]
+- **version**: 1.17.3
+- **Requirement**: User feedback that v1.17.1/v1.17.2 CPU mode also fails — CPU (model=small) takes longer than 5 minutes to start outputting progress on a 105-minute audio, causing the stall detection to kill the process prematurely. Need to fix stall detection strategy.
+- **Plan**:
+  1. Add `estimateAudioDuration()` function to calculate audio length from WAV payload size (16kHz s16pcm = 32000 bytes/sec)
+  2. Add `getStallTimeoutMs()` function:
+     - CPU mode: returns `null` (no stall killing, only rely on 90-min absolute timeout)
+     - GPU mode: dynamic timeout based on audio duration, formula = `min(audioDuration × 0.5, 30min)`, min 5 min
+  3. Change progress push interval from 5s to 10s to reduce overhead
+  4. Version bump 1.17.2 → 1.17.3
+- **Result**:
+  - `frontend/electron/main.js` — Added `estimateAudioDuration()`, `getStallTimeoutMs()` (CPU returns null); stall check uses dynamic timeout; progress interval changed to 10s
+  - `frontend/package.json` — version updated to 1.17.3
+  - Backup: backup-202606291508.zip
