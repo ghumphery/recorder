@@ -1,3 +1,22 @@
+## [2026-06-30 13:50]
+- **version**: 1.20.11 → 1.20.12 (patch: log 補充)
+- **修改要求**: 使用者反映「在 辨識 的 job log 沒有看到 針對 音檔 長度的確認 和 過大檔的切割 log」。WhisperJobManager 在跑 _executeTranscribe 時雖然有 log，但全部集中在「切片後續動作」(已切成 N 個 chunks、切片 N/M 辨識中…)，把「為什麼這次要不要切片」的決策鏈（音檔時長檢查、是否超過門檻、走哪條路徑）全部省略了，造成 job log 看不到決策依據、看不到降級原因。
+- **修改規劃**:
+  - 僅動 `frontend/electron/main.js` 的 `WhisperJobManager._executeTranscribe(job)` (約第 1091–1125 行)，補上 4 條 `this._log(job, ...)`：
+    1. 行 1105：`音檔時長檢查: Xs (門檻 3600s，設定 chunkMinutes=Z)` — 在 `getAudioDuration()` 之後、永遠輸出
+    2. 行 1114：`決策: 不切片 (原因)` — 在 `if (!shouldChunk)` 區塊頂端，涵蓋 4 種原因：chunkMinutes≤0、時長≤0 (ffmpeg 解析失敗)、時長<門檻、其他不滿足條件
+    3. 行 1116：`進入直接辨識路徑 (runWhisper)` — 在 `_runSingleTranscribe` 之前
+    4. 行 1130：`已切換為直接辨識路徑 (runWhisper)` — 在 catch 區塊 `切片失敗，降級為直接辨識` 之後
+  - 不動前端 Vue 元件、audioChunker.js、設定檔、IPC、UI 文案
+  - 不新增 i18n 字串（log 是後端寫進 job.log，前端 logModalJob.modal 直接顯示）
+  - `frontend/package.json` version 1.20.11 → 1.20.12 (patch)
+- **修改結果**:
+  - 透過 `node --check` 確認 `frontend/electron/main.js` 語法 OK
+  - 透過 PowerShell `Select-String` 確認 4 條新 log 行號皆位於正確區段（1105 / 1114 / 1116 / 1130）
+  - 不切片分支現在能看到完整決策鏈；降級分支現在能看出「先切片失敗 → 改直接辨識」
+  - 既有切片成功路徑 log (長音檔 Xs >= Ys、已切成 N 個 chunks、切片 N/M 辨識中…) 行為不變
+- **驗證方式**: 重啟 App 對一個 ≤60 分鐘的音檔按「開始辨識」，打開該 job 的 log modal，應能看到 4 條新 log 依序出現；對 ≥60 分鐘的音檔則既有切片 log 與新增的音檔時長檢查 log 依序出現
+- **備份檔名**: 將於備份步驟產生
 
 ## [2026-06-30 13:41]
 - **version**: 不升（純文件補充，無程式碼變動）

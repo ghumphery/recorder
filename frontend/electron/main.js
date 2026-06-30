@@ -1101,8 +1101,19 @@ class WhisperJobManager {
     const totalDuration = await audioChunker.getAudioDuration(audioPath)
     const shouldChunk = chunkMinutes > 0 && totalDuration > 0 && totalDuration >= thresholdSec
 
+    // v1.20.x: 補上決策鏈 log（音檔時長檢查、為何切片/不切片）
+    this._log(job, `音檔時長檢查: ${Math.round(totalDuration)}s (門檻 ${thresholdSec}s，設定 chunkMinutes=${chunkMinutes})`)
+
     if (!shouldChunk) {
+      // 不切片的原因
+      let reason = ''
+      if (chunkMinutes <= 0) reason = '設定為不切片 (chunkMinutes=0)'
+      else if (totalDuration <= 0) reason = '無法取得音檔時長 (ffmpeg 解析失敗)'
+      else if (totalDuration < thresholdSec) reason = `音檔長度 ${Math.round(totalDuration)}s < 門檻 ${thresholdSec}s`
+      else reason = '不滿足切片條件'
+      this._log(job, `決策: 不切片 (${reason})`)
       // 原本路徑：直接 runWhisper
+      this._log(job, `進入直接辨識路徑 (runWhisper)`)
       return await this._runSingleTranscribe(job, audioPath, modelSize, useGpu, gpuDevice)
     }
 
@@ -1116,6 +1127,7 @@ class WhisperJobManager {
     } catch (e) {
       this._log(job, `切片失敗，降級為直接辨識: ${e.message}`)
       audioChunker.cleanupChunkDir(tmpDir)
+      this._log(job, `已切換為直接辨識路徑 (runWhisper)`)
       return await this._runSingleTranscribe(job, audioPath, modelSize, useGpu, gpuDevice)
     }
 

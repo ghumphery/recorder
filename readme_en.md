@@ -97,6 +97,16 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 Version History
 
+### v1.20.12 (2026-06-30) — Transcribe job log now shows duration check and chunk decision
+
+- **Issue**: The "Transcribe" job log did not show the audio-duration check nor the chunking decision. Users could only see post-chunk actions ("split into N chunks", "chunk N/M transcribing...") and had no visibility into which path the run took.
+- **Fix**: Added 4 decision-chain logs to `WhisperJobManager._executeTranscribe()`:
+  1. Always emitted: `音檔時長檢查: Xs (門檻 3600s，設定 chunkMinutes=Z)`
+  2. No-chunk branch: `決策: 不切片 (configured not to chunk / cannot probe duration / duration < threshold / other)`
+  3. `進入直接辨識路徑 (runWhisper)`
+  4. catch block: `已切換為直接辨識路徑 (runWhisper)`
+- **Impact**: The job log modal now shows the full decision chain ("duration check → chunk or not → which path"). Existing chunk-success-path logs are unchanged.
+
 ### v1.20.11 (2026-06-30) — Voiceprint Model Download Hotfix
 
 **Fixes the recurring "Download incomplete (received only 28283928 bytes)" error**:

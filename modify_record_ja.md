@@ -1,5 +1,25 @@
 
 
+## [2026-06-30 13:50]
+- **version**: 1.20.11 → 1.20.12 (patch: log 補完)
+- **要件**: ユーザーから「認識 (transcribe) の job log で 音ファイルの長さ確認 と 大きすぎるファイルの分割 log が見えない」との指摘あり。`WhisperJobManager._executeTranscribe` は log を出力しているものの、すべて「分割後の動作」（N 個の chunks に分割済み、chunk N/M を認識中…）に集中しており、「なぜ今回分割する／しないか」の意思決定チェーン（音ファイル長チェック、閾値超過判定、どちらの経路を辿るか）が完全に省略されている。これにより job log では判定根拠もフォールバック理由も確認できない。
+- **修正計画**:
+  - `frontend/electron/main.js` の `WhisperJobManager._executeTranscribe(job)`（行 1091〜1125）**のみ**を修正し、4 つの `this._log(job, ...)` を追加：
+    1. 行 1105：`音檔時長檢查: Xs (門檻 3600s，設定 chunkMinutes=Z)` — `getAudioDuration()` の直後、常に出力
+    2. 行 1114：`決策: 不切片 (reason)` — `if (!shouldChunk)` ブロックの冒頭、4 つの理由をカバー：`chunkMinutes ≤ 0`、duration `≤ 0`（ffmpeg 解析失敗）、duration `<` 閾値、その他の条件不一致
+    3. 行 1116：`進入直接辨識路徑 (runWhisper)` — `_runSingleTranscribe` の直前
+    4. 行 1130：`已切換為直接辨識路徑 (runWhisper)` — catch ブロックの `切片失敗，降級為直接辨識` の直後
+  - Vue フロントエンド、`audioChunker.js`、設定、IPC、UI 文字列には触らない
+  - 新しい i18n キーは追加しない（log はバックエンドが job.log に書き込み、log modal がそのまま表示）
+  - `frontend/package.json` バージョン 1.20.11 → 1.20.12 (patch)
+- **修正結果**:
+  - `node --check` で `frontend/electron/main.js` の構文 OK を確認
+  - PowerShell `Select-String` で 4 つの新規 log 行が正しいセクション（1105 / 1114 / 1116 / 1130）に配置されていることを確認
+  - 「分割しない」分岐で完全な意思決定チェーンが見えるようになった；フォールバック分岐でも「chunk 失敗 → 直接認識に切替」が明確に分かる
+  - 既存の分割成功パス log（長音檔 Xs >= Ys、已切成 N 個 chunks、切片 N/M 辨識中…）は不変
+- **検証手順**: App を再起動し、60 分以下の音ファイルで「認識開始」を押し、job log modal を開くと 4 つの新規行が順番に表示されるはず。60 分以上の音ファイルでは既存の分割 log と新規の音ファイル長チェック log が順番に表示されるはず。
+- **バックアップファイル名**: バックアップステップで生成
+
 ## [2026-06-30 13:41]
 - **version**: バージョンアップなし（ドキュメントのみ、コード変更なし）
 - **改修要求**: 「将来あらゆる種類の Job を追加する際」の統一設計契約を確立し、LLM / Whisper / Voiceprint 以外の新しい JobManager を追加する際にフィールド設計・IPC チャネル・UI 連携を毎回ゼロから作らずに済むようにする。あわせて既存の `Product_Design_Guidelines.md` の Jobs モジュール規約ギャップを補う。
