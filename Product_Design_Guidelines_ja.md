@@ -1,7 +1,17 @@
-﻿# 製品設計ガイドライン (Product Design Guidelines)
+# 製品設計ガイドライン (Product Design Guidelines)
 
-> **バージョン**: 1.8.2
-> **最終更新日**: 2026-06-29
+> **バージョン**: 1.20.7
+> **最終更新日**: 2026-06-30
+
+## v1.20.7 (2026-06-30) — 声紋ラベリング三項目修正
+- `downloadModel()` の冒頭で `isModelCached()` をチェックし、キャッシュ済みモデルの再ダウンロードをスキップ
+- `getAudioDuration()` は ffmpeg stderr をパースして音声長を取得
+- `splitLongAudio()` は ffmpeg `-f segment -segment_time 3000` を使用して長音ファイルを 50 分以下の WAV チャンクへ分割
+- `extractSegmentPcm()` は短すぎる (<1.5s) セグメントに ±0.5s のパディングを追加し、最小長を 0.3s に引き下げ
+- `extractEmbedding()` は `numFrames < 5` の閾値を `< 3` に緩和
+- `clusterEmbeddings()` を 2 段階アルゴリズムに書き換え：近傍スライディングウィンドウ中央値コサイン ≥ 0.55 で union-find マージ、その後グローバル重心コサイン ≥ 0.5 で貪欲マージ
+- `MIN_MODEL_SIZE = 40MB` に統一、重複するモデルサイズ定数を削除
+- diarizeAudio / splitLongAudio / extractSegmentPcm で共有する新たな `getFfmpegPath()` ヘルパーを追加
 
 ## 製品コアビジョンと哲学 (Product Vision & Philosophy)
 - **コアバリュー**: 「オフライン、軽量、高精度の AI 会議記録ツール — すべての会話を追跡可能に。」

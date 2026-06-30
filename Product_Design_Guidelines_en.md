@@ -1,7 +1,17 @@
-﻿# Product Design Guidelines
+# Product Design Guidelines
 
-> **Version**: 1.8.2
-> **Last Updated**: 2026-06-29
+> **Version**: 1.20.7
+> **Last Updated**: 2026-06-30
+
+## v1.20.7 (2026-06-30) — Voiceprint Tri-Fix
+- `downloadModel()` now checks `isModelCached()` first to skip re-downloading the cached model
+- `getAudioDuration()` parses ffmpeg stderr to read the audio length
+- `splitLongAudio()` uses ffmpeg `-f segment -segment_time 3000` to slice long audio into ≤ 50-min WAV chunks
+- `extractSegmentPcm()` pads short (<1.5s) segments with ±0.5s and lowers the floor to 0.3s
+- `extractEmbedding()` loosens the `numFrames < 5` limit to `< 3`
+- `clusterEmbeddings()` rewritten as a two-stage algorithm: neighbour sliding-window median cosine ≥ 0.55 union-find merge, then global centroid cosine ≥ 0.5 greedy merge
+- Unified `MIN_MODEL_SIZE = 40MB`; removed duplicate model-size constants
+- New shared `getFfmpegPath()` helper for diarizeAudio / splitLongAudio / extractSegmentPcm
 
 ## Product Vision & Philosophy
 - **Core Value**: "An offline, lightweight, and accurate AI meeting notes tool — making every conversation traceable."

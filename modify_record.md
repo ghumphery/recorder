@@ -1,5 +1,54 @@
 # 修改日誌 (Modify Record)
 
+## [2026-06-30 11:15]
+- **version**: 1.20.8
+- **修改要求**：
+  1. UI 的狀態列在播放指定的錄音記錄時應顯示對應的音檔名稱，而不是音檔列表的第一個音檔名稱
+  2. jobs 只顯示已完成的 job，應該從 job 開始執行就要存在，不然要如何執行 stop 等指令
+- **修改規劃**：
+  - `frontend/src/App.vue`：
+    1. `playRecordingAudio(item)` 開頭將 `currentPlayingFilename` 設為 `item.filename || item.id`，並在播放時將 `statusText` 改為 `▶️ 播放: ` / `▶️ 播放中: `，停止時也還原成對應檔名
+    2. `reviewRecording(id)` 一併更新 `currentPlayingFilename` 並用新的 i18n key `status.loadedWithName` 顯示 `✅ 已載入 {count} 句（{filename}）`，並移除檔案中重覆的舊版 `reviewRecording`
+    3. 樂觀更新 (optimistic UI) — 五個任務起點立即把 pending job 用 `unshift` 寫入對應 list：轉寫 `transcribeJobList`、聲紋 `voiceprintJobList`、摘要/翻譯/優化 `jobList`，讓使用者一按下按鈕就能看到該 job 並能 stop
+  - `frontend/src/i18n/{zh-TW,en,ja}.js`：新增 `status.loadedWithName` 三語鍵
+    - zh-TW：`'✅ 已載入 {count} 句（{filename}）'`
+    - en：`'✅ Loaded {count} sentences ({filename})'`
+    - ja：`'✅ {count} 文を読み込みました（{filename}）'`
+  - `frontend/package.json`：version 1.20.7 → 1.20.8 (Patch)
+- **修改結果**：
+  - `App.vue` 修改完成（playRecordingAudio、reviewRecording、五處樂觀更新）
+  - `i18n/{zh-TW,en,ja}.js` 同步新增 `status.loadedWithName`
+  - `package.json` version 升至 1.20.8
+  - 編譯產出：`frontend/dist-electron-build4/Recorder-1.20.8-portable.exe`（179.9 MB，2026-06-30 10:58:53）
+  - Code Sign 驗證通過：DigiCert RFC 3161 時間戳、Subject CN=Cheng-Feng Iron Factory
+  - 備份檔名：`backup-202606301115.zip`（276.2 MB，來源 814.87 MB，6052 個檔案）
+
+## [2026-06-30 10:01]
+- **version**: 1.20.7
+- **修改要求**：
+  1. 聲紋模型如果已下載不重覆下載
+  2. 待辨識音檔長度 > 60 分鐘時自動切成多個 ≤ 50 分鐘的 chunks 再進行說話者標註
+  3. 解決聲紋辨識退化問題 (過短 / 靜音段造成全部段被誤判為 Speaker_1)
+- **修改規劃**：
+  - `frontend/electron/voiceprint.js`：
+    1. `downloadModel()` 開頭先呼叫 `isModelCached()`，若已下載 (大小 ≥ 40MB) 直接 `resolve(true)`、推 100% 進度，避免重覆下載
+    2. 新增 `getAudioDuration(audioPath)` 以 ffmpeg `-i` 解析 stderr 的 `Duration: HH:MM:SS` 取得音檔時長
+    3. 新增 `splitLongAudio(audioPath)` 使用 ffmpeg `-f segment -segment_time 3000` 切成 ≤ 50 分鐘的 WAV chunks，回傳 `[{file, startOffset, endOffset}]` 結構
+    4. `diarizeAudio()` 內若 `audioDuration >= 3600s` 啟動切片；segments 對應到 chunk 並以 chunk-local 時間切割 + 抽取 embedding；temp 目錄使用 `fs.rmSync` 清掉
+    5. `extractSegmentPcm()` 過短 (<1.5s) 自動左右各延伸 0.5s padding；最低長度放寬為 0.3s
+    6. `extractEmbedding()` 將 `numFrames < 5` 放寬為 `< 3`
+    7. `clusterEmbeddings()` 改為兩段式: (a) 鄰近滑動視窗 median cosine ≥ 0.55 強制 union-find 合併 (b) 全域 centroid 跨組 cosine ≥ 0.5 貪婪合併
+    8. 統一 `MIN_MODEL_SIZE = 40MB`，移除 `MIN_VALID_MODEL_SIZE` 與 `REAL_MIN_MODEL_SIZE` 三個重覆常數
+    9. 新增 `getFfmpegPath()` 抽離路徑邏輯給 diarizeAudio / splitLongAudio / extractSegmentPcm 共用
+  - `frontend/electron/main.js`：不改邏輯，已有的 progress callback 介面相容新流程
+  - `frontend/package.json`：version 1.20.6 → 1.20.7 (Patch)
+- **修改結果**：
+  - `frontend/electron/voiceprint.js` 完成重構，匯出 `isModelCached / downloadModel / loadModel / resetModel / diarizeAudio / extractEmbedding / extractSegmentPcm / clusterEmbeddings / cosineSimilarity / getAudioDuration`
+  - `frontend/package.json` version 升至 1.20.7
+  - Node 端語法驗證通過：`require('./frontend/electron/voiceprint.js')` 載入成功，所有 10 個 exports 可訪問
+  - 待後續測試: 已下載模型時再次呼叫 `downloadModel()` 不觸發 HTTPS 請求；65 分鐘音檔的 `diarizeAudio()` 可切片並產出結果
+  - 備份檔名: backup-202606301001.zip
+
 ## [2026-06-16 00:57]
 - **version**: 1.0.0
 - **修改要求**：初始版本 — 建立 AI 會議記錄程式，支援離線錄音轉文字、說話者標註、單檔限制防過大。

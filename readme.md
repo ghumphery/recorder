@@ -1,4 +1,4 @@
-﻿# Recorder — AI 離線會議記錄工具
+# Recorder — AI 離線會議記錄工具
 
 [![GitHub release](https://img.shields.io/github/v/release/ghumphery/recorder)](https://github.com/ghumphery/recorder/releases)
 [![GitHub](https://img.shields.io/github/license/ghumphery/recorder)](https://github.com/ghumphery/recorder)
@@ -96,6 +96,12 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 - **small** (488 MB) — 最準確，適合高品質會議記錄
 
 ## 📦 版本歷史
+
+### v1.20.7 (2026-06-30) — 聲紋標註三項修正
+
+- **不下載重複**：聲紋模型若已下載 (≥40MB) 再呼叫 `downloadModel()` 直接走快取、不重發 HTTPS 請求
+- **長音檔切片**：待辨識音檔 ≥60 分鐘時自動切成 ≤50 分鐘 WAV chunks 再進行說話者標註，避免 OOM/timeout
+- **辨識容錯**：過短 (<1.5s) segment 自動 ±0.5s padding；embedding numFrames 限制 <5 放寬至 <3；改用兩段式聚類（鄰近滑動視窗合併 + 全域 centroid 聚類），協助辨識女聲/小女孩等高音差異較大的組合且避免全部歸類為 Speaker_1
 
 ### v1.19.0 (2026-06-29) — WhisperJobManager 非同步機制
 

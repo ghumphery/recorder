@@ -702,26 +702,6 @@ export default {
       try { const r = await window.electronAPI.recoListAudioFiles(); if (r.success) this.audioFiles = r.files }
       catch (e) { console.warn('載入音檔列表失敗:', e) }
     },
-    async reviewRecording(id) {
-      if (!window.electronAPI) return
-      this.nowPlaying = false; this.playingSegmentIdx = -1; this.busy = true
-      this.statusText = this.$t('status.loading', { id }); this.statusError = false
-      try {
-        const r = await window.electronAPI.recoLoadMeta({ recordingId: id })
-        if (r.success && r.meta && r.meta.segments) {
-          this.transcriptionResults = r.meta.segments; this.hasResult = true
-          this.llmResults = r.meta.llmResults || { optimized: '', translated: '', summary: '' }
-          this.documents = r.meta.documents || []
-          this.llmHistory = { optimized: [], translated: [], summary: [] }
-          this.llmRedo = { optimized: [], translated: [], summary: [] }
-          this.activeSource = 'original'; this.currentAudioPath = null; this.audioLoaded = false
-          this.audioInfo = { filename: r.meta.filename || id }; this.activeTab = 'transcript'
-          this.currentRecordingId = id
-          this.statusText = this.$t('status.loaded', { count: r.meta.segments.length })
-        } else { this.statusText = this.$t('status.loadFail', { error: r.error || '無資料' }); this.statusError = true }
-      } catch (e) { this.statusText = this.$t('status.loadError', { message: e.message }); this.statusError = true }
-      finally { this.busy = false }
-    },
     async llmProcessRecording(id, type) {
       if (!window.electronAPI) return
       this.llmBusy = true
@@ -926,6 +906,22 @@ export default {
           this._transcribingJobId = r.jobId
           this._transcribingAudioPath = this.currentAudioPath
           this.statusText = this.$t('status.transcribingJob', { id: r.jobId })
+          // v1.20.8: 樂觀更新 — 后端 pending 事件可能比 listener 註冊還早推送到，導致 Jobs 面板看不到。submit 成功後主動 unshift 一筆 pending job
+          const audioName = this.audioInfo ? this.audioInfo.filename : this.basenameOf(this.currentAudioPath || '')
+          this.transcribeJobList.unshift({
+            id: r.jobId,
+            type: 'transcribe',
+            audioPath: this.currentAudioPath,
+            source: 'manual',
+            modelSize: this.selectedModel,
+            useGpu: this.useGpu,
+            status: 'pending',
+            progress: { percent: 0 },
+            createdAt: new Date().toISOString(),
+            startedAt: null,
+            completedAt: null,
+            log: [],
+          })
         } else {
           this.statusText = this.$t('status.transcribeFail', { error: r.error }); this.statusError = true
           this.showProgress = false; this.busy = false
@@ -1062,6 +1058,12 @@ export default {
         })
         if (r.success) {
           this.activeJobId = r.jobId
+          // v1.20.8: 樂觀更新 — 立即 unshift 一筆 pending LLM job，防止 Jobs 面板看不到首次事件
+          this.jobList.unshift({
+            id: r.jobId, type: 'optimize', status: 'pending',
+            progress: { percent: 0, batch: 0, totalBatches: 0 },
+            createdAt: new Date().toISOString(), startedAt: null, completedAt: null, log: [],
+          })
           this._pollJobResult(r.jobId, 'optimized')
         } else { this.statusText = this.$t('status.llmFail', { label: '✨ 優化', error: r.error }); this.statusError = true; this.llmBusy = false }
       } catch (e) { this.statusText = this.$t('status.llmError', { label: '✨ 優化', message: e.message }); this.statusError = true; this.llmBusy = false }
@@ -1156,6 +1158,11 @@ export default {
         })
         if (r.success) {
           this.activeJobId = r.jobId
+          this.jobList.unshift({
+            id: r.jobId, type: 'summary', status: 'pending',
+            progress: { percent: 0, batch: 0, totalBatches: 0 },
+            createdAt: new Date().toISOString(), startedAt: null, completedAt: null, log: [],
+          })
           this._pollJobResult(r.jobId, 'summary')
         } else { this.statusText = this.$t('status.llmFail', { label: '📋 摘要', error: r.error }); this.statusError = true; this.llmBusy = false }
       } catch (e) { this.statusText = this.$t('status.llmError', { label: '📋 摘要', message: e.message }); this.statusError = true; this.llmBusy = false }
@@ -1397,6 +1404,18 @@ export default {
         if (r.success) {
           this._diarizeJobId = r.jobId
           this.statusText = `👥 已提交標註 job（${r.jobId.slice(-12)}），稍候從 Jobs 面板查看進度`
+          // v1.20.8: 樂觀更新 — 同樣立即 unshift 一筆 pending voiceprint job，避免事件漏接
+          this.voiceprintJobList.unshift({
+            id: r.jobId,
+            type: 'voiceprint',
+            audioPath: this.currentAudioPath,
+            status: 'pending',
+            progress: { percent: 0 },
+            createdAt: new Date().toISOString(),
+            startedAt: null,
+            completedAt: null,
+            log: [],
+          })
         } else {
           this.statusText = `❌ 提交失敗: ${r.error || '未知錯誤'}`
           this.statusError = true
@@ -1619,8 +1638,35 @@ export default {
     // ── 從歷史記錄播放音檔 ──
     async playRecordingAudio(item) {
       if (!item.audioPath || !item.hasAudio) { this.statusText = this.$t('status.noAudio'); this.statusError = true; return }
+      const filename = item.filename || item.id
+      this.currentPlayingFilename = filename
+      this.statusText = `\u25b6\ufe0f 播放: ${filename}`
+      this.statusError = false
       this.stopPlayback(); await this.loadAudioUrl(item.audioPath)
       if (this.currentAudioUrl) { await this.reviewRecording(item.id) }
+      this.statusText = `\u25b6\ufe0f 播放中: ${filename}`
+    },
+    async reviewRecording(id) {
+      if (!window.electronAPI) return
+      this.nowPlaying = false; this.playingSegmentIdx = -1; this.busy = true
+      this.statusText = this.$t('status.loading', { id }); this.statusError = false
+      try {
+        const r = await window.electronAPI.recoLoadMeta({ recordingId: id })
+        if (r.success && r.meta && r.meta.segments) {
+          const filename = r.meta.filename || id
+          this.transcriptionResults = r.meta.segments; this.hasResult = true
+          this.llmResults = r.meta.llmResults || { optimized: '', translated: '', summary: '' }
+          this.documents = r.meta.documents || []
+          this.llmHistory = { optimized: [], translated: [], summary: [] }
+          this.llmRedo = { optimized: [], translated: [], summary: [] }
+          this.activeSource = 'original'; this.currentAudioPath = null; this.audioLoaded = false
+          this.audioInfo = { filename }; this.activeTab = 'transcript'
+          this.currentRecordingId = id
+          this.currentPlayingFilename = filename
+          this.statusText = filename ? this.$t('status.loadedWithName', { count: r.meta.segments.length, filename }) : this.$t('status.loaded', { count: r.meta.segments.length })
+        } else { this.statusText = this.$t('status.loadFail', { error: r.error || '無資料' }); this.statusError = true }
+      } catch (e) { this.statusText = this.$t('status.loadError', { message: e.message }); this.statusError = true }
+      finally { this.busy = false }
     },
   },
 }

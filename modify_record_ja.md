@@ -2,6 +2,51 @@
 
 > v1.13.0 以降の記録のみ日本語版で管理します。
 
+## [2026-06-30 11:15]
+- **version**: 1.20.8
+- **修正要求**：
+  1. ステータスバーは再生中の録音の実ファイル名を表示するべき（音声リストの先頭ファイル名ではなく）
+  2. Jobs 一覧は投入時点から表示されるべき（Stop 等のコマンドが発行できないため）
+- **計画**：
+  - `frontend/src/App.vue`：
+    1. `playRecordingAudio(item)` で `currentPlayingFilename = item.filename || item.id` を設定し、`statusText` を `▶️ 播放: filename` / `▶️ 播放中: filename` に更新
+    2. `reviewRecording(id)` も `currentPlayingFilename` を更新し、新しい i18n キー `status.loadedWithName` を使用。重複していた旧 `reviewRecording` ブロックを削除
+    3. 楽観的 UI 更新 — 5 つのエントリポイントで保留中ジョブを `unshift` で各リスト（`transcribeJobList`、`voiceprintJobList`、`jobList`）に挿入し、ユーザが直ちにジョブを確認して Stop できるようにする
+  - `frontend/src/i18n/{zh-TW,en,ja}.js`：3 言語で `status.loadedWithName` キーを追加
+  - `frontend/package.json`：version 1.20.7 → 1.20.8（Patch）
+- **結果**：
+  - `App.vue` 更新完了（playRecordingAudio、reviewRecording、5 箇所の楽観的更新）
+  - `i18n/{zh-TW,en,ja}.js` に `status.loadedWithName` を同期
+  - `package.json` を 1.20.8 にバンプ
+  - ビルド成果物：`frontend/dist-electron-build4/Recorder-1.20.8-portable.exe`（179.9 MB、2026-06-30 10:58:53）
+  - Code Sign 検証済み：DigiCert RFC 3161 タイムスタンプ、Subject CN=Cheng-Feng Iron Factory
+  - バックアップファイル名：`backup-202606301115.zip`（276.2 MB、元 814.87 MB、6052 ファイル）
+
+## [2026-06-30 10:01]
+- **version**: 1.20.7
+- **修正要求**：
+  1. 声紋モデルが既にダウンロード済みの場合は再ダウンロードをスキップ
+  2. 60 分を超える音声ファイルは 50 分以下のチャンクに自動分割してから話者ラベリングを実行
+  3. 声紋ラベリングのリグレッション修正（短すぎる／無音セグメントが全員 Speaker_1 に集約される問題を解消）
+- **計画**：
+  - `frontend/electron/voiceprint.js`：
+    1. `downloadModel()` の冒頭で `isModelCached()` をチェック、モデルファイルが既に存在し 40MB 以上であれば HTTPS リクエストをスキップし `progressCallback(100)` を発行
+    2. 新規 `getAudioDuration(audioPath)`：ffmpeg stderr の `Duration: HH:MM:SS` をパース
+    3. 新規 `splitLongAudio(audioPath)`：ffmpeg `-f segment -segment_time 3000` で 50 分以下の WAV チャンクへスライスし `{tmpDir, files, durations}` を返す
+    4. `diarizeAudio()`：`audioDuration >= 3600s` の場合に `splitLongAudio` を起動、セグメントは `(start, end)` 半開区間でチャンクへマッピング、`fs.rmSync` で一時ディレクトリを削除
+    5. `extractSegmentPcm()`：短すぎる (<1.5s) セグメントに左右 0.5s のパディングを追加し、最小長を 0.3s に引き下げ
+    6. `extractEmbedding()`：`numFrames < 5` を `< 3` に引き下げ
+    7. `clusterEmbeddings()` を 2 段階クラスタリングに変更（a）スライディングウィンドウ中央値コサイン ≥ 0.55 で union-find マージ、（b）クロスグループ重心コサイン ≥ 0.5 で貪欲マージ
+    8. `MIN_MODEL_SIZE = 40MB` に統一、重複定数を削除
+    9. 新規 `getFfmpegPath()` ヘルパーを `diarizeAudio / splitLongAudio / extractSegmentPcm` で共有
+  - `frontend/electron/main.js`：ロジック変更なし、既存進捗コールバック契約は互換
+  - `frontend/package.json`：version 1.20.6 → 1.20.7（Patch）
+- **結果**：
+  - `frontend/electron/voiceprint.js` をリファクタリング、`isModelCached / downloadModel / loadModel / resetModel / diarizeAudio / extractEmbedding / extractSegmentPcm / clusterEmbeddings / cosineSimilarity / getAudioDuration` をエクスポート
+  - `frontend/package.json` を 1.20.7 にバンプ
+  - Node 側構文検証：`require('./frontend/electron/voiceprint.js')` のロード成功、10 個すべてのエクスポートにアクセス可能
+  - バックアップファイル名：backup-202606301001.zip
+
 ## [2026-06-24 10:25]
 - **version**: 1.13.0
 - **要件**: 1) zh-TW/en/ja の UI 言語を提供し、初回起動時（設定ファイルなし）または設定パネルで言語を選択可能にする；2) zh-TW/en/ja のドキュメントファイルを提供し、workrule.md を更新して今後の多言語ドキュメント管理に対応する。

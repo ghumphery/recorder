@@ -1,4 +1,4 @@
-﻿# Recorder — Offline AI Meeting Notes Tool
+# Recorder — Offline AI Meeting Notes Tool
 
 [![GitHub release](https://img.shields.io/github/v/release/ghumphery/recorder)](https://github.com/ghumphery/recorder/releases)
 [![GitHub](https://img.shields.io/github/license/ghumphery/recorder)](https://github.com/ghumphery/recorder)
@@ -96,6 +96,12 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 - **small** (488 MB) — Most accurate, best for high-quality meetings
 
 ## 📦 Version History
+
+### v1.20.7 (2026-06-30) — Voiceprint Diarization Tri-Fix
+
+- **No re-download**: when the voiceprint model is already cached (≥40MB), subsequent calls to `downloadModel()` short-circuit the HTTPS request and emit `progressCallback(100)` directly.
+- **Long audio slicing**: audio files ≥60 minutes are auto-split into ≤50-minute WAV chunks before diarization, eliminating OOM / timeout.
+- **Clustering resilience**: too-short (<1.5s) segments are padded ±0.5s; the embedding `numFrames` floor is relaxed from `<5` to `<3`; clustering switches to a two-stage algorithm (neighbor sliding-window merge + global centroid cosine merge) so high-pitched voices such as a child's still resolve into separate speakers instead of collapsing into `Speaker_1`.
 
 ### v1.19.0 (2026-06-29) — WhisperJobManager Async Mechanism
 

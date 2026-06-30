@@ -227,6 +227,7 @@ export default {
   'status.denied': '❌ 使用者拒絕授權',
   'status.loading': '📖 載入 {id}...',
   'status.loaded': '✅ 已載入 {count} 句',
+  'status.loadedWithName': '✅ 已載入 {count} 句（{filename}）',
   'status.loadFail': '❌ 載入失敗: {error}',
   'status.loadError': '❌ 載入異常: {message}',
   'status.optimizing': '✨ 正在優化語句...',

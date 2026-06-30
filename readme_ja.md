@@ -1,4 +1,4 @@
-﻿# Recorder — オフライン AI 会議記録ツール
+# Recorder — オフライン AI 会議記録ツール
 
 [![GitHub release](https://img.shields.io/github/v/release/ghumphery/recorder)](https://github.com/ghumphery/recorder/releases)
 [![GitHub](https://img.shields.io/github/license/ghumphery/recorder)](https://github.com/ghumphery/recorder)
@@ -96,6 +96,12 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 - **small** (488 MB) — 最高精度、高品質会議に最適
 
 ## 📦 バージョン履歴
+
+### v1.20.7 (2026-06-30) — 声紋ラベリング三項目修正
+
+- **再ダウンロード回避**：声紋モデルが既にキャッシュ済み (≥40MB) の場合、`downloadModel()` を呼び出しても HTTPS リクエストを発行せず `progressCallback(100)` を直接返す
+- **長音ファイルの分割**：60 分以上の音声ファイルは話者ラベリング前に 50 分以下の WAV チャンクへ自動分割し、OOM / タイムアウトを防止
+- **クラスタリング耐性**：短すぎる (<1.5s) セグメントは ±0.5s パディング、embedding の `numFrames` 閾値を `<5` から `<3` に緩和、クラスタリングは 2 段階方式（隣接スライディングウィンドウマージ + グローバル重心コサインマージ）に変更し、小女孩などの高音も `Speaker_1` への集約ではなく別話者として分離
 
 ### v1.19.0 (2026-06-29) — WhisperJobManager 非同期機構
 

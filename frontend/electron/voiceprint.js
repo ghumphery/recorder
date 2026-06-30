@@ -8,10 +8,15 @@ const os = require('os')
 // 處理 HTTPS 重定向上限（node 原生 https.get 不自動 follow）
 const REDIRECT_LIMIT = 5
 const REQUEST_TIMEOUT_MS = 120000 // 120 秒
-const USER_AGENT = 'Recorder/1.20.4 (Electron; onnxruntime-node)'
-// 模型最低合法大小（低位門檻為主要檢查）
-const MIN_VALID_MODEL_SIZE = 1 * 1024 * 1024 // 1 MB（見需求為安全檢查閾值，但未被增為 MIN_MODEL_SIZE）
-const REAL_MIN_MODEL_SIZE = 40 * 1024 * 1024 // 40 MB，預型檔約 50 MB
+const USER_AGENT = 'Recorder/1.20.7 (Electron; onnxruntime-node)'
+
+// v1.20.7: 長音檔切片 + 聚類強化常數
+const LONG_AUDIO_THRESHOLD_SEC = 3600   // 60 分鐘門檻
+const CHUNK_DURATION_SEC = 3000         // 每段上限 50 分鐘 (3000 秒)
+const MIN_SEGMENT_PAD_SEC = 0.5         // 過短 segment 左右延伸 padding
+const CLUSTER_THRESHOLD = 0.5           // 全域聚類門檻
+const NEIGHBOR_MERGE_THRESHOLD = 0.55   // 鄰近滑動視窗合併門檻
+const EMBED_MIN_BYTES = 4800            // 約 0.3 秒 @ 16kHz s16
 
 let ort = null
 let session = null
@@ -20,6 +25,9 @@ let modelLoaded = false
 // 模型下載 URL（campplus-zh-en ONNX）
 const MODEL_URL = 'https://huggingface.co/welcomyou/campplus-3dspeaker-200k-onnx/resolve/main/campplus_cn_en_common_200k.onnx'
 const MODEL_FILENAME = 'campplus_cn_en_common_200k.onnx'
+
+// v1.20.7: 模型最低有效大小 40 MB（已統一，原本兩個常數同名衝突）
+const MIN_MODEL_SIZE = 40 * 1024 * 1024
 
 function modelPath() {
   return path.join(os.homedir(), 'recoder', 'voiceprint', MODEL_FILENAME)
@@ -30,8 +38,6 @@ function ensureModelDir() {
   fs.mkdirSync(dir, { recursive: true })
   return dir
 }
-
-const MIN_MODEL_SIZE = 40 * 1024 * 1024 // 40 MB，預型檔約 50 MB，過小視為損壚
 
 function isModelCached() {
   try {
@@ -48,7 +54,7 @@ function resetModel() {
     const mp = modelPath()
     if (fs.existsSync(mp)) {
       fs.unlinkSync(mp)
-      console.log('[voiceprint] 已刪除損壚模型檔案: ' + mp)
+      console.log('[voiceprint] 已刪除損壞模型檔案: ' + mp)
     }
     const tmp = mp + '.downloading'
     if (fs.existsSync(tmp)) fs.unlinkSync(tmp)
@@ -71,9 +77,8 @@ function fetchWithRedirects(url, redirectsLeft = REDIRECT_LIMIT) {
     try {
       const lib = url.startsWith('https:') ? https : http
       req = lib.get(url, { headers: { 'User-Agent': USER_AGENT } }, (response) => {
-        // 重新導向（Header Location）
         if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-          response.resume() // 重要：消耗 body 以釋放 socket
+          response.resume()
           if (redirectsLeft <= 0) {
             return safeReject(new Error(`重定向次數超過 ${REDIRECT_LIMIT}`))
           }
@@ -83,8 +88,6 @@ function fetchWithRedirects(url, redirectsLeft = REDIRECT_LIMIT) {
         if (response.statusCode < 200 || response.statusCode >= 300) {
           return safeReject(new Error(`HTTP ${response.statusCode} ${response.statusMessage} (${url})`))
         }
-        // 領 HuggingFace LFS xet-bridge 偶爾會回 200 OK + Content-Type: text/plain
-        // 但 body 為 "Found. Redirecting to <URL>"。這種情況需要看 body 解析 URL 並重試。
         const ct = response.headers['content-type'] || ''
         if (/text\/(plain|html)/.test(ct)) {
           let peekBuf = Buffer.alloc(0)
@@ -99,7 +102,6 @@ function fetchWithRedirects(url, redirectsLeft = REDIRECT_LIMIT) {
               }
               return fetchWithRedirects(next, redirectsLeft - 1).then(safeResolve, safeReject)
             }
-            // 非預期 text/plain：视为 HTML 頁面（可能是 HF 限流或查閱問題）
             safeReject(new Error(`伺服器回傳非預期 HTML/text 內容 (前 100 chars: ${text.slice(0, 100)})`))
           })
           response.on('error', (err) => safeReject(err))
@@ -119,12 +121,22 @@ function fetchWithRedirects(url, redirectsLeft = REDIRECT_LIMIT) {
   })
 }
 
+/**
+ * 下載聲紋模型
+ * v1.20.7: 已下載 (檔案大小 >= 40MB) 時直接 resolve(true)，避免重覆下載
+ */
 function downloadModel(progressCallback) {
   return new Promise((resolve, reject) => {
+    // v1.20.7: 下載前檢查快取
+    if (isModelCached()) {
+      console.log('[voiceprint] 模型已存在且大小正常，跳過下載')
+      if (progressCallback) progressCallback(100)
+      resolve(true)
+      return
+    }
     ensureModelDir()
     const dest = modelPath()
     const temp = dest + '.downloading'
-    // 清掉可能殘留的 .downloading
     try { fs.unlinkSync(temp) } catch (_) {}
 
     const file = fs.createWriteStream(temp)
@@ -140,8 +152,6 @@ function downloadModel(progressCallback) {
     }
 
     fetchWithRedirects(MODEL_URL).then((response) => {
-      // 此處 response 已經跟隨「Found. Redirecting to ...」重定向 + 3xx header
-      // 一定是真實二進位內容 response（Content-Type 是 application/octet-stream）
       const cl = response.headers['content-length']
       totalBytes = cl ? parseInt(cl, 10) : 0
 
@@ -158,12 +168,10 @@ function downloadModel(progressCallback) {
 
       response.on('end', () => {
         file.end()
-        // 完整性檢查
-        if (receivedBytes < MIN_VALID_MODEL_SIZE) {
+        if (receivedBytes < MIN_MODEL_SIZE) {
           return cleanup(new Error(`下載不完整 (只收到 ${receivedBytes} bytes)；HuggingFace 是否連線失敗？請重試。`))
         }
         try {
-          // 若 server 有回 Content-Length 且不相符 → 視為不完整
           if (totalBytes > 0 && receivedBytes !== totalBytes) {
             return cleanup(new Error(`下載不完整 (收到 ${receivedBytes}/${totalBytes} bytes)；請重試。`))
           }
@@ -196,7 +204,6 @@ async function loadModel() {
     modelLoaded = true
     return true
   } catch (e) {
-    // DML 失敗時 fallback 到 CPU
     try {
       if (!ort) ort = require('onnxruntime-node')
       const mp = modelPath()
@@ -214,24 +221,127 @@ async function loadModel() {
 }
 
 /**
- * 從音檔中切割出指定時間區間的 PCM 資料
+ * 取得 ffmpeg/ffprobe 路徑 (支援 dev + 打包後環境)
  */
-function extractSegmentPcm(audioPath, startSec, endSec) {
+function getFfmpegPath() {
+  const ffmpeg = path.join(path.dirname(require.main?.filename || __dirname), '..', '..', 'ffmpeg', 'ffmpeg.exe')
+  const resourceFfmpeg = path.join(process.resourcesPath || '', 'ffmpeg', 'ffmpeg.exe')
+  if (fs.existsSync(ffmpeg)) return ffmpeg
+  if (fs.existsSync(resourceFfmpeg)) return resourceFfmpeg
+  return 'ffmpeg.exe'
+}
+
+/**
+ * v1.20.7: 取得音檔時長 (透過 ffmpeg stderr 的 Duration: HH:MM:SS.xx)
+ */
+function getAudioDuration(audioPath) {
+  return new Promise((resolve) => {
+    const ffmpegPath = getFfmpegPath()
+    let stderrBuf = ''
+    const proc = spawn(ffmpegPath, ['-i', audioPath], { stdio: ['ignore', 'ignore', 'pipe'] })
+    proc.stderr.on('data', (chunk) => { stderrBuf += chunk.toString('utf-8') })
+    proc.on('close', () => {
+      const m = stderrBuf.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/)
+      if (!m) { resolve(0); return }
+      const h = parseInt(m[1], 10)
+      const mm = parseInt(m[2], 10)
+      const s = parseFloat(m[3])
+      resolve(h * 3600 + mm * 60 + s)
+    })
+    proc.on('error', () => resolve(0))
+  })
+}
+
+/**
+ * v1.20.7: 將長音檔切成多個 ≤ CHUNK_DURATION_SEC 的 WAV，回傳 chunk 檔路徑陣列
+ * 使用 ffmpeg -f segment，每段重新編碼 16kHz mono PCM
+ */
+function splitLongAudio(audioPath) {
   return new Promise((resolve, reject) => {
-    const duration = endSec - startSec
-    if (duration < 0.5) {
-      // 太短的片段跳過
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voiceprint-chunk-'))
+    const pattern = path.join(tmpDir, 'chunk_%03d.wav')
+    const ffmpegPath = getFfmpegPath()
+    const proc = spawn(ffmpegPath, [
+      '-y', '-i', audioPath,
+      '-ar', '16000', '-ac', '1', '-sample_fmt', 's16',
+      '-f', 'segment',
+      '-segment_time', String(CHUNK_DURATION_SEC),
+      '-reset_timestamps', '1',
+      pattern
+    ], { stdio: ['ignore', 'pipe', 'pipe'] })
+
+    let stderr = ''
+    proc.stderr.on('data', (c) => { stderr += c.toString('utf-8') })
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffmpeg 切片失敗 (exit ${code}): ${stderr.slice(0, 200)}`))
+        return
+      }
+      const files = fs.readdirSync(tmpDir)
+        .filter(f => f.endsWith('.wav'))
+        .map(f => path.join(tmpDir, f))
+        .sort()
+      if (files.length === 0) {
+        reject(new Error('ffmpeg 切片完成但未產生任何 chunk'))
+        return
+      }
+      // 計算每個 chunk 的時長（用 ffmpeg probe 簡化：差值法）
+      getChunkDurations(files, tmpDir).then((durations) => {
+        resolve({ tmpDir, files, durations })
+      }).catch(reject)
+    })
+    proc.on('error', (e) => reject(e))
+  })
+}
+
+/**
+ * 計算每個 chunk 檔的時長（用 ffprobe-like 解析 WAV header 的樣本數）
+ */
+function getChunkDurations(files, tmpDir) {
+  return Promise.all(files.map((fp) => new Promise((resolve) => {
+    const proc = spawn(getFfmpegPath(), ['-i', fp], { stdio: ['ignore', 'ignore', 'pipe'] })
+    let buf = ''
+    proc.stderr.on('data', (c) => { buf += c.toString('utf-8') })
+    proc.on('close', () => {
+      const m = buf.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/)
+      if (!m) { resolve(0); return }
+      const h = parseInt(m[1], 10)
+      const mm = parseInt(m[2], 10)
+      const s = parseFloat(m[3])
+      resolve(h * 3600 + mm * 60 + s)
+    })
+    proc.on('error', () => resolve(0))
+  })))
+}
+
+/**
+ * 從音檔中切割出指定時間區間的 PCM 資料
+ * v1.20.7: 過短 (<0.5s) 時自動左右延伸 padding 補足長度
+ */
+function extractSegmentPcm(audioPath, startSec, endSec, audioDuration = null) {
+  return new Promise((resolve, reject) => {
+    let duration = endSec - startSec
+    let paddedStart = startSec
+    let paddedEnd = endSec
+    // 過短時左右各延伸 padding
+    if (duration < 1.5) {
+      paddedStart = Math.max(0, startSec - MIN_SEGMENT_PAD_SEC)
+      paddedEnd = endSec + MIN_SEGMENT_PAD_SEC
+      if (audioDuration && audioDuration > 0) {
+        paddedEnd = Math.min(audioDuration, paddedEnd)
+      }
+      duration = paddedEnd - paddedStart
+    }
+    if (duration < 0.3 || paddedEnd <= paddedStart) {
       resolve(null)
       return
     }
-    const ffmpeg = path.join(path.dirname(require.main?.filename || __dirname), '..', '..', 'ffmpeg', 'ffmpeg.exe')
-    const resourceFfmpeg = path.join(process.resourcesPath || '', 'ffmpeg', 'ffmpeg.exe')
-    const ffmpegPath = fs.existsSync(ffmpeg) ? ffmpeg : (fs.existsSync(resourceFfmpeg) ? resourceFfmpeg : 'ffmpeg.exe')
 
+    const ffmpegPath = getFfmpegPath()
     const chunks = []
     const proc = spawn(ffmpegPath, [
       '-y', '-i', audioPath,
-      '-ss', String(startSec),
+      '-ss', String(paddedStart),
       '-t', String(duration),
       '-ar', '16000', '-ac', '1', '-sample_fmt', 's16',
       '-f', 'wav',
@@ -239,7 +349,7 @@ function extractSegmentPcm(audioPath, startSec, endSec) {
     ], { stdio: ['ignore', 'pipe', 'pipe'] })
 
     proc.stdout.on('data', (chunk) => chunks.push(chunk))
-    proc.stderr.on('data', () => {}) // 忽略 ffmpeg 日誌
+    proc.stderr.on('data', () => {})
 
     proc.on('close', (code) => {
       if (code !== 0) {
@@ -247,7 +357,6 @@ function extractSegmentPcm(audioPath, startSec, endSec) {
         return
       }
       const buf = Buffer.concat(chunks)
-      // 跳過 WAV header (44 bytes)，取 PCM 資料
       const pcm = buf.slice(44)
       resolve(pcm)
     })
@@ -260,33 +369,29 @@ function extractSegmentPcm(audioPath, startSec, endSec) {
  * 計算 80-dim fbank 特徵（與 campplus 模型匹配）
  */
 function computeFbank(pcm) {
-  // pcm: Int16Array (16kHz mono)
   const samples = new Float32Array(pcm.length / 2)
   for (let i = 0; i < samples.length; i++) {
     samples[i] = (pcm.readInt16LE(i * 2)) / 32768.0
   }
 
   const sampleRate = 16000
-  const frameLen = Math.floor(25 * sampleRate / 1000)  // 25ms
-  const frameShift = Math.floor(10 * sampleRate / 1000) // 10ms
+  const frameLen = Math.floor(25 * sampleRate / 1000)
+  const frameShift = Math.floor(10 * sampleRate / 1000)
   const numFrames = Math.max(1, Math.floor((samples.length - frameLen) / frameShift) + 1)
   const numBins = 80
 
-  // 預加重
   const preEmph = 0.97
   const preSamples = new Float32Array(samples.length)
   preSamples[0] = samples[0]
   for (let i = 1; i < samples.length; i++) {
-    preSamples[i] = samples[i] - preEmph * samples[i - 1]
+    preSamples[i] = samples[i] - preEmph * preSamples[i - 1]
   }
 
-  // Hamming window
   const window = new Float32Array(frameLen)
   for (let i = 0; i < frameLen; i++) {
     window[i] = 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (frameLen - 1))
   }
 
-  // Mel filterbank (80 bins, 20-8000 Hz)
   const lowFreq = 20
   const highFreq = 8000
   const melLow = 2595 * Math.log10(1 + lowFreq / 700)
@@ -301,7 +406,6 @@ function computeFbank(pcm) {
     fftBinFreqs[i] = i * sampleRate / fftSize
   }
 
-  // 計算 filterbank 權重
   const filterbank = new Float32Array((numBins + 2) * fftBinFreqs.length)
   for (let m = 0; m < numBins + 2; m++) {
     for (let k = 0; k < fftBinFreqs.length; k++) {
@@ -325,17 +429,14 @@ function computeFbank(pcm) {
     }
   }
 
-  // 計算每幀的 fbank
   const fbank = new Float32Array(numFrames * numBins)
   for (let t = 0; t < numFrames; t++) {
     const start = t * frameShift
-    // 加窗
     const windowed = new Float32Array(frameLen)
     for (let i = 0; i < frameLen; i++) {
       windowed[i] = preSamples[start + i] * window[i]
     }
 
-    // FFT (簡化實作：使用 DFT)
     const real = new Float32Array(fftSize)
     const imag = new Float32Array(fftSize)
     for (let i = 0; i < frameLen; i++) {
@@ -352,13 +453,11 @@ function computeFbank(pcm) {
       imag[k] = sumImag
     }
 
-    // 功率譜
     const power = new Float32Array(fftSize / 2 + 1)
     for (let k = 0; k < power.length; k++) {
       power[k] = (real[k] * real[k] + imag[k] * imag[k]) / fftSize
     }
 
-    // Mel filterbank 加權
     for (let m = 0; m < numBins; m++) {
       let sum = 0
       for (let k = 0; k < power.length; k++) {
@@ -368,7 +467,6 @@ function computeFbank(pcm) {
     }
   }
 
-  // CMVN (per-utterance mean normalization)
   for (let m = 0; m < numBins; m++) {
     let mean = 0
     for (let t = 0; t < numFrames; t++) {
@@ -385,6 +483,7 @@ function computeFbank(pcm) {
 
 /**
  * 抽取單一段落的 speaker embedding
+ * v1.20.7: 放寬 numFrames 限制 (<5 → <3)
  */
 async function extractEmbedding(pcm) {
   if (!session) {
@@ -392,17 +491,14 @@ async function extractEmbedding(pcm) {
   }
 
   const { fbank, numFrames, numBins } = computeFbank(pcm)
-  if (numFrames < 5) return null // 太短無法抽取
+  if (numFrames < 3) return null // 太短無法抽取 (v1.20.7: 5 → 3)
 
-  // 建立 ONNX tensor: shape [1, T, 80]
   const inputTensor = new ort.Tensor('float32', fbank, [1, numFrames, numBins])
 
   try {
     const results = await session.run({ input: inputTensor })
-    // 輸出通常是 embedding，shape [1, 192]
     const outputName = session.outputNames[0]
     const embedding = results[outputName].data
-    // L2 正規化
     let norm = 0
     for (let i = 0; i < embedding.length; i++) {
       norm += embedding[i] * embedding[i]
@@ -431,10 +527,11 @@ function cosineSimilarity(a, b) {
 }
 
 /**
- * 階層式聚類分群
- * 回傳每個 segment 的 speaker 標籤
+ * v1.20.7: 兩段式聚類
+ * 第一階段: 鄰近滑動視窗 (window=3) median cosine similarity，>= NEIGHBOR_MERGE_THRESHOLD 的相鄰段強制合併
+ * 第二階段: 全域貪婪聚類 (CLUSTER_THRESHOLD) 合併跨時段同 speaker
  */
-function clusterEmbeddings(embeddings, threshold = 0.6) {
+function clusterEmbeddings(embeddings, threshold = CLUSTER_THRESHOLD) {
   const n = embeddings.length
   if (n === 0) return []
   if (n === 1) return ['Speaker_1']
@@ -447,31 +544,113 @@ function clusterEmbeddings(embeddings, threshold = 0.6) {
     }
   }
 
-  // 簡單的貪婪聚類：從第一個 segment 開始，相似度高於 threshold 的歸為同一群
+  // 第一階段：鄰近滑動視窗合併
+  // window=3: 看 i 周圍 3 個鄰居的中位數相似度，若 >= NEIGHBOR_MERGE_THRESHOLD 視為同 speaker
+  const window = 3
+  const neighborMergeHints = [] // [{i, j}]
+  for (let i = 0; i < n; i++) {
+    const sims = []
+    for (let j = Math.max(0, i - window); j <= Math.min(n - 1, i + window); j++) {
+      if (i === j) continue
+      sims.push(simMatrix[i * n + j])
+    }
+    if (sims.length === 0) continue
+    sims.sort((a, b) => a - b)
+    const median = sims[Math.floor(sims.length / 2)]
+    // 找出所有鄰居相似度 >= NEIGHBOR_MERGE_THRESHOLD 的 segment
+    if (median >= NEIGHBOR_MERGE_THRESHOLD) {
+      const neighbors = []
+      for (let j = Math.max(0, i - window); j <= Math.min(n - 1, i + window); j++) {
+        if (i === j) continue
+        if (simMatrix[i * n + j] >= NEIGHBOR_MERGE_THRESHOLD) neighbors.push(j)
+      }
+      neighbors.forEach(j => neighborMergeHints.push([Math.min(i, j), Math.max(i, j)]))
+    }
+  }
+
+  // 建立 preCluster: 相鄰合併
   const labels = new Array(n).fill(-1)
   let currentLabel = 0
+  // 用 union-find 處理鄰近合併提示
+  const parent = new Array(n).fill(0).map((_, i) => i)
+  const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x] } return x }
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb }
+  neighborMergeHints.forEach(([a, b]) => union(a, b))
 
+  // 將同 group 標為同一 preLabel (按首次出現順序)
+  const groupLabelMap = {}
   for (let i = 0; i < n; i++) {
     if (labels[i] >= 0) continue
-    labels[i] = currentLabel
-    for (let j = i + 1; j < n; j++) {
-      if (labels[j] >= 0) continue
-      if (simMatrix[i * n + j] >= threshold) {
-        labels[j] = currentLabel
-      }
+    const root = find(i)
+    if (!(root in groupLabelMap)) {
+      groupLabelMap[root] = currentLabel++
     }
-    currentLabel++
+    labels[i] = groupLabelMap[root]
+  }
+
+  // 第二階段：全域聚類 - 對每個 group 取 centroid，再 cross-group 合併相似者
+  const groupCentroids = {}
+  const groupCounts = {}
+  for (let i = 0; i < n; i++) {
+    const g = labels[i]
+    if (!groupCentroids[g]) {
+      groupCentroids[g] = new Float32Array(embeddings[i].length)
+      groupCounts[g] = 0
+    }
+    for (let d = 0; d < embeddings[i].length; d++) {
+      groupCentroids[g][d] += embeddings[i][d]
+    }
+    groupCounts[g]++
+  }
+  // 正規化 centroid
+  Object.keys(groupCentroids).forEach((g) => {
+    const c = groupCentroids[g]
+    let norm = 0
+    for (let d = 0; d < c.length; d++) norm += c[d] * c[d]
+    norm = Math.sqrt(norm)
+    if (norm > 0) { for (let d = 0; d < c.length; d++) c[d] /= norm }
+  })
+
+  // 對 group centroid 做跨組合併
+  const gKeys = Object.keys(groupCentroids)
+  const gMap = {}
+  let gCurrent = 0
+  for (const gk of gKeys) {
+    if (gk in gMap) continue
+    gMap[gk] = gCurrent
+    const ck = groupCentroids[gk]
+    for (const other of gKeys) {
+      if (other === gk || other in gMap) continue
+      const co = groupCentroids[other]
+      let dot = 0
+      for (let d = 0; d < ck.length; d++) dot += ck[d] * co[d]
+      if (dot >= threshold) gMap[other] = gCurrent
+    }
+    gCurrent++
+  }
+
+  // 重新映射 labels
+  for (let i = 0; i < n; i++) {
+    labels[i] = gMap[labels[i]]
+  }
+
+  // 警告：若超過 60% segment 落到同一群，可能只抓到一種聲音
+  const groupSizes = {}
+  for (const l of labels) groupSizes[l] = (groupSizes[l] || 0) + 1
+  const maxGroupSize = Math.max(0, ...Object.values(groupSizes))
+  if (maxGroupSize > n * 0.6 && n >= 4) {
+    console.warn(`[voiceprint] 警告: ${maxGroupSize}/${n} segments (${Math.round(maxGroupSize / n * 100)}%) 落入同一 speaker；可能錄音只含一種聲音或聚類門檻過嚴`)
   }
 
   // 轉換為 Speaker_1, Speaker_2, ...
   const speakerMap = {}
   const result = []
   for (let i = 0; i < n; i++) {
-    const label = labels[i]
-    if (!speakerMap[label]) {
-      speakerMap[label] = `Speaker_${Object.keys(speakerMap).length + 1}`
+    const l = labels[i]
+    if (!(l in speakerMap)) {
+      speakerMap[l] = `Speaker_${Object.keys(speakerMap).length + 1}`
     }
-    result.push(speakerMap[label])
+    result.push(speakerMap[l])
   }
 
   return result
@@ -479,10 +658,10 @@ function clusterEmbeddings(embeddings, threshold = 0.6) {
 
 /**
  * 主流程：對音檔進行說話者標註
- * @param {string} audioPath - 16kHz mono WAV 路徑
- * @param {Array} segments - [{start, end, text}, ...]
- * @param {Function} progressCallback - (percent) => void
- * @returns {Array} segments 加上 speaker 欄位
+ * v1.20.7:
+ *   1) 音檔時長 >= 60 分鐘 → 切成 ≤50 分鐘 chunks 後逐段標註 (降 OOM/timeout 風險)
+ *   2) 下載前檢查 isModelCached() 避免重覆下載 (已下放至 downloadModel)
+ *   3) 過短 segment 自動 padding + 兩段式聚類 (clusterEmbeddings 已強化)
  */
 async function diarizeAudio(audioPath, segments, progressCallback) {
   if (!fs.existsSync(audioPath)) {
@@ -492,18 +671,15 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
   // 載入模型
   try {
     if (!await loadModel()) {
-      // 先檢查模型檔是否存在與完整性
       const mp = modelPath()
       if (!fs.existsSync(mp)) {
         throw new Error(`聲紋模型檔不存在 (${mp})，請先在設定中下載模型`)
       }
       const stat = fs.statSync(mp)
-      // 小於最低有效大小的模型檔（例如下載中斷成 0 bytes）→ 自動重設並要求使用者重下載
-      if (stat.size < MIN_VALID_MODEL_SIZE) {
+      if (stat.size < MIN_MODEL_SIZE) {
         resetModel()
         throw new Error(`聲紋模型檔不完整 (大小: ${(stat.size / 1024 / 1024).toFixed(2)} MB)，已自動重設。請重新下載模型。`)
       }
-      // 模型檔存在 + 大小正常 → 表示是 onnxruntime-node 載入 native binary 失敗
       throw new Error(`聲紋模型檔已下載但 InferenceSession 建立失敗 (檔案大小: ${(stat.size / 1024 / 1024).toFixed(1)} MB)；請檢查 onnxruntime-node native binary 是否被 asar 打包、或是 CPU 不支援。建議到開發者控制台查看完整錯誤。`)
     }
   } catch (e) {
@@ -511,14 +687,70 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
   }
 
   const total = segments.length
+  const audioDuration = await getAudioDuration(audioPath)
+  let tmpDir = null
+  let useChunks = false
+  let chunkList = [] // [{ file, startOffset, endOffset }]
+  let chunkAudioDuration = audioDuration
+
+  // v1.20.7: 長音檔切片
+  if (audioDuration >= LONG_AUDIO_THRESHOLD_SEC) {
+    try {
+      console.log(`[voiceprint] 音檔時長 ${Math.round(audioDuration)}s >= ${LONG_AUDIO_THRESHOLD_SEC}s，啟動切片`)
+      const splitResult = await splitLongAudio(audioPath)
+      tmpDir = splitResult.tmpDir
+      chunkList = []
+      let offset = 0
+      for (let i = 0; i < splitResult.files.length; i++) {
+        const dur = splitResult.durations[i] || (CHUNK_DURATION_SEC)
+        chunkList.push({ file: splitResult.files[i], startOffset: offset, endOffset: offset + dur })
+        offset += dur
+      }
+      useChunks = true
+      chunkAudioDuration = audioDuration
+      console.log(`[voiceprint] 切成 ${chunkList.length} 個 chunks`)
+    } catch (e) {
+      console.error(`[voiceprint] 切片失敗，將直接處理完整音檔: ${e.message}`)
+      tmpDir = null
+      useChunks = false
+    }
+  }
+
+  // 將 segments 對應到 chunk (半開區間)
+  const segmentToChunk = (seg) => {
+    if (!useChunks) return null
+    for (let i = 0; i < chunkList.length; i++) {
+      const c = chunkList[i]
+      if (seg.start < c.endOffset || i === chunkList.length - 1) return i
+    }
+    return chunkList.length - 1
+  }
+
   const embeddings = []
   const validIndices = []
+  let processedCount = 0
+  const reportProgress = () => {
+    if (progressCallback) {
+      progressCallback(Math.round((processedCount / total) * 100))
+    }
+  }
 
   for (let i = 0; i < total; i++) {
     const seg = segments[i]
-    const pcm = await extractSegmentPcm(audioPath, seg.start, seg.end)
+    const audioSource = useChunks
+      ? (() => {
+          const ci = segmentToChunk(seg)
+          const c = chunkList[ci]
+          // segment 對應到 chunk 內的時間
+          const localStart = Math.max(0, seg.start - c.startOffset)
+          const localEnd = Math.min(c.endOffset - c.startOffset, seg.end - c.startOffset)
+          return { path: c.file, start: localStart, end: localEnd, dur: chunkAudioDuration }
+        })()
+      : { path: audioPath, start: seg.start, end: seg.end, dur: audioDuration }
 
-    if (pcm && pcm.length > 8000) { // 至少 0.5 秒 (v1.20.6: 降為 0.5s 協助小女孩/小聲音辨識)
+    const pcm = await extractSegmentPcm(audioSource.path, audioSource.start, audioSource.end, audioSource.dur)
+
+    if (pcm && pcm.length > EMBED_MIN_BYTES) {
       const emb = await extractEmbedding(pcm)
       if (emb) {
         embeddings.push(emb)
@@ -532,9 +764,14 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
       embeddings.push(null)
     }
 
-    if (progressCallback) {
-      progressCallback(Math.round(((i + 1) / total) * 100))
-    }
+    processedCount++
+    // 每 5 段回報一次以減輕 IPC 壓力
+    if (processedCount % 5 === 0 || processedCount === total) reportProgress()
+  }
+
+  // v1.20.7: 清理切片 temp 目錄
+  if (tmpDir) {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch (_) {}
   }
 
   // 對有 embedding 的 segment 進行聚類
@@ -543,8 +780,8 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
 
   let speakerLabels = []
   if (validEmbeddings.length > 0) {
-    // v1.20.6: 0.6 -> 0.5 放寬聚類閾值，協助辨識男聲 + 小女孩等差異較大的聲紋組合
-    speakerLabels = clusterEmbeddings(validEmbeddings, 0.5)
+    // v1.20.7: clusterEmbeddings 改為兩段式聚類
+    speakerLabels = clusterEmbeddings(validEmbeddings, CLUSTER_THRESHOLD)
   }
 
   // 將結果對應回原始 segments
@@ -559,7 +796,7 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
     labelIdx++
   }
 
-  // 填補無 embedding 的 segment：繼承前一個 speaker
+  // 填補無 embedding 的 segment：繼承前一個 speaker；如無則用「上一個 valid 的 embedding」對應的 label
   let lastSpeaker = ''
   for (let i = 0; i < result.length; i++) {
     if (result[i].speaker) {
@@ -569,7 +806,6 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
     }
   }
 
-  // 從後往前填補開頭無 speaker 的 segment
   let nextSpeaker = ''
   for (let i = result.length - 1; i >= 0; i--) {
     if (result[i].speaker) {
@@ -579,7 +815,6 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
     }
   }
 
-  // 最後仍無 speaker 的設為 Speaker_1
   for (let i = 0; i < result.length; i++) {
     if (!result[i].speaker) result[i].speaker = 'Speaker_1'
   }
@@ -594,6 +829,8 @@ module.exports = {
   resetModel,
   diarizeAudio,
   extractEmbedding,
+  extractSegmentPcm,
   clusterEmbeddings,
-  cosineSimilarity
+  cosineSimilarity,
+  getAudioDuration,
 }

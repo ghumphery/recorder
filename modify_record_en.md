@@ -2,6 +2,51 @@
 
 > Only records from v1.13.0 onward are maintained in this English version.
 
+## [2026-06-30 11:15]
+- **version**: 1.20.8
+- **Requirements**:
+  1. The status bar must show the actual filename of the recording being played, not the first filename from the audio list.
+  2. The Jobs list should contain entries from the moment a job is submitted (so Stop and other commands can target the in-flight job), not only after completion.
+- **Plan**:
+  - `frontend/src/App.vue`:
+    1. `playRecordingAudio(item)` now sets `currentPlayingFilename = item.filename || item.id` and updates `statusText` to `▶️ 播放: filename` / `▶️ 播放中: filename`.
+    2. `reviewRecording(id)` updates `currentPlayingFilename` and uses the new `status.loadedWithName` i18n key. The legacy duplicate `reviewRecording` block was removed.
+    3. Optimistic UI updates — five entry points unshift a pending job into the matching list (`transcribeJobList`, `voiceprintJobList`, `jobList`) so the user can immediately see the job and invoke Stop.
+  - `frontend/src/i18n/{zh-TW,en,ja}.js`: new `status.loadedWithName` key in three languages.
+  - `frontend/package.json`: version 1.20.7 → 1.20.8 (Patch).
+- **Outcome**:
+  - `App.vue` updated (playRecordingAudio, reviewRecording, five optimistic updates).
+  - `i18n/{zh-TW,en,ja}.js` synchronized with `status.loadedWithName`.
+  - `package.json` bumped to 1.20.8.
+  - Build output: `frontend/dist-electron-build4/Recorder-1.20.8-portable.exe` (179.9 MB, 2026-06-30 10:58:53).
+  - Code sign verified: DigiCert RFC 3161 timestamp, Subject CN=Cheng-Feng Iron Factory.
+  - Backup filename: `backup-202606301115.zip` (276.2 MB compressed from 814.87 MB source, 6052 files).
+
+## [2026-06-30 10:01]
+- **version**: 1.20.7
+- **Requirements**:
+  1. Skip re-downloading the voiceprint model if it is already cached
+  2. For audio files > 60 minutes, automatically split into chunks of ≤ 50 minutes before running speaker diarization
+  3. Fix the speaker-diarization regression (over-short / silent segments collapsed into a single `Speaker_1`)
+- **Plan**:
+  - `frontend/electron/voiceprint.js`:
+    1. `downloadModel()` checks `isModelCached()` first; if the model file already exists and is ≥ 40MB it skips the HTTPS request and emits `progressCallback(100)`.
+    2. New `getAudioDuration(audioPath)` parses `Duration: HH:MM:SS` from ffmpeg stderr.
+    3. New `splitLongAudio(audioPath)` uses ffmpeg `-f segment -segment_time 3000` to slice the audio into ≤ 50-min WAV chunks, returning `{tmpDir, files, durations}`.
+    4. `diarizeAudio()` activates `splitLongAudio` when `audioDuration >= 3600s`; segments are mapped to chunks via `(start, end)` half-open intervals; the temp directory is removed via `fs.rmSync`.
+    5. `extractSegmentPcm()` pads too-short (<1.5s) segments by ±0.5s and lowers the minimum length to 0.3s.
+    6. `extractEmbedding()` lowers `numFrames < 5` to `< 3`.
+    7. `clusterEmbeddings()` becomes a two-stage clusterer: (a) sliding-window median cosine ≥ 0.55 forces union-find merging, (b) cross-group centroid cosine ≥ 0.5 greedily merges clusters.
+    8. Unified `MIN_MODEL_SIZE = 40MB`; removed duplicate constants.
+    9. New `getFfmpegPath()` helper shared by `diarizeAudio / splitLongAudio / extractSegmentPcm`.
+  - `frontend/electron/main.js`: no logic change; existing progress callback contract remains compatible.
+  - `frontend/package.json`: version 1.20.6 → 1.20.7 (Patch).
+- **Outcome**:
+  - `frontend/electron/voiceprint.js` refactored; exports `isModelCached / downloadModel / loadModel / resetModel / diarizeAudio / extractEmbedding / extractSegmentPcm / clusterEmbeddings / cosineSimilarity / getAudioDuration`.
+  - `frontend/package.json` bumped to 1.20.7.
+  - Node-side syntax verified: `require('./frontend/electron/voiceprint.js')` loads successfully and all 10 exports are accessible.
+  - Backup filename: backup-202606301001.zip
+
 ## [2026-06-24 10:25]
 - **version**: 1.13.0
 - **Requirement**: 1) Provide zh-TW/en/ja UI language, selectable on first launch (no settings file) or in settings panel; 2) Provide zh-TW/en/ja documentation files, update workrule.md for future multi-language documentation maintenance.

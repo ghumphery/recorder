@@ -11,6 +11,8 @@ frontend/node_modules/
 frontend/dist/
 frontend/dist-electron/
 frontend/dist-electron-build2/
+frontend/dist-electron-build3/
+frontend/dist-electron-build4/
 
 # Logs
 *.log
