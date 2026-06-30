@@ -1,3 +1,27 @@
+﻿
+## [2026-06-30 12:37]
+- **version**: 1.20.10 → 1.20.11 (patch: hotfix)
+- **改修要求**: ユーザーから声紋モデルのダウンロードが繰り返し失敗するという報告があり、ログに「ダウンロード不完全(受信 28283928 bytes のみ); HuggingFace 接続失敗? 再試行してください。」と、リトライするたびに同じバイト数が出力され続ける。
+- **根本原因**: v1.20.7 で `MIN_MODEL_SIZE = 40 * 1024 * 1024` (40 MB) を最小有効サイズ閾値として導入したが、`https://huggingface.co/welcomyou/campplus-3dspeaker-200k-onnx/resolve/main/campplus_cn_en_common_200k.onnx` の実際のファイルサイズは **28,283,928 bytes(≒26.97 MB)** であり、常に 40 MB を下回るため毎回「不完全」と誤判定される。PowerShell `Invoke-WebRequest` と `node-fetch` の HEAD/GET で検証済み:
+  - `Content-Length: 28283928`
+  - `Content-Type: application/octet-stream`
+  - 先頭 16 bytes = `08-08-12-07-70-79-74-6F-72-63-68-1A-06-32-2E-31` — protobuf ONNX マジック (pytorch 2.10.0 exporter)、`xvector / head/conv1 / ReduceMean` ノードを含む **LFS pointer でもエラーページでもない**。
+  - HF LFS UI の「~50 MB」表示は repo metadata + LFS pointer 合計。実 .onnx binary は ~27 MB のみ。`xet-bridge-us` は xet CAS ブリッジで、下流の実際のバイナリを正しく転送している。
+- **影響**:
+  - 「ダウンロード」を押下すると実際には成功(28 MB が `.downloading` に書かれ、正式ファイルへ rename)しているが、28 MB < 40 MB のため検証で reject、IPC ハンドラが「ダウンロード失敗」を返す。
+  - `isModelCached()` は合法的ファイルがブロックされる限り常に false を返す。
+- **修正**:
+  - `frontend/electron/voiceprint.js`:
+    1. `MIN_MODEL_SIZE` を `40 * 1024 * 1024` から `25 * 1024 * 1024` に変更(実 ~27 MB、25 MB で ~7% のバッファを確保して truncate / HTML エラーを確実に弾く)。
+    2. 根本原因を詳述するコメントブロックを追加(HTTP レスポンス、ヘッダ、バイト内容)。
+    3. `downloadModel` docstring を `>= MIN_MODEL_SIZE` に書き換えてマジックナンバーの将来の漂流を防止。
+- **検証**:
+  - PowerShell `Invoke-WebRequest -OutFile` で `c:\temp\voiceprint-test.onnx` にダウンロードし、hex header が正規 ONNX マジックであることを確認。
+  - `diarizeAudio()` の `loadModel()` パスは自動的に新閾値を継承(共有定数)。
+  - `isModelCached()` も同じ閾値を使い、キャッシュヒットロジックも一貫。
+- **注意**:
+  - ダウンロード後も「InferenceSession 無効」エラーが出る場合は、onnxruntime 1.27.0 + Node.js 20+ を使用し、`asarUnpack` に `node_modules/onnxruntime-node/**/*` が含まれているか確認(v1.20.3 で追加済)。
+- **バックアップ**: backup-202606301237.zip
 # 変更記録 (日本語)
 
 > v1.13.0 以降の記録のみ日本語版で管理します。

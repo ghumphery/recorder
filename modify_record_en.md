@@ -1,3 +1,27 @@
+﻿
+## [2026-06-30 12:37]
+- **version**: 1.20.10 → 1.20.11 (patch: hotfix)
+- **Request**: Users reported voiceprint model downloads keep failing. Logs consistently output "Download incomplete (received only 28283928 bytes); HuggingFace connection failed? Please retry." with the identical byte count every retry.
+- **Root Cause**: v1.20.7 introduced `MIN_MODEL_SIZE = 40 * 1024 * 1024` (40 MB) as the minimum-valid-size threshold, but the actual file size at `https://huggingface.co/welcomyou/campplus-3dspeaker-200k-onnx/resolve/main/campplus_cn_en_common_200k.onnx` is **28,283,928 bytes (~26.97 MB)**, always below 40 MB, so every download is wrongly flagged "incomplete". Verified with PowerShell `Invoke-WebRequest` and `node-fetch` HEAD/GET requests:
+  - `Content-Length: 28283928`
+  - `Content-Type: application/octet-stream`
+  - First 16 bytes = `08-08-12-07-70-79-74-6F-72-63-68-1A-06-32-2E-31` — protobuf ONNX magic (pytorch 2.10.0 exporter) with `xvector / head/conv1 / ReduceMean` nodes, **NOT an LFS pointer or error page**.
+  - Although HF LFS UI shows "~50 MB", that is repo metadata + LFS pointer total. The actual .onnx binary is only ~27 MB. The current `xet-bridge-us` is the xet CAS bridge correctly forwarding the downstream real binary.
+- **Impact**:
+  - Pressing "Download" actually downloads successfully (28 MB written to `.downloading` then renamed), but since 28 MB < 40 MB the validation rejects and the IPC handler returns "download failed".
+  - `isModelCached()` always returns false while the corrupt-limit check blocks legitimate files.
+- **Fix**:
+  - `frontend/electron/voiceprint.js`:
+    1. `MIN_MODEL_SIZE` from `40 * 1024 * 1024` to `25 * 1024 * 1024` (real file is ~27 MB; 25 MB keeps ~7% buffer for safe rejection of truncated/HTML errors).
+    2. Added detailed comment block listing the root cause: HTTP responses, headers, byte content.
+    3. Updated `downloadModel` docstring to use `>= MIN_MODEL_SIZE` to prevent future magic-number drift.
+- **Verification**:
+  - PowerShell `Invoke-WebRequest -OutFile` downloaded to `c:\temp\voiceprint-test.onnx`; hex header confirmed as legal ONNX magic.
+  - `diarizeAudio()` `loadModel()` path automatically inherits the new threshold (shared constant).
+  - `isModelCached()` uses the same threshold, so cache-hit logic stays consistent.
+- **Note**:
+  - If users still hit "Invalid InferenceSession" after download, ensure onnxruntime 1.27.0 + Node.js 20+ and that `node_modules/onnxruntime-node/**/*` is in `asarUnpack` (added in v1.20.3).
+- **Backup**: backup-202606301237.zip
 # Modify Record (English)
 
 > Only records from v1.13.0 onward are maintained in this English version.

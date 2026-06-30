@@ -97,9 +97,34 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 Version History
 
+### v1.20.11 (2026-06-30) — Voiceprint Model Download Hotfix
+
+**Fixes the recurring "Download incomplete (received only 28283928 bytes)" error**:
+
+- **Issue**: v1.20.7 set `MIN_MODEL_SIZE` to 40 MB, but the real model is only ~27 MB (every download returns the same 28,283,928 bytes), so the size validation always rejected the file as "incomplete".
+- **Root cause**: `MIN_MODEL_SIZE` was based on a wrong estimate. The HF LFS UI says "~50 MB" but that is repo metadata + LFS pointer total. Empirically the .onnx binary = 28,283,928 bytes; the first 16 bytes (`08 08 12 07 pytorch`) are a valid ONNX protobuf magic.
+- **Fix**: lower `MIN_MODEL_SIZE` from 40 MB to 25 MB (keeping a ~7% buffer to still reject truncated / HTML error pages). `isModelCached()` and the `diarizeAudio()` model-load check share the same constant.
+- **Workaround**: if downloads still fail, fetch the model manually from `https://huggingface.co/welcomyou/campplus-3dspeaker-200k-onnx/resolve/main/campplus_cn_en_common_200k.onnx`, rename to `campplus_cn_en_common_200k.onnx` and drop it into `~/recoder/voiceprint/`.
+
+### v1.20.10 (2026-06-30) — Cross-Chunk-Boundary Segment Fix
+
+- Fixed segments that straddle two chunks (e.g. 2900–3100 crossing chunk0/chunk1): v1.20.9 only read [2900, 3000) and silently dropped [3000, 3100).
+- New `findChunksForSegment()` enumerates all overlapping chunks; subPcm is concatenated via `Buffer.concat()`.
+
+### v1.20.9 (2026-06-30) — Shared audioChunker Module
+
+- New `frontend/electron/audioChunker.js` (getAudioDuration / splitLongAudio / chunkLongAudioIfNeeded / cleanupStaleChunks) shared by whisper and voiceprint.
+- WhisperJobManager integrates the long-audio chunker; settings panel adds a "Transcribe long audio chunk" selector (off / 30 / 40 / 50 / 60 minutes, default 50).
+- On launch, stale `os.tmpdir()/recoder-chunks-*` and `voiceprint-chunk-*` directories are auto-cleaned.
+
+### v1.20.8 (2026-06-30) — UI Status Bar & Optimistic Jobs
+
+- Status bar shows the actual filename being played (instead of always showing the first audio file in the list).
+- Five job creation points immediately insert a `pending` job into the matching list (transcribeJobList / voiceprintJobList / jobList), so users can stop them the moment they're submitted.
+
 ### v1.20.7 (2026-06-30) — Voiceprint Diarization Tri-Fix
 
-- **No re-download**: when the voiceprint model is already cached (≥40MB), subsequent calls to `downloadModel()` short-circuit the HTTPS request and emit `progressCallback(100)` directly.
+- **No re-download**: when the voiceprint model is already cached (≥25MB), subsequent calls to `downloadModel()` short-circuit the HTTPS request and emit `progressCallback(100)` directly.
 - **Long audio slicing**: audio files ≥60 minutes are auto-split into ≤50-minute WAV chunks before diarization, eliminating OOM / timeout.
 - **Clustering resilience**: too-short (<1.5s) segments are padded ±0.5s; the embedding `numFrames` floor is relaxed from `<5` to `<3`; clustering switches to a two-stage algorithm (neighbor sliding-window merge + global centroid cosine merge) so high-pitched voices such as a child's still resolve into separate speakers instead of collapsing into `Speaker_1`.
 

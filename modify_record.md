@@ -1,3 +1,27 @@
+﻿
+## [2026-06-30 12:37]
+- **version**: 1.20.10 → 1.20.11 (patch: hotfix)
+- **修改要求**: 使用者回報聲紋模型下載反覆失敗，日誌持續輸出「下載不完整 (只收到 28283928 bytes)；HuggingFace 是否連線失敗？請重試。」，每次下載完全相同的位元數。
+- **根因分析**: v1.20.7 加入 `MIN_MODEL_SIZE = 40 * 1024 * 1024` (40 MB) 作為最低有效大小門檻，但實測 `https://huggingface.co/welcomyou/campplus-3dspeaker-200k-onnx/resolve/main/campplus_cn_en_common_200k.onnx` 的真實檔案大小 = **28,283,928 bytes (約 26.97 MB)**，永遠 < 40 MB 因此被誤判「不完整」。已用 PowerShell `Invoke-WebRequest` 與 `node-fetch` HEAD/GET 多重驗證：
+  - `Content-Length: 28283928`
+  - `Content-Type: application/octet-stream`
+  - 前 16 bytes = `08-08-12-07-70-79-74-6F-72-63-68-1A-06-32-2E-31`，這是 protobuf ONNX magic (pytorch 2.10.0 exporter)，含 `xvector / head/conv1 / ReduceMean` 等完整節點，**並非 LFS pointer 也非錯誤頁**。
+  - HF LFS UI 雖然顯示「~50 MB」，是 repo metadata + LFS pointer 的總體感受，實際 .onnx binary 只有約 27 MB。當前 `xet-bridge-us` 是 xet CAS 服務，這個 bridge 此時回傳 28.28 MB 是正常 forward 下游真實 binary。
+- **影響**:
+  - 使用者連按「下載」按鈕，實際下載是成功的（28 MB 寫入 .downloading → rename 到正式檔），但因為 28 MB < 40 MB，判斷式 reject，下載流程給前端回傳「下載失敗」。
+  - 損壞 file 可能留 28 MB 內容（其實內容是合法的），導致 `isModelCached()` 在 28 MB 不再被 reject 之前永遠是 false。
+- **修正方案**:
+  - `frontend/electron/voiceprint.js`：
+    1. `MIN_MODEL_SIZE` 從 `40 * 1024 * 1024` 改為 `25 * 1024 * 1024`（真實約 27 MB，留約 7% buffer，避免誤判合法檔）。
+    2. 加註詳細註解說明根因：哪個 HTTP 回應、哪個檔頭、什麼 byte 內容。
+    3. 更新 downloadModel 的 docstring 改用 `>= MIN_MODEL_SIZE`，避免未來魔術數字漂移。
+- **驗證**:
+  - 已用 PowerShell `Invoke-WebRequest -OutFile` 下載到 `c:\temp\voiceprint-test.onnx` 並驗證 hex header = 合法 ONNX magic。
+  - `diarizeAudio()` 的 `loadModel()` 流程已自動套用新門檻（共用常數）。
+  - `isModelCached()` 已共用同一門檻，快取命中邏輯保持一致。
+- **注意**:
+  - 若仍有使用者下載後報「無效 InferenceSession」，請改用 onnxruntime 1.27.0 + Node.js 20+ 確認 native binary 是否被 asar unpack（v1.20.3 已加 `node_modules/onnxruntime-node/**/*` 至 `asarUnpack`）。
+- **備份檔名**: backup-202606301237.zip
 # 修改日誌 (Modify Record)
 
 ## [2026-06-30 12:15]

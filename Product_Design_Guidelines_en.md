@@ -1,7 +1,12 @@
 # Product Design Guidelines
 
-> **Version**: 1.20.7
+> **Version**: 1.20.11
 > **Last Updated**: 2026-06-30
+
+## v1.20.11 (2026-06-30) — Voiceprint Model Download Hotfix
+- Lower `MIN_MODEL_SIZE` from `40 MB` to `25 MB`, fixing the "Download incomplete (received only 28283928 bytes)" failure loop.
+- **Root cause**: v1.20.7 set the threshold too high. The real `campplus_cn_en_common_200k.onnx` is **28,283,928 bytes (~26.97 MB)** — its first 16 bytes `08 08 12 07 70 79 74 6F 72 63 68 1A 06 32 2E 31` are a valid protobuf ONNX magic (pytorch 2.10.0 exporter).
+- `isModelCached()` and `diarizeAudio()` share the same constant to avoid future magic-number drift.
 
 ## v1.20.7 (2026-06-30) — Voiceprint Tri-Fix
 - `downloadModel()` now checks `isModelCached()` first to skip re-downloading the cached model
@@ -10,7 +15,7 @@
 - `extractSegmentPcm()` pads short (<1.5s) segments with ±0.5s and lowers the floor to 0.3s
 - `extractEmbedding()` loosens the `numFrames < 5` limit to `< 3`
 - `clusterEmbeddings()` rewritten as a two-stage algorithm: neighbour sliding-window median cosine ≥ 0.55 union-find merge, then global centroid cosine ≥ 0.5 greedy merge
-- Unified `MIN_MODEL_SIZE = 40MB`; removed duplicate model-size constants
+- Unified `MIN_MODEL_SIZE = 25MB`; removed duplicate model-size constants
 - New shared `getFfmpegPath()` helper for diarizeAudio / splitLongAudio / extractSegmentPcm
 
 ## Product Vision & Philosophy

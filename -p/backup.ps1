@@ -14,9 +14,10 @@ if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 # 排除清單（依 workrule.md 規範）
 $excludeDirPrefixes = @(
   '\node_modules\', '\dist-electron\', '\dist-electron-build\',
-  '\dist-electron-build2\', '\dist-electron-build3\', '\dist\',
+  '\dist-electron-build2\', '\dist-electron-build3\', '\dist-electron-build4\',
+  '\dist-electron-build5\', '\dist\',
   '\.git\', '\whisper_cpp\', '\model\', '\model_bak\', '\ffmpeg\',
-  '\backup\', '\-p\'
+  '\backup\', '\-p\', '\build\'
 )
 
 # 收集要打包的檔案（絕對路徑）

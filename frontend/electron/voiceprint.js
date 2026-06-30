@@ -28,8 +28,14 @@ let modelLoaded = false
 const MODEL_URL = 'https://huggingface.co/welcomyou/campplus-3dspeaker-200k-onnx/resolve/main/campplus_cn_en_common_200k.onnx'
 const MODEL_FILENAME = 'campplus_cn_en_common_200k.onnx'
 
-// v1.20.7: 模型最低有效大小 40 MB（已統一，原本兩個常數同名衝突）
-const MIN_MODEL_SIZE = 40 * 1024 * 1024
+// v1.20.11: 模型最低有效大小 25 MB
+//   根因：v1.20.7 將 MIN_MODEL_SIZE 設為 40 MB 是依據錯誤估計，
+//   實測 huggingface 上檔案大小 = 28,283,928 bytes (≒26.97 MB)，
+//   永遠 < 40 MB → 每次下載都被誤判「不完整」而失敗。
+//   HF LFS 雖然在 UI 顯示「~50 MB」，但 .onnx binary 本身只有 27 MB 左右。
+//   25 MB 為安全下限，已驗證 c:/temp/voiceprint-test.onnx 為合法 protobuf ONNX
+//   (magic 08 08 12 07 pytorch，含 xvector / head/conv1 / ReduceMean 等節點)。
+const MIN_MODEL_SIZE = 25 * 1024 * 1024
 
 function modelPath() {
   return path.join(os.homedir(), 'recoder', 'voiceprint', MODEL_FILENAME)
@@ -125,7 +131,8 @@ function fetchWithRedirects(url, redirectsLeft = REDIRECT_LIMIT) {
 
 /**
  * 下載聲紋模型
- * v1.20.7: 已下載 (檔案大小 >= 40MB) 時直接 resolve(true)，避免重覆下載
+ * v1.20.7: 已下載 (檔案大小 >= MIN_MODEL_SIZE) 時直接 resolve(true)，避免重覆下載
+ * v1.20.11: MIN_MODEL_SIZE 門檻從 40 MB 改為 25 MB（模型真實大小 ~27 MB）
  */
 function downloadModel(progressCallback) {
   return new Promise((resolve, reject) => {

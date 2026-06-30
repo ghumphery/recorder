@@ -1,7 +1,12 @@
 # 製品設計ガイドライン (Product Design Guidelines)
 
-> **バージョン**: 1.20.7
+> **バージョン**: 1.20.11
 > **最終更新日**: 2026-06-30
+
+## v1.20.11 (2026-06-30) — 声紋モデルダウンロード hotfix
+- `MIN_MODEL_SIZE` を `40 MB` から `25 MB` に引き下げ、「ダウンロード不完全(受信 28283928 bytes のみ)」繰り返し失敗を解消。
+- **根本原因**: v1.20.7 で閾値が大きすぎ。実際の `campplus_cn_en_common_200k.onnx` は **28,283,928 bytes (≒26.97 MB)** — 先頭 16 bytes `08 08 12 07 70 79 74 6F 72 63 68 1A 06 32 2E 31` は正規 protobuf ONNX magic (pytorch 2.10.0 exporter)。
+- `isModelCached()` と `diarizeAudio()` は同じ定数を共有し、将来のマジックナンバーの漂流を防止。
 
 ## v1.20.7 (2026-06-30) — 声紋ラベリング三項目修正
 - `downloadModel()` の冒頭で `isModelCached()` をチェックし、キャッシュ済みモデルの再ダウンロードをスキップ
@@ -10,7 +15,7 @@
 - `extractSegmentPcm()` は短すぎる (<1.5s) セグメントに ±0.5s のパディングを追加し、最小長を 0.3s に引き下げ
 - `extractEmbedding()` は `numFrames < 5` の閾値を `< 3` に緩和
 - `clusterEmbeddings()` を 2 段階アルゴリズムに書き換え：近傍スライディングウィンドウ中央値コサイン ≥ 0.55 で union-find マージ、その後グローバル重心コサイン ≥ 0.5 で貪欲マージ
-- `MIN_MODEL_SIZE = 40MB` に統一、重複するモデルサイズ定数を削除
+- `MIN_MODEL_SIZE = 25MB` に統一、重複するモデルサイズ定数を削除
 - diarizeAudio / splitLongAudio / extractSegmentPcm で共有する新たな `getFfmpegPath()` ヘルパーを追加
 
 ## 製品コアビジョンと哲学 (Product Vision & Philosophy)

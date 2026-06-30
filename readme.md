@@ -97,9 +97,34 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 版本歷史
 
+### v1.20.11 (2026-06-30) — 聲紋模型下載 hotfix
+
+**修正「下載不完整 (只收到 28283928 bytes)」反覆失敗問題**：
+
+- **問題**：v1.20.7 把聲紋模型最低有效大小設為 40 MB，實際模型只有 ~27 MB（每次下載都收到完全相同的 28,283,928 bytes），永遠會被判為「不完整」而 reject
+- **根因**：`MIN_MODEL_SIZE` 錯誤估計。HF LFS UI 雖顯示「~50 MB」，那是 repo metadata + LFS pointer 總體。實測 .onnx binary = 28,283,928 bytes，前 16 bytes = `08 08 12 07 pytorch` 為合法 ONNX protobuf magic
+- **修正**：把 `MIN_MODEL_SIZE` 從 40 MB 改為 25 MB（保留 ~7% buffer，避免誤判 truncate/HTML 錯誤）。`isModelCached()` 與 `diarizeAudio()` 的負載模型檢查同步共用此常數
+- **若仍有問題**：先用瀏覽器直接到 `https://huggingface.co/welcomyou/campplus-3dspeaker-200k-onnx/resolve/main/campplus_cn_en_common_200k.onnx` 手動下載，命名為 `campplus_cn_en_common_200k.onnx` 放到 `~/recoder/voiceprint/` 目錄即可
+
+### v1.20.10 (2026-06-30) — 跨 chunk 邊界 segment 修正
+
+- 修正跨 chunk 邊界 segment (例如 2900~3100 跨 chunk0/chunk1) 在 v1.20.9 中只讀取 [2900, 3000) 而漏掉 [3000, 3100) 的問題
+- 改為 `findChunksForSegment()` 找出所有跨越的 chunks、依序抽取 subPcm、`Buffer.concat()` 拼接
+
+### v1.20.9 (2026-06-30) — 共用 audioChunker 模組
+
+- 抽取 `frontend/electron/audioChunker.js` 共用模組（getAudioDuration / splitLongAudio / chunkLongAudioIfNeeded / cleanupStaleChunks），給 whisper 與 voiceprint 共用
+- WhisperJobManager 整合長音檔切片，設定面板新增「轉寫長音檔切片」選項（不切片 / 30 / 40 / 50 / 60 分鐘，預設 50）
+- 啟動時自動清掉 `os.tmpdir()/recoder-chunks-*` 與 `voiceprint-chunk-*` 殘留
+
+### v1.20.8 (2026-06-30) — UI 狀態列與 Jobs 樂觀更新
+
+- 播放錄音時狀態列顯示對應檔名 (不再誤顯示音檔列表第一個)
+- 五個 Job 起點立即把 pending job 寫入對應 list (transcribeJobList / voiceprintJobList / jobList)，按下按鈕就能看到並能 stop
+
 ### v1.20.7 (2026-06-30) — 聲紋標註三項修正
 
-- **不下載重複**：聲紋模型若已下載 (≥40MB) 再呼叫 `downloadModel()` 直接走快取、不重發 HTTPS 請求
+- **不下載重複**：聲紋模型若已下載 (≥25MB) 再呼叫 `downloadModel()` 直接走快取、不重發 HTTPS 請求
 - **長音檔切片**：待辨識音檔 ≥60 分鐘時自動切成 ≤50 分鐘 WAV chunks 再進行說話者標註，避免 OOM/timeout
 - **辨識容錯**：過短 (<1.5s) segment 自動 ±0.5s padding；embedding numFrames 限制 <5 放寬至 <3；改用兩段式聚類（鄰近滑動視窗合併 + 全域 centroid 聚類），協助辨識女聲/小女孩等高音差異較大的組合且避免全部歸類為 Speaker_1
 

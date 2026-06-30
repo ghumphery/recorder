@@ -97,9 +97,34 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 
 ## 📦 バージョン履歴
 
+### v1.20.11 (2026-06-30) — 声紋モデルダウンロード hotfix
+
+**「ダウンロード不完全(受信 28283928 bytes のみ)」の繰り返し失敗を修正**:
+
+- **問題**: v1.20.7 で `MIN_MODEL_SIZE` を 40 MB に設定したが、実モデルは ~27 MB(毎回同じ 28,283,928 bytes)しかないため、サイズ検証が常に「不完全」として reject していた。
+- **根本原因**: `MIN_MODEL_SIZE` の見積もりが誤っていた。HF LFS UI は「~50 MB」と表示されるが、これは repo metadata + LFS pointer の合計。実 .onnx binary = 28,283,928 bytes、先頭 16 bytes (`08 08 12 07 pytorch`) は正規 ONNX protobuf magic。
+- **修正**: `MIN_MODEL_SIZE` を 40 MB から 25 MB に引き下げ(~7% のバッファで truncate / HTML エラーは引き続き reject)。`isModelCached()` と `diarizeAudio()` のモデルロード検査は同じ定数を共有。
+- **手動回避策**: ダウンロードが失敗する場合は `https://huggingface.co/welcomyou/campplus-3dspeaker-200k-onnx/resolve/main/campplus_cn_en_common_200k.onnx` を手動ダウンロード→`campplus_cn_en_common_200k.onnx` にリネーム→`~/recoder/voiceprint/` に配置。
+
+### v1.20.10 (2026-06-30) — チャンク境界を跨ぐセグメント修正
+
+- v1.20.9 でチャンク境界を跨ぐセグメント(例: 2900~3100 で chunk0/chunk1 を跨ぐ)が [2900, 3000) のみ読み込み [3000, 3100) をサイレントに落としていたバグを修正。
+- 新 `findChunksForSegment()` で跨がる全チャンクを列挙、subPcm を `Buffer.concat()` で連結。
+
+### v1.20.9 (2026-06-30) — audioChunker 共有モジュール
+
+- 新 `frontend/electron/audioChunker.js`(getAudioDuration / splitLongAudio / chunkLongAudioIfNeeded / cleanupStaleChunks)を whisper と voiceprint で共有。
+- WhisperJobManager に長時間音声チャンク処理を統合、設定パネルに「長音ファイル分割」セレクタ(オフ / 30 / 40 / 50 / 60 分、デフォルト 50)を追加。
+- 起動時に `os.tmpdir()/recoder-chunks-*` と `voiceprint-chunk-*` の残留を自動削除。
+
+### v1.20.8 (2026-06-30) — UI ステータスバー & オプティミスティック Jobs
+
+- 再生中のステータスバーが実際のファイル名を表示(以前は常に音声ファイルリストの最初の 1 件を表示していた)。
+- 5 つのジョブ作成ポイントで `pending` ジョブを対応するリスト(transcribeJobList / voiceprintJobList / jobList)に即挿入、ボタン押下直後に停止可能。
+
 ### v1.20.7 (2026-06-30) — 声紋ラベリング三項目修正
 
-- **再ダウンロード回避**：声紋モデルが既にキャッシュ済み (≥40MB) の場合、`downloadModel()` を呼び出しても HTTPS リクエストを発行せず `progressCallback(100)` を直接返す
+- **再ダウンロード回避**：声紋モデルが既にキャッシュ済み (≥25MB) の場合、`downloadModel()` を呼び出しても HTTPS リクエストを発行せず `progressCallback(100)` を直接返す
 - **長音ファイルの分割**：60 分以上の音声ファイルは話者ラベリング前に 50 分以下の WAV チャンクへ自動分割し、OOM / タイムアウトを防止
 - **クラスタリング耐性**：短すぎる (<1.5s) セグメントは ±0.5s パディング、embedding の `numFrames` 閾値を `<5` から `<3` に緩和、クラスタリングは 2 段階方式（隣接スライディングウィンドウマージ + グローバル重心コサインマージ）に変更し、小女孩などの高音も `Speaker_1` への集約ではなく別話者として分離
 
