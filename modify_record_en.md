@@ -1,4 +1,28 @@
-﻿
+
+
+## [2026-06-30 13:41]
+- **version**: No bump (docs-only patch, no code changes)
+- **Request**: Establish a unified design contract for "any future Job type" so that adding a new JobManager beyond LLM / Whisper / Voiceprint does not require reinventing field shapes, IPC channels, or UI bindings from scratch. Also closes a documentation gap in `Product_Design_Guidelines.md` regarding the Jobs module.
+- **Plan**:
+  - `Product_Design_Guidelines.md`: Insert new §14 "Cross-Module Async Job Architecture (Job Manager Pattern) — Contract for Future Jobs" at the top of the "Functional Modules & Business Logic" section (before §13). §14 covers:
+    - 14.1 Goals and design philosophy (non-blocking UI / single in-flight / dual-channel IPC / recoverable / cancellable)
+    - 14.2 Unified Job object schema (id/type/status/params/progress/result/error/log/timestamps)
+    - 14.3 State machine (pending → running → completed/failed/cancelled, no skipping)
+    - 14.4 Abstract JobManager interface table (addJob/processNext/cancelJob/getStatus/listJobs/deleteJob + optional cancelAll/clearHistory) + private helpers (_generateId/_log/_sendUpdate/_persist)
+    - 14.5 IPC channel naming and signatures (`<prefix>:jobSubmit/jobStatus/jobList/jobCancel/jobDelete` + `<prefix>:jobUpdate` push)
+    - 14.6 Persistence (default none; jobs ≥ 30 min use `~/.recoder/jobs.json`, cap 50)
+    - 14.7 preload.js exposure rules
+    - 14.8 UI & i18n rules (App.vue data + forced i18n keys)
+    - 14.9 Reference-implementation table (LlmJobManager / WhisperJobManager / VoiceprintJobManager)
+  - `Product_Design_Guidelines_en.md`: Translate §14 (location: before §11)
+  - `Product_Design_Guidelines_ja.md`: Translate §14 (location: before v1.20.7 heading)
+- **Result**:
+  - All three `Product_Design_Guidelines*.md` gained §14 as the contract layer for any future JobManager.
+  - Historical sections (§11 WhisperJobManager, §12 whisper-cli greedy decoding, …) were left in place — not renumbered.
+  - No JS / JSON / i18n changes — version stays at 1.20.11.
+  - Expected benefit: new job types can verify their design against the §14 checklist instead of designing each in isolation.
+- **Backup**: backup-202606301341.zip
+
 ## [2026-06-30 12:37]
 - **version**: 1.20.10 → 1.20.11 (patch: hotfix)
 - **Request**: Users reported voiceprint model downloads keep failing. Logs consistently output "Download incomplete (received only 28283928 bytes); HuggingFace connection failed? Please retry." with the identical byte count every retry.

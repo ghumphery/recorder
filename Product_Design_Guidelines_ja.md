@@ -8,6 +8,141 @@
 - **根本原因**: v1.20.7 で閾値が大きすぎ。実際の `campplus_cn_en_common_200k.onnx` は **28,283,928 bytes (≒26.97 MB)** — 先頭 16 bytes `08 08 12 07 70 79 74 6F 72 63 68 1A 06 32 2E 31` は正規 protobuf ONNX magic (pytorch 2.10.0 exporter)。
 - `isModelCached()` と `diarizeAudio()` は同じ定数を共有し、将来のマジックナンバーの漂流を防止。
 
+### 14. モジュール横断非同期 Job 架構仕様（Job Manager Pattern）— 未来の Job 作成契約
+
+> **位置付け**: 本節は**未来に任何類型の Job** を新規追加する際に必ず遵守すべき設計規約です。§11〜13 は歷史實例（v1.14.0 LlmJobManager / v1.19.0 WhisperJobManager / v1.20.0 Jobs UI）であり、§14 はクラス横断適用の**契約層**です。新しい JobManager は本節のすべてのサブセクションを満たさなければ master に merge できません。
+
+#### 14.1 目標と設計哲学
+- **UI をブロックしない**：音声認識、LLM、話者ラベリングは背景で 5〜120 分走る可能性がある。呼び出し側は fire-and-forget で、ポタン押下後即座に jobId を返す。
+- **同一マネージャで 1 in-flight 制限**：**同一種類の JobManager**（whisper など）は同時に 1 つだけ実行。**違う種類は並行可**（whisper が走っている間に LLM を走らせることは可能）。
+- **IPC ブッシュ + ポーリング二重ルート**：レンダラー側は `*:jobUpdate` を購読してライブ進捗を受け取り、隨時 `*:jobStatus(jobId)` で再接続や状態確認が可能。
+- **再開可能**：長時間タスク（≥ 30 分）は `~/.recoder/jobs.json` 永続化を推奨。短時間はメモリのままで可。
+- **キャンセル可能**：running 中の Job は `cancelJob` で即座に停止できる必要があり（子プロセス kill + cancelled にマーク）、UI は新しい状態を反映しなければならない。
+
+#### 14.2 Job オブジェクト統一スキーマ
+新しい JobManager は以下のフィールドレイアウトを使用しなければならない：
+```js
+{
+  id: string,                  // UUID v4 — cancel/query で使用
+  type: 'transcribe'|'optimize'|'translate'|'summary'|'aiQuery'|'diarize'|<new_type>,
+  status: 'pending'|'running'|'completed'|'failed'|'cancelled',
+  params: object,              // サブミット時の入力
+  progress: {                   // 任意フィールド、プログレスバーで使用
+    percent: number(0-100),
+    batch?: number, totalBatches?: number,
+    currentChunk?: number, totalChunks?: number,
+  },
+  result: any,                 // 完了後の返り値（型ごとに形が異なる）
+  error: string|null,          // status === 'failed' の時にセット
+  log: string[],               // ログ蓄積（Modal ビュアーで使用）
+  createdAt: ISO,
+  startedAt: ISO|null,
+  completedAt: ISO|null,
+}
+```
+
+#### 14.3 ステートマシン（スキップ不可）
+```
+pending → running → completed
+                    \→ failed
+                    \→ cancelled
+```
+- `processNext()` が Job を取り出すと、いますぐ `running` に遷移して `startedAt` をスタンプする。
+- **`pending → completed` は禁止** — 必ず `running` を経由する。
+- どんな例外も catch し、必ず `status: 'failed'` に変換（`error` もセット）。
+- UI からのキャンセル：running → cancelled（+ child kill）；pending → キューから除去し cancelled にマーク。
+
+#### 14.4 JobManager 抽象インターフェース（必須実装）
+| メソッド | シグネチャ | 必須実装項目 |
+|---|---|---|
+| `addJob(params)` | `→ Job` | `jobQueue` に push し、新しい Job を返す（`id` 付き）。同種類で既に 1 in-flight の場合、キューに入るか拒絶するかを自マネージャが決めるが、契約をドキュメント化必須。 |
+| `processNext()` | `async` | 内部ループ：in-flight がなければ head を取り出し、`running` に反転し `startedAt` をセットし `_executeJob(job)` を起動し、`progress/result/error/completedAt` を書く。例外は**必ず** try/catch し `failed` に変換する。 |
+| `cancelJob(jobId)` | `→ boolean` | `pending`：queue splice + cancelled にマーク。`running`：`child.kill('SIGTERM')` + cancelled + 完了時刻スタンプ。他状態：`false` 返却。 |
+| `getStatus(jobId)` / `getJobStatus(jobId)` | `→ Job\|null` | active / queue / history を横断して検索。`getJobStatus` は LLM と話者ラベリングの命名一貫性のための別名。 |
+| `listJobs()` | `→ Job[]` | 全部返す（active + queue + history）、Jobs パネルでレンダリングされる。 |
+| `deleteJob(jobId)` | `→ boolean` | running：最初に cancel。pending：queue splice。history：splice。実際に削除したかどうかを返す。 |
+| `cancelAll()` (optional) | `async` | **Whisper は必須** — `before-quit` で呼び出し、子プロセスが reap されゾンビを残さない。短時間 Job は省略可。 |
+| `clearHistory()` (optional) | `void` | **Whisper は必須** — 一括クリア、「clearAll」UI ボタンで使用。 |
+
+**必須プライベートヘルパー**：
+- `_generateId()` — UUID v4、Node 內建 `crypto.randomUUID()` を使用。
+- `_log(job, message)` — `job.log` に push + `appLog` に転送（ISO タイムスタンプ）。
+- `_sendUpdate(job)` — `mainWindow.webContents.send('<prefix>:jobUpdate', job)`。
+- `_persist()` (optional) — Whisper で使用、`jobHistory` を `~/.recoder/jobs.json` に書き込む、上限 50。`_loadFromDisk()` は `app.ready` で呼出して `jobHistory` を復元。
+
+#### 14.5 IPC チャネル命名と署名（レンダラ契約）
+新しい JobManager は必ず以下の IPC を登錄する必要がある（`<prefix>` は種類のプレフィックス： `llm`、`transcribe`、`voiceprint` など）：
+```js
+ipcMain.handle('<prefix>:jobSubmit', async (event, params) =>
+  ({ success: true, jobId: this.addJob(params).id }))
+
+ipcMain.handle('<prefix>:jobStatus', async (event, { jobId }) =>
+  ({ success: true, job: this.getStatus(jobId) }))
+
+ipcMain.handle('<prefix>:jobList', async () =>
+  ({ success: true, jobs: this.listJobs() }))
+
+ipcMain.handle('<prefix>:jobCancel', async (event, { jobId }) =>
+  ({ success: true, cancelled: this.cancelJob(jobId) }))
+
+ipcMain.handle('<prefix>:jobDelete', async (event, { jobId }) =>
+  ({ success: true, deleted: this.deleteJob(jobId) }))
+```
+
+**ブッシュイベント**（preload で購読）：
+```
+event '<prefix>:jobUpdate'  → JobObject
+```
+
+例外：Whisper はレガシー互換のため `<prefix>:event` チャネルを使う（既存レンダラーが使用中）。新しい JobManager は常に `jobUpdate` を使うことを推奨。
+
+#### 14.6 永続化仕様
+- **デフォルトは永続化なし**：メモリのみ。再起動後 `pending`/`running` Job は失われる（許容）。
+- **長時間 Job（≥ 30 分）**は Whisper の JSON パターンを推奨：
+  - 保存先：`~/.recoder/jobs.json`（OS ホームディレクトリ下）
+  - 上限：最新 50 件を保存
+  - 保存タイミング：`_sendUpdate()` 後に `_persist()` を呼ぶ
+  - 読み込みタイミング：`app.ready` で `_loadFromDisk()` を呼び出して `jobHistory` をリストア
+  - **スキーマ**：JSON に列化、ただし `params / result / log` は巨大になり得るので `log` は最新 5 行のみ保存
+
+#### 14.7 preload.js 露出ルール
+新しい JobManager ごとに `frontend/electron/preload.js` に以下のブロックを追加する：
+```js
+xxxJobSubmit: (params) => ipcRenderer.invoke('<prefix>:jobSubmit', params),
+xxxJobStatus: (p) => ipcRenderer.invoke('<prefix>:jobStatus', p),
+xxxJobList: () => ipcRenderer.invoke('<prefix>:jobList'),
+xxxJobCancel: (p) => ipcRenderer.invoke('<prefix>:jobCancel', p),
+xxxJobDelete: (p) => ipcRenderer.invoke('<prefix>:jobDelete', p),
+onXxxJobUpdate: (cb) => {
+  const h = (event, data) => cb(data)
+  ipcRenderer.on('<prefix>:jobUpdate', h)
+  return () => ipcRenderer.removeListener('<prefix>:jobUpdate', h)
+},
+```
+
+#### 14.8 UI と i18n ルール
+- **`frontend/src/App.vue`**：
+  - data に `xxxJobList: []` を追加、`mounted` で1回 load
+  - `window.electronAPI.onXxxJobUpdate(...)` を購読して `xxxJobList` を更新
+  - `totalInFlightJobs` 計算プロパティは **全種類**の `pending + running` を集約
+  - Jobs パネルに `<絵文字> <種類>` タブを追加してそのリストを表示
+  - Stop / Show Log / Delete などのアクションボタンはステータスを一貫させるため **必ず** 関連 list を再取得する
+- **三言語 i18n** — `frontend/src/i18n/{zh-TW,en,ja}.js` に以下を追加：
+  - `jobs.type.<type>` — 例：`jobs.type.optimize` = '✨ 最適化'
+  - `jobs.status.<status>` — 例：`jobs.status.running` = '🟡 実行中'
+  - `jobs.action.{stop|showLog|delete|clearAll|refresh|close}`
+  - `jobs.tab.<種類>` / `jobs.panelTitle`
+- **App.vue でハードコードした絵文字+ロケール文字列は禁止**。すべての UI 文字列は i18n key を通す。
+
+#### 14.9 三つの実装參考實例（合格例・例外象の兩方）
+| JobManager | 導入 | 主な用途 | 永続化 | IPC チャネルプレフィックス |
+|---|---|---|---|---|
+| LlmJobManager | v1.14.0 | optimize / translate / summary / aiQuery | 無し（メモリ） | `llm:` |
+| WhisperJobManager | v1.19.0 | 音声轉寫（チャンク対応） | ✅ `~/.recoder/jobs.json` | `transcribe:` |
+| VoiceprintJobManager | v1.20.2 | 話者ラベリング | 無し（メモリ） | `voiceprint:` |
+
+新しい種類（例：vMix ミックス、ジョブ一括集約、バッチ LLM）は上表と本節サブセクション両方に従わなければならない。
+
 ## v1.20.7 (2026-06-30) — 声紋ラベリング三項目修正
 - `downloadModel()` の冒頭で `isModelCached()` をチェックし、キャッシュ済みモデルの再ダウンロードをスキップ
 - `getAudioDuration()` は ffmpeg stderr をパースして音声長を取得

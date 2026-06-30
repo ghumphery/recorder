@@ -1,4 +1,27 @@
-﻿
+
+## [2026-06-30 13:41]
+- **version**: 不升（純文件補充，無程式碼變動）
+- **修改要求**: 為「未來新增任何類型 Job」建立統一設計契約，避免新增 LLM/Whisper/Voiceprint 之外的 JobManager 時各自發明欄位、IPC channel 與 UI 設計，並補足現有 Product_Design_Guidelines.md 在 Jobs 模組方面的規範缺口。
+- **修改規劃**:
+  - `Product_Design_Guidelines.md`：在「功能模組與業務邏輯」章節最前（§13 之前）新增 §14「跨模組非同步 Job 架構規範（Job Manager Pattern）— 未來 Job 製作契約」
+    - 14.1 目標與設計哲學（不阻塞 UI / 單一 in-flight / 雙軌 IPC / 可恢復 / 可取消）
+    - 14.2 Job 物件統一結構（id/type/status/params/progress/result/error/log/時間戳）
+    - 14.3 狀態機（pending → running → completed/failed/cancelled，不允許跳過）
+    - 14.4 JobManager 抽象介面表（addJob/processNext/cancelJob/getStatus/listJobs/deleteJob + cancelAll/clearHistory 選用）+ 私有 helper（_generateId/_log/_sendUpdate/_persist）
+    - 14.5 IPC channel 命名與簽名（<prefix>:jobSubmit/jobStatus/jobList/jobCancel/jobDelete + <prefix>:jobUpdate 推送）
+    - 14.6 持久化規範（預設無，≥ 30 分 Job 用 ~/.recoder/jobs.json，cap 50）
+    - 14.7 preload.js 暴露規範
+    - 14.8 UI 與 i18n 規範（App.vue data + i18n key 強制）
+    - 14.9 三個實作參考實例表（LlmJobManager/WhisperJobManager/VoiceprintJobManager）
+  - `Product_Design_Guidelines_en.md`：翻譯同步 §14（位置：§11 之前）
+  - `Product_Design_Guidelines_ja.md`：翻譯同步 §14（位置：v1.20.7 章節之前）
+- **修改結果**:
+  - 三語 Product_Design_Guidelines*.md 完成 §14，作為未來任何新 JobManager 的設計與維運契約
+  - 既有 §11 (WhisperJobManager)、§12 (whisper-cli greedy) 等歷史章節保持原貌未被移動
+  - 無 JS / JSON / i18n 變動（純文件），故版本號不升
+  - 預期效益：未來新增任何 type 的 job 時，可對照 §14 清單逐項驗證，避免 IPC 與狀態機再次各自實現
+- **備份檔名**: backup-202606301341.zip
+
 ## [2026-06-30 12:37]
 - **version**: 1.20.10 → 1.20.11 (patch: hotfix)
 - **修改要求**: 使用者回報聲紋模型下載反覆失敗，日誌持續輸出「下載不完整 (只收到 28283928 bytes)；HuggingFace 是否連線失敗？請重試。」，每次下載完全相同的位元數。

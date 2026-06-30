@@ -124,6 +124,141 @@
 ## Functional Modules & Business Logic
 
 
+### 14. Cross-Module Async Job Architecture (Job Manager Pattern) — Contract for Future Jobs
+
+> **Scope**: This section is the **design contract** that any future Job type MUST follow. §11–13 are historical instances (v1.14.0 LlmJobManager / v1.19.0 WhisperJobManager / v1.20.0 Jobs UI); §14 is the cross-type **specification layer**. Any new JobManager must satisfy every sub-section below to be allowed into `master`.
+
+#### 14.1 Goals and Design Philosophy
+- **Never block the UI**: Speech-to-text, LLM, and diarization may run in the background for 5–120 minutes. Callers MUST be fire-and-forget: the API returns `jobId` instantly when the user presses a button.
+- **Single in-flight per manager**: At most **one** running job per JobManager kind (e.g. one whisper job). **Different kinds can run in parallel** (a long whisper transcription can be running while the user starts an LLM optimize).
+- **Dual-channel IPC (push + poll)**: The renderer subscribes to `*:jobUpdate` for live progress, and may call `*:jobStatus(jobId)` at any time to recover or confirm state.
+- **Recoverable**: Long jobs (≥ 30 minutes) SHOULD support `~/.recoder/jobs.json` persistence; short jobs may live in memory only.
+- **Cancellable**: A `running` job MUST be cancellable via `cancelJob` (kill the child process + mark `cancelled`) and the UI MUST reflect the new status.
+
+#### 14.2 Unified Job Object Schema
+Every new JobManager MUST use the following field layout:
+```js
+{
+  id: string,                  // UUID v4 — owner for cancel / query
+  type: 'transcribe'|'optimize'|'translate'|'summary'|'aiQuery'|'diarize'|<new_type>,
+  status: 'pending'|'running'|'completed'|'failed'|'cancelled',
+  params: object,              // original input at submission time
+  progress: {                   // any field is optional; used by the progress bar
+    percent: number(0-100),
+    batch?: number, totalBatches?: number,
+    currentChunk?: number, totalChunks?: number,
+  },
+  result: any,                 // returned payload on completion (shape is type-specific)
+  error: string|null,          // set when status === 'failed'
+  log: string[],               // accumulated log lines for the Modal viewer
+  createdAt: ISO,
+  startedAt: ISO|null,
+  completedAt: ISO|null,
+}
+```
+
+#### 14.3 State Machine (no skipping)
+```
+pending → running → completed
+                    \→ failed
+                    \→ cancelled
+```
+- When `processNext()` pulls a job, transition immediately to `running` and stamp `startedAt`.
+- **`pending → completed` is forbidden** — must always go through `running`.
+- Any thrown exception MUST be caught and converted to `status: 'failed'` (and `error` set).
+- A cancellation from the UI: from `running` → `cancelled` (plus child kill); from `pending` → removed from queue and marked `cancelled`.
+
+#### 14.4 JobManager Abstract Interface (must implement)
+| Method | Signature | Required behavior |
+|---|---|---|
+| `addJob(params)` | `→ Job` | Push into `jobQueue` and return the new Job (with `id`). If a job of the same kind is already running, the manager can queue it or reject — its choice, but the contract must be documented. |
+| `processNext()` | `async` | Internal loop: if no active job, dequeue the head, flip to `running`, set `startedAt`, invoke `_executeJob(job)`, then write `progress/result/error/completedAt`. Exceptions MUST be caught and converted to `failed`. |
+| `cancelJob(jobId)` | `→ boolean` | `pending`: splice from queue + mark `cancelled`. `running`: `child.kill('SIGTERM')` + mark `cancelled` + stamp `completedAt`. Other states: return `false`. |
+| `getStatus(jobId)` / `getJobStatus(jobId)` | `→ Job\|null` | Search across active / queue / history. The `getJobStatus` alias exists for LLM and voiceprint naming consistency. |
+| `listJobs()` | `→ Job[]` | Return everything (active + queue + history) for the Jobs panel. |
+| `deleteJob(jobId)` | `→ boolean` | `running`: cancel first. `pending`: queue splice. `history`: splice. Return whether anything was actually removed. |
+| `cancelAll()` (optional) | `async` | **Whisper MUST implement** — called on `before-quit` so the child process is reaped and no zombies linger. Short jobs may skip. |
+| `clearHistory()` (optional) | `void` | **Whisper MUST implement** — bulk wipe, used by the “clearAll” UI button. |
+
+**Required private helpers**:
+- `_generateId()` — UUID v4 via node built-in `crypto.randomUUID()`.
+- `_log(job, message)` — push into `job.log` and forward to `appLog` (using ISO timestamp).
+- `_sendUpdate(job)` — `mainWindow.webContents.send('<prefix>:jobUpdate', job)`.
+- `_persist()` (optional) — for whisper, write `jobHistory` to `~/.recoder/jobs.json`, capped at 50. `_loadFromDisk()` is called on `app.ready` to repopulate `jobHistory`.
+
+#### 14.5 IPC Channel Naming and Signatures (renderer contract)
+Every new JobManager MUST register the following IPC (where `<prefix>` is the kind-specific prefix, such as `llm`, `transcribe`, `voiceprint`):
+```js
+ipcMain.handle('<prefix>:jobSubmit', async (event, params) =>
+  ({ success: true, jobId: this.addJob(params).id }))
+
+ipcMain.handle('<prefix>:jobStatus', async (event, { jobId }) =>
+  ({ success: true, job: this.getStatus(jobId) }))
+
+ipcMain.handle('<prefix>:jobList', async () =>
+  ({ success: true, jobs: this.listJobs() }))
+
+ipcMain.handle('<prefix>:jobCancel', async (event, { jobId }) =>
+  ({ success: true, cancelled: this.cancelJob(jobId) }))
+
+ipcMain.handle('<prefix>:jobDelete', async (event, { jobId }) =>
+  ({ success: true, deleted: this.deleteJob(jobId) }))
+```
+
+**Push event** (subscribed to in preload):
+```
+event '<prefix>:jobUpdate'  → JobObject
+```
+
+Exception: Whisper uses the legacy `<prefix>:event` channel for backward compatibility (the existing renderer still consumes it). New JobManagers SHOULD always use `jobUpdate`.
+
+#### 14.6 Persistence Guidelines
+- **By default, no persistence** — memory only. After a restart, `pending`/`running` jobs are lost (acceptable).
+- **Long jobs (≥ 30 minutes)** SHOULD follow Whisper’s JSON pattern:
+  - Location: `~/.recoder/jobs.json` under the OS home directory
+  - Cap: keep the latest 50 entries
+  - Write timing: invoke `_persist()` after each `_sendUpdate()`
+  - Read timing: invoke `_loadFromDisk()` on `app.ready` to populate `jobHistory`
+  - Schema: store as plain JSON; `params`, `result`, and `log` can be large — keep only the last 5 `log` lines per entry
+
+#### 14.7 preload.js Exposure Rules
+Each new JobManager MUST add the following block to `frontend/electron/preload.js`:
+```js
+xxxJobSubmit: (params) => ipcRenderer.invoke('<prefix>:jobSubmit', params),
+xxxJobStatus: (p) => ipcRenderer.invoke('<prefix>:jobStatus', p),
+xxxJobList: () => ipcRenderer.invoke('<prefix>:jobList'),
+xxxJobCancel: (p) => ipcRenderer.invoke('<prefix>:jobCancel', p),
+xxxJobDelete: (p) => ipcRenderer.invoke('<prefix>:jobDelete', p),
+onXxxJobUpdate: (cb) => {
+  const h = (event, data) => cb(data)
+  ipcRenderer.on('<prefix>:jobUpdate', h)
+  return () => ipcRenderer.removeListener('<prefix>:jobUpdate', h)
+},
+```
+
+#### 14.8 UI and i18n Rules
+- **`frontend/src/App.vue`**:
+  - Add `xxxJobList: []` to `data()`; load it once on `mounted`.
+  - Subscribe via `window.electronAPI.onXxxJobUpdate(...)` and update `xxxJobList`.
+  - The `totalInFlightJobs` computed property aggregates `pending + running` across **every** kind.
+  - The Jobs panel adds an `<emoji> <kind>` tab that renders that list.
+  - Any action button (Stop / Show Log / Delete) MUST re-fetch the relevant list to avoid stale state.
+- **i18n** — in `frontend/src/i18n/{zh-TW,en,ja}.js`, add:
+  - `jobs.type.<type>` — example: `jobs.type.optimize` = '✨ Optimize'
+  - `jobs.status.<status>` — example: `jobs.status.running` = '🟡 Running'
+  - `jobs.action.{stop|showLog|delete|clearAll|refresh|close}`
+  - `jobs.tab.<kind>` / `jobs.panelTitle`
+- **Hard-coded emoji + locale strings in App.vue are NOT allowed**. All UI strings must go through i18n keys.
+
+#### 14.9 Three Reference Implementations (what good looks like vs. exception)
+| JobManager | Introduced | Purpose | Persistence | IPC channel prefix |
+|---|---|---|---|---|
+| LlmJobManager | v1.14.0 | optimize / translate / summary / aiQuery | None (memory) | `llm:` |
+| WhisperJobManager | v1.19.0 | Audio transcription (with chunking support) | ✅ `~/.recoder/jobs.json` | `transcribe:` |
+| VoiceprintJobManager | v1.20.2 | Speaker diarization | None (memory) | `voiceprint:` |
+
+Any new job type (e.g., vMix mixing, splicing, batch LLM) MUST follow the table above AND every sub-section of §14.
+
 ### 11. v1.19.0 new — WhisperJobManager async transcription (backend)
 The `WhisperJobManager` class in `frontend/electron/main.js` manages three-state machine: jobQueue / activeJob / jobHistory. Frontend `startTranscribe()` is now fire-and-forget, returns `jobId` immediately, and runs in background. Uses `transcribe:event` to push running / completed / failed / cancelled states. Persists to `~/.recoder/jobs.json` (last 50 records). On App close, `cancelAll()` cancels all in-flight jobs.
 

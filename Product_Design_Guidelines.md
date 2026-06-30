@@ -113,6 +113,141 @@
 ## 功能模組與業務邏輯 (Functional Modules & Business Logic)
 
 
+### 14. 跨模組非同步 Job 架構規範（Job Manager Pattern）— 未來 Job 製作契約
+
+> **定位**：本節是**未來新增任何類型 Job**時必須遵循的設計規約。§11~13 為歷史實例（v1.14.0 LlmJobManager / v1.19.0 WhisperJobManager / v1.20.0 Jobs UI），§14 才是跨類別適用的**契約層**。任何新的 JobManager 必須符合本節全部子節才能 merge 到 master。
+
+#### 14.1 目標與設計哲學
+- **不阻塞 UI**：語音轉譯、LLM、聲紋三類任務都可能在背景跑 5~120 分鐘；呼叫端必須 fire-and-forget，按按鈕後立即收到 jobId。
+- **單一 in-flight 限制**：**同一個** JobManager 種類（如 whisper）同時只跑 1 個；**不同類別可並行**（whisper 跑 1 個時可再按 LLM 或聲紋）。
+- **IPC 推送 + 查詢雙軌**：渲染端訂閱 `*:jobUpdate` 即時進度更新 + 隨時可用 `*:jobStatus(jobId)` 重連或確認。
+- **可恢復**：長任務（≥ 30 分鐘）宜支援 `~/.recoder/jobs.json` 持久化；短任務可僅依賴記憶體。
+- **可取消**：running 中的 job 必須能透過 cancelJob 立即停掉（kill 子進程 + 標 cancelled），並讓 UI 反映新狀態。
+
+#### 14.2 Job 物件統一結構（schema）
+新 JobManager 必須使用以下欄位：
+```js
+{
+  id: string,                  // UUID v4，owner 用於 cancel / query
+  type: 'transcribe'|'optimize'|'translate'|'summary'|'aiQuery'|'diarize'|<new_type>,
+  status: 'pending'|'running'|'completed'|'failed'|'cancelled',
+  params: object,              // 提交時的 input（e.g. {audioPath, modelSize, ...}）
+  progress: {                   // progress bar 顯示用，any field is optional
+    percent: number(0~100),
+    batch?: number, totalBatches?: number,
+    currentChunk?: number, totalChunks?: number,
+  },
+  result: any,                 // 完成後的回傳，由型別決定形狀
+  error: string|null,
+  log: string[],               // 累積 log line（每筆 job 可在 Modal 顯示）
+  createdAt: ISO,
+  startedAt: ISO|null,
+  completedAt: ISO|null,
+}
+```
+
+#### 14.3 狀態機（不允許跳過）
+```
+pending → running → completed
+                    \→ failed
+                    \→ cancelled
+```
+- `pending` 一經被 `processNext()` 取出立刻轉 `running`。
+- **不允許 `pending → completed`** 跳過 running；中間狀態必須經過。
+- 任何拋出的例外 → catch 內轉 `failed`（寫到 `error`）。
+- 使用者/UI 主動取消 → 從 running 走到 `cancelled`（並 kill 子進程）；從 pending 取消則直接從 queue 移除，並轉 `cancelled`。
+
+#### 14.4 JobManager 抽象介面（必須實作）
+| 方法 | 簽名 | 用途與實作要求 |
+|---|---|---|
+| `addJob(params)` | `→ Job` | 推入 `jobQueue`，立即回傳含 `id` 的 Job 物件；若該類別已在 in-flight，可先拒絕或併入 queue，由 JobManager 自行決策。 |
+| `processNext()` | `async` | 內部迴圈：若無 in-flight，從 queue 取出 head、轉 `running`、設定 `startedAt`、呼叫 `_executeJob(job)`、寫入 `progress/result/error/completedAt`。**例外一定要 try/catch**並轉 `failed`。 |
+| `cancelJob(jobId)` | `→ boolean` | pending：從 queue splice + 標 cancelled；running：呼叫 `child.kill('SIGTERM')` + 標 cancelled + 結束時間；其他狀態：傳回 false。 |
+| `getStatus(jobId)` / `getJobStatus(jobId)` | `→ Job\|null` | 從 active/queue/history 任一陣列找。getJobStatus 是為 LLM 與聲紋與語意一致保留的別名。 |
+| `listJobs()` | `→ Job[]` | 回傳全部（active + queue + history）供前端 Jobs 面板使用。 |
+| `deleteJob(jobId)` | `→ boolean` | running：先 cancel；pending：queue splice；history：splice。回傳是否真的被刪。 |
+| `cancelAll()` (可選) | `async` | **whisper 必須實作**：App `before-quit` 時呼呾為統一清场以避免殭屍進程；其他短任務可省略。 |
+| `clearHistory()` (可選) | `void` | **whisper 必須實作**：批次清空，`jobs.action.clearAll` 按鈕使用。 |
+
+**必須的私有 helper**：
+- `_generateId()` — UUID v4（用 node 內建 `crypto.randomUUID()`）。
+- `_log(job, message)` — 推入 `job.log` + 推到 appLog（用 `new Date().toISOString()` timestamp）。
+- `_sendUpdate(job)` — 透過 `mainWindow.webContents.send('<prefix>:jobUpdate', job)` 推給 renderer。
+- `_persist()` (可選) — 適用 whisper，將 `jobHistory` 寫入 `~/.recoder/jobs.json`，上限 50。App 啟動時呼叫 `_loadFromDisk()` 讀回。
+
+#### 14.5 IPC Channel 命名與簽名（前端合約）
+**每個新 JobManager 都必須**註冊以下 IPC（`<prefix>` 為類別前綴，如 `llm` / `transcribe` / `voiceprint`）：
+```js
+ipcMain.handle('<prefix>:jobSubmit', async (event, params) =>
+  ({ success: true, jobId: this.addJob(params).id }))
+
+ipcMain.handle('<prefix>:jobStatus', async (event, { jobId }) =>
+  ({ success: true, job: this.getStatus(jobId) }))
+
+ipcMain.handle('<prefix>:jobList', async () =>
+  ({ success: true, jobs: this.listJobs() }))
+
+ipcMain.handle('<prefix>:jobCancel', async (event, { jobId }) =>
+  ({ success: true, cancelled: this.cancelJob(jobId) }))
+
+ipcMain.handle('<prefix>:jobDelete', async (event, { jobId }) =>
+  ({ success: true, deleted: this.deleteJob(jobId) }))
+```
+
+**推送事件**（renderer 在 preload 訂閱）：
+```
+event '<prefix>:jobUpdate'  → JobObject
+```
+
+例外：whisper 為向後相容使用 '<prefix>:event' （runWhisper 舊路徑仍受端畫使用）。新 JobManager 一律推薦 `jobUpdate` 命名。
+
+#### 14.6 持久化規範
+- **預設不需要**：記憶體即可，重啟後 pending/running 會丟失（可接受）。
+- **長任務例外**（≥ 30 分鐘任務）：建議沿用 whisper 的 JSON 模式：
+  - 檔案位置：`~/.recoder/jobs.json`（OS homedir 以下）
+  - 上限：保留最近 50 筆。
+  - 儲存時機：`_sendUpdate` 後呼呾 `_persist()`。
+  - 讀取時機：App `ready` 後呼叫 `_loadFromDisk()`，把歷史 list 填入 `jobHistory`。
+  - **schema**：可直接存列化為 JSON。陣列中 `params / result / log` 可能很大，建議只存最後 5 筆的 log。
+
+#### 14.7 preload.js 暴露規範
+每個新 JobManager 需在 `frontend/electron/preload.js` 加入：
+```js
+xxxJobSubmit: (params) => ipcRenderer.invoke('<prefix>:jobSubmit', params),
+xxxJobStatus: (p) => ipcRenderer.invoke('<prefix>:jobStatus', p),
+xxxJobList: () => ipcRenderer.invoke('<prefix>:jobList'),
+xxxJobCancel: (p) => ipcRenderer.invoke('<prefix>:jobCancel', p),
+xxxJobDelete: (p) => ipcRenderer.invoke('<prefix>:jobDelete', p),
+onXxxJobUpdate: (cb) => {
+  const h = (event, data) => cb(data)
+  ipcRenderer.on('<prefix>:jobUpdate', h)
+  return () => ipcRenderer.removeListener('<prefix>:jobUpdate', h)
+},
+```
+
+#### 14.8 UI 與 i18n 規範
+- **`frontend/src/App.vue`**：
+  - data 新增 `xxxJobList: []`，在 `mounted` 初始 load 一次。
+  - 訂閱 `window.electronAPI.onXxxJobUpdate(...)` 更新 `xxxJobList`。
+  - 計算屬性 `totalInFlightJobs` 累加所有類別的 pending+running。
+  - Jobs 面板（参§13）新增 `<emoji> <類型>` tab，顯示該 list。
+  - 未來有任何 action 按鈕（Stop / Show Log / Delete）必額走 refresh 別 list，以免狀態不一致。
+- **三語 i18n** — 在 `frontend/src/i18n/{zh-TW,en,ja}.js` 新增：
+  - `jobs.type.<type>` — 例：`jobs.type.optimize` = '✨ 語句優化'
+  - `jobs.status.<status>` — 例：`jobs.status.running` = '🟡 執行中'
+  - `jobs.action.{stop|showLog|delete|clearAll|refresh|close}`
+  - `jobs.tab.<類型>` / `jobs.panelTitle`
+- **不允許**使用 hard-code emoji + 中文字串在 App.vue；所有顯示文字都須走 i18n key。
+
+#### 14.9 三個實作參考實例（他見什麼是合格、什麼是例外）
+| JobManager | 引入 | 主要用途 | 持久化 | IPC channel 前綴 |
+|---|---|---|---|---|
+| LlmJobManager | v1.14.0 | optimize / translate / summary / aiQuery | 無（記憶體） | `llm:` |
+| WhisperJobManager | v1.19.0 | 音檔轉譯（支援 chunk） | ✅ `~/.recoder/jobs.json` | `transcribe:` |
+| VoiceprintJobManager | v1.20.2 | 說話者標註 | 無（記憶體） | `voiceprint:` |
+
+未來新增類型（例如 JJB 混合/拼接/揮入 vMix）必額參照上表 + 本節全部子節。
+
 ### 13. v1.20.0 新增 — 首頁非同步 Job 管理面板
 - **首頁控制列新增「📋 Jobs」按鈕**（背景 `#6A1B9A`），需 on-flight jobs 時右上角顯示紅色徽章計數。
 - **Job 面板**（雙 tab）：

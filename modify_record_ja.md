@@ -1,4 +1,28 @@
-﻿
+
+
+## [2026-06-30 13:41]
+- **version**: バージョンアップなし（ドキュメントのみ、コード変更なし）
+- **改修要求**: 「将来あらゆる種類の Job を追加する際」の統一設計契約を確立し、LLM / Whisper / Voiceprint 以外の新しい JobManager を追加する際にフィールド設計・IPC チャネル・UI 連携を毎回ゼロから作らずに済むようにする。あわせて既存の `Product_Design_Guidelines.md` の Jobs モジュール規約ギャップを補う。
+- **改修計画**:
+  - `Product_Design_Guidelines.md`：「機能モジュールとビジネスロジック」章節の先頭（§13 の前）に新しい §14「モジュール横断非同期 Job 架構仕様（Job Manager Pattern）— 未来の Job 作成契約」を追加
+    - 14.1 目標と設計哲学（UI 非ブロッキング / 1 in-flight / 二重ルート IPC / 再開可能 / キャンセル可能）
+    - 14.2 Job オブジェクト統一スキーマ（id/type/status/params/progress/result/error/log/タイムスタンプ）
+    - 14.3 ステートマシン（pending → running → completed/failed/cancelled、スキップ不可）
+    - 14.4 JobManager 抽象インターフェース表（addJob/processNext/cancelJob/getStatus/listJobs/deleteJob + 任意の cancelAll/clearHistory）+ プライベートヘルパー（_generateId/_log/_sendUpdate/_persist）
+    - 14.5 IPC チャネル命名と署名（`<prefix>:jobSubmit/jobStatus/jobList/jobCancel/jobDelete` + `<prefix>:jobUpdate` プッシュ）
+    - 14.6 永続化仕様（デフォルトなし、30 分超の Job は `~/.recoder/jobs.json`、cap 50）
+    - 14.7 preload.js 露出ルール
+    - 14.8 UI と i18n ルール（App.vue data + i18n key 強制）
+    - 14.9 三つの実装參考實例表（LlmJobManager / WhisperJobManager / VoiceprintJobManager）
+  - `Product_Design_Guidelines_en.md`：§14 を翻訳（位置：§11 の前）
+  - `Product_Design_Guidelines_ja.md`：§14 を翻訳（位置：v1.20.7 章節の前）
+- **改修結果**:
+  - 三言語 `Product_Design_Guidelines*.md` に §14 を追加し、JobManager 共通の契約層とした
+  - 既存の §11 (WhisperJobManager)、§12 (whisper-cli greedy decoding) などの歴史的章節は改変せず
+  - JS / JSON / i18n ファイルに変更なしのためバージョンは据え置き
+  - 効果：新しい種類の Job を追加する際、§14 のチェックリストで自己検証でき、IPC と状態マシンの再発明を防止
+- **バックアップ**: backup-202606301341.zip
+
 ## [2026-06-30 12:37]
 - **version**: 1.20.10 → 1.20.11 (patch: hotfix)
 - **改修要求**: ユーザーから声紋モデルのダウンロードが繰り返し失敗するという報告があり、ログに「ダウンロード不完全(受信 28283928 bytes のみ); HuggingFace 接続失敗? 再試行してください。」と、リトライするたびに同じバイト数が出力され続ける。
