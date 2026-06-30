@@ -23,6 +23,21 @@ const FFMPEG_EXE = path.join(PROJECT_ROOT, 'ffmpeg', 'ffmpeg.exe')
 const WHISPER_DIR = path.join(PROJECT_ROOT, 'whisper_cli')
 const WHISPER_EXE = path.join(WHISPER_DIR, 'whisper-cli.exe')
 const MODEL_TINY = path.join(PROJECT_ROOT, 'model', 'ggml-tiny.bin')
+const MODEL_SMALL = 'C:\\Users\\humphery\\recoder\\model\\ggml-small.bin'
+// 看 small model 是否在使用者安裝時其他位置
+const MODEL_SMALL_FALLBACKS = [
+  MODEL_SMALL,
+  path.join(os.homedir(), 'recoder', 'model', 'ggml-small.bin'),
+  path.join(PROJECT_ROOT, 'model', 'ggml-small.bin'),
+]
+const _os = require('os')
+const _path = require('path')
+function resolveSmallModel() {
+  for (const p of MODEL_SMALL_FALLBACKS) {
+    try { if (_path && require('fs').existsSync(p)) return p } catch (_) {}
+  }
+  return MODEL_SMALL
+}
 
 function runFfmpegToWav(input, output) {
   return new Promise((resolve, reject) => {
@@ -40,14 +55,14 @@ function runFfmpegToWav(input, output) {
   })
 }
 
-function runWhisperSegments(wavPath) {
+function runWhisperSegments(wavPath, modelPath = MODEL_TINY, suffix = 'tiny') {
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(WHISPER_EXE)) return reject(new Error(`找不到 whisper-cli.exe: ${WHISPER_EXE}`))
-    if (!fs.existsSync(MODEL_TINY)) return reject(new Error(`找不到模型: ${MODEL_TINY}`))
-    const outputJson = path.join(require('os').tmpdir(), `test_diarize_${Date.now()}.json`)
+    if (!fs.existsSync(modelPath)) return reject(new Error(`找不到 whisper 模型: ${modelPath}`))
+    const outputJson = path.join(require('os').tmpdir(), `test_diarize_${suffix}_${Date.now()}.json`)
     const proc = spawn(
       WHISPER_EXE,
-      ['-m', MODEL_TINY, '-f', wavPath, '--output-json', '-oj', outputJson, '-l', 'auto', '-t', String(require('os').cpus().length), '-bs', '1', '-bo', '1'],
+      ['-m', modelPath, '-f', wavPath, '--output-json', '-oj', outputJson, '-l', 'auto', '-t', String(require('os').cpus().length), '-bs', '1', '-bo', '1'],
       { cwd: WHISPER_DIR, windowsHide: true }
     )
     let stderr = ''
