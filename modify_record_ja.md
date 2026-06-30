@@ -1,5 +1,28 @@
 
 
+## [2026-06-30 15:20]
+- **version**: 1.20.13 → 1.20.14 (patch: 録音履歴 UI が更新されないバグ修正)
+- **改修要求**: ユーザーから「認識完了しても録音履歴に新しいエントリが追加されない」との指摘あり。調査の結果、`reco:saveMeta` IPC は確かに呼ばれており metadata JSON もディスクへの書き込みに成功していたが、録音履歴一覧 UI が一度も更新されず、結果としてユーザーは「追加されていない」と感じる状態だった。
+- **根本原因**:
+  1. `frontend/src/App.vue` の `_onTranscribeEvent('completed')` は `await this.saveRecordingMeta(r.result.segments)` を呼び出す。
+  2. `saveRecordingMeta` は `reco:saveMeta` IPC 経由で metadata JSON を `reco_data/` に書き込む。しかし **保存成功後に `historyList` を能動的に更新するコードパスが一切なかった**。
+  3. `loadHistory()` は、ユーザーが能動的に履歴タブをクリックした時、リフレッシュボタンを押した時、folder の create/delete/rename、録音の move/delete/update-labels を行った時にしか呼ばれない。`_onTranscribeEvent('completed')` → `saveRecordingMeta` → `reco:saveMeta` のチェーンには refresh ポイントが皆無。
+  4. 結果：ユーザーが新しい音ファイルを認識し、「N 文を認識しました」ステータスを確認し、履歴タブに切り替えても新しいレコードが見えない（手動でリフレッシュボタンを押す必要がある）。
+  5. 加えて、`saveRecordingMeta` には `if (!window.electronAPI || !this.audioInfo) return` という silent early-return guard が残っている。`audioInfo` が空になった場合（例：ユーザーが途中で別の録音を切り替えたなど）、「silent failure」となりデバッグもできない。
+- **修正計画**:
+  - `frontend/src/App.vue` の `saveRecordingMeta()`:
+    1. v1.20.14 の仕組み：recoSaveMeta 成功後に `await this.loadHistory()` で録音履歴一覧を更新。
+    2. `window.electronAPI` と `audioInfo` の early-return guard を分離し、`console.warn('[saveRecordingMeta] 保存スキップ：audioInfo が空 (...)')` を追加し今後のデバッグを容易にする。
+    3. `recoSaveMeta` を try/catch でラップし、保存失敗時は `console.error('[saveRecordingMeta] 保存失敗:', id, e)` を出力、例外で呼び出し元を中断させない。
+    4. 保存成功時は `console.log('[saveRecordingMeta] metadata を保存しました:', id, '(segments=N, audioPath=...)')`。
+  - `frontend/package.json` version 1.20.13 → 1.20.14。
+- **修正結果**:
+  - 3 つの saveRecordingMeta 呼び出し箇所をすべてカバー：`_onTranscribeEvent('completed')`（新規認識）、`_pollJobResult('completed')`（LLM 処理後）、`_jobUpdateListener('voiceprint completed')`（声紋ラベリング後）。
+  - 残り 2 つの呼び出し（LLM / 声紋）でも refresh は無害（一覧を更新するだけで重複追加はしない）。
+  - 期待される効果：新しい認識の完了後、履歴タブに切り替えれば即座に新しいレコードが先頭に表示され、手動リフレッシュは不要。
+- **検証手順**: 新しい音ファイルで「🤖 認識」をクリック → 完了を待つ → 「📚 履歴」タブに切り替え → 手動リフレッシュなしで新しいレコードが一覧の先頭に即座に表示されるはず。
+- **バックアップファイル名**: backup-202606301541.zip (2.94 GB)
+
 ## [2026-06-30 13:50]
 - **version**: 1.20.11 → 1.20.12 (patch: log 補完)
 - **要件**: ユーザーから「認識 (transcribe) の job log で 音ファイルの長さ確認 と 大きすぎるファイルの分割 log が見えない」との指摘あり。`WhisperJobManager._executeTranscribe` は log を出力しているものの、すべて「分割後の動作」（N 個の chunks に分割済み、chunk N/M を認識中…）に集中しており、「なぜ今回分割する／しないか」の意思決定チェーン（音ファイル長チェック、閾値超過判定、どちらの経路を辿るか）が完全に省略されている。これにより job log では判定根拠もフォールバック理由も確認できない。

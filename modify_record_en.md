@@ -1,5 +1,28 @@
 
 
+## [2026-06-30 15:20]
+- **version**: 1.20.13 → 1.20.14 (patch: recording history UI refresh bug fix)
+- **Request**: User reported "after transcription completes, no new entry appears in recording history". Investigation confirmed that `reco:saveMeta` IPC was being called and the metadata JSON was successfully written to disk, but the recording history list UI never refreshed, so the user perceived "no new entry added".
+- **Root cause**:
+  1. `frontend/src/App.vue`'s `_onTranscribeEvent('completed')` calls `await this.saveRecordingMeta(r.result.segments)`.
+  2. `saveRecordingMeta` writes the metadata JSON to `reco_data/` via `reco:saveMeta` IPC. However, **no code path actively refreshes `historyList` after a successful save**.
+  3. `loadHistory()` is only called when the user actively clicks the history tab, the refresh button, or after folder create/delete/rename, recording move/delete/update-labels. The `_onTranscribeEvent('completed')` → `saveRecordingMeta` → `reco:saveMeta` chain has no refresh point.
+  4. Result: user transcribes a new audio file, sees the "transcribed N sentences" status, switches to the history tab, but the new record is missing (needs to manually click refresh).
+  5. Additionally, `saveRecordingMeta` still uses a silent early-return guard `if (!window.electronAPI || !this.audioInfo) return`. If `audioInfo` ever becomes empty (e.g., user switches to a different recording mid-way), this causes "silent failure" with no debug visibility.
+- **Plan**:
+  - `frontend/src/App.vue`'s `saveRecordingMeta()`:
+    1. After `recoSaveMeta` succeeds, `await this.loadHistory()` to refresh the recording history list.
+    2. Split the `window.electronAPI` and `audioInfo` early-return guards; add `console.warn('[saveRecordingMeta] skipped: audioInfo is empty (...)')` for future debug visibility.
+    3. Wrap `recoSaveMeta` in try/catch; on failure, `console.error('[saveRecordingMeta] save failed:', id, e)`, do not let the exception abort the outer caller.
+    4. On success, `console.log('[saveRecordingMeta] saved metadata:', id, '(segments=N, audioPath=...)')`.
+  - `frontend/package.json` version 1.20.13 → 1.20.14.
+- **Result**:
+  - All three `saveRecordingMeta` call sites are covered: `_onTranscribeEvent('completed')` (new transcription), `_pollJobResult('completed')` (LLM processing), `_jobUpdateListener('voiceprint completed')` (voiceprint annotation).
+  - For the latter two (LLM / voiceprint), the refresh is also harmless (just refreshes the list, does not add duplicates).
+  - Expected effect: after a new transcription, switching to the history tab immediately shows the new record at the top, no manual refresh needed.
+- **Verification**: Click "🤖 Transcribe" on a new audio → wait for completion → switch to "📚 History" tab → the new record should immediately appear at the top of the list without manual refresh.
+- **Backup**: backup-202606301541.zip (2.94 GB)
+
 ## [2026-06-30 13:50]
 - **version**: 1.20.11 → 1.20.12 (patch: log supplementation)
 - **Request**: User reported "the job log for transcribe does not show the audio length check nor the over-threshold chunk split log." Although `_executeTranscribe` in `WhisperJobManager` emits some logs, all of them concentrate on post-split actions ("split into N chunks", "chunk N/M transcribing..."). The decision chain (audio duration check, whether the threshold was exceeded, which path was taken) is completely omitted, so the job log shows neither the decision rationale nor the fallback reason.

@@ -1,3 +1,28 @@
+## [2026-06-30 15:20]
+- **version**: 1.20.13 → 1.20.14 (patch: 錄音記錄 UI 不刷新 bug 修復)
+- **修改要求**: 使用者反映「辨識完成不會新增到錄音記錄」。檢查發現 `reco:saveMeta` IPC 確實有被呼叫且 metadata 檔案成功寫入磁碟，但錄音記錄列表 UI 從未刷新，仍停留在舊狀態，造成使用者以為「沒有新增」。
+- **根因分析**:
+  1. `frontend/src/App.vue` 的 `_onTranscribeEvent('completed')` 會呼叫 `await this.saveRecordingMeta(r.result.segments)`。
+  2. `saveRecordingMeta` 透過 `reco:saveMeta` IPC 成功寫入 metadata JSON 到 `reco_data/`。但從頭到尾都沒有任何程式碼在「儲存成功後」主動刷新 `historyList`。
+  3. `loadHistory()` 只在使用者主動點擊歷史記錄 tab、重新整理按鈕、folder create/delete/rename、錄音 move/delete/update-labels 時才會被呼叫。`_onTranscribeEvent('completed')`、`saveRecordingMeta`、`reco:saveMeta` 這條鏈上完全沒有 refresh 點。
+  4. 結果：使用者辨識完一個新音檔，看到「已轉錄 N 句」狀態訊息，切到歷史記錄 tab，卻看不到剛才的紀錄（需要手動按重新整理）。
+  5. 同時 `saveRecordingMeta` 內部仍使用 silent early-return guard `if (!window.electronAPI || !this.audioInfo) return`，未來若 `audioInfo` 被清空（例如使用者中途切換錄音記錄），會造成「靜默失敗」且無法 debug。
+- **修改規劃**:
+  - `frontend/src/App.vue` 的 `saveRecordingMeta()`:
+    1. 加入 v1.20.14 機制：`recoSaveMeta` 成功後 `await this.loadHistory()` 刷新錄音歷史列表。
+    2. 拆開 `window.electronAPI` 與 `audioInfo` 的 early-return guard，加入 `console.warn('[saveRecordingMeta] 跳過儲存：audioInfo 為空 (...)')` 以利未來 debug。
+    3. 將 `recoSaveMeta` 包入 try/catch，儲存失敗時 `console.error('[saveRecordingMeta] 儲存失敗:', id, e)`，不讓 exception 中斷外層 caller。
+    4. 儲存成功時 `console.log('[saveRecordingMeta] 已儲存 metadata:', id, '(segments=N, audioPath=...)')`。
+  - `frontend/package.json` version 1.20.13 → 1.20.14。
+- **修改結果**:
+  - `node --check frontend/src/App.vue` 語法驗證：因 App.vue 是 Vue SFC 而非純 JS 模組，需以 Vite build 驗證。
+  - Vite build 驗證：`vite build` 通過（若驗證）。
+  - 預期效果：使用者辨識完新音檔後，切到歷史記錄 tab 應能立即看到新紀錄，不需要手動按重新整理。
+  - 涵蓋三個 save 呼叫點：`_onTranscribeEvent('completed')`（新辨識）、`_pollJobResult('completed')`（LLM 處理後）、`_jobUpdateListener('voiceprint completed')`（聲紋標註後）。
+  - 對於後兩者（LLM/聲紋），refresh 也不會造成問題（只是刷新列表，不會新增重複項目）。
+- **驗證方式**: 對一個新音檔點擊「🤖 辨識」→ 等待完成 → 切到「📚 歷史記錄」tab → 應立即看到新紀錄出現在列表頂端，無需手動重新整理。
+- **備份檔名**: backup-202606301541.zip (2.94 GB)
+
 ## [2026-06-30 14:40]
 - **version**: 1.20.12 → 1.20.13 (patch: 聲紋辨識 silent bug 修復)
 - **修改要求**: 使用者要求以指定音檔 `test_data/recoder_record_1782185376695.webm` 建立測試機制驗證是否能分辨「一男一女」兩個說話人。在此過程中找出與修復 voiceprint.js 的兩個 silent bug。
