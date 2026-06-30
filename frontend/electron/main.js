@@ -8,6 +8,9 @@ const os = require('os')
 const OpenCC = require('opencc-js')
 const fetch = require('node-fetch')
 const voiceprint = require('./voiceprint')
+const audioChunker = require('./audioChunker') // v1.20.9: 共用音檔切片模組
+// v1.20.9: 啟動時清掉殘留的 recoder-chunks-* / voiceprint-chunk-* 暫存
+audioChunker.cleanupStaleChunks()
 
 let mainWindow = null
 const s2tConverter = OpenCC.Converter({ from: 'cn', to: 'tw' })
@@ -1086,9 +1089,95 @@ class WhisperJobManager {
   }
 
   async _executeTranscribe(job) {
-    // 包裝 runWhisper，並在進度推送時更新 job
+    // v1.20.9: 長音檔切片 + 非同步 whisper 整合
+    // 若設定 whisperChunkMinutes > 0 且音檔 >= 60min 門檻，自動切片各別 runWhisper
     const { audioPath, modelSize, useGpu, gpuDevice } = job
-    // 定期把 activeWhisperProcs 中的 proc 指派給 job._proc，供 cancel/delete 終止使用
+    const settings = this._loadSettings()
+    const chunkMinutes = settings.whisperChunkMinutes || 0
+    const thresholdSec = 60 * 60 // 60 分鐘門檻
+    const segmentSec = chunkMinutes > 0 ? chunkMinutes * 60 : 3000
+
+    // 取得音檔時長以判斷是否需要切片
+    const totalDuration = await audioChunker.getAudioDuration(audioPath)
+    const shouldChunk = chunkMinutes > 0 && totalDuration > 0 && totalDuration >= thresholdSec
+
+    if (!shouldChunk) {
+      // 原本路徑：直接 runWhisper
+      return await this._runSingleTranscribe(job, audioPath, modelSize, useGpu, gpuDevice)
+    }
+
+    // 長音檔切片路徑
+    this._log(job, `長音檔 ${Math.round(totalDuration)}s >= ${thresholdSec}s，使用 ${chunkMinutes} 分鐘/chunk 切片`)
+    const tmpDir = path.join(os.tmpdir(), `recoder-chunks-${job.id}`)
+    fs.mkdirSync(tmpDir, { recursive: true })
+    let chunkInfo = null
+    try {
+      chunkInfo = await audioChunker.splitLongAudio(audioPath, { segmentSec, outputDir: tmpDir, prefix: 'wchunk' })
+    } catch (e) {
+      this._log(job, `切片失敗，降級為直接辨識: ${e.message}`)
+      audioChunker.cleanupChunkDir(tmpDir)
+      return await this._runSingleTranscribe(job, audioPath, modelSize, useGpu, gpuDevice)
+    }
+
+    const chunks = audioChunker.pairChunks(chunkInfo.files, chunkInfo.durations)
+    const total = chunks.length
+    job.progress = { percent: 0, elapsed: '0s', currentChunk: 0, totalChunks: total, message: `準備切片 ${total} 段` }
+    this._sendUpdate(job)
+    this._log(job, `已切成 ${total} 個 chunks`)
+
+    const allSegments = []
+    for (let i = 0; i < total; i++) {
+      if (job.status === 'cancelled') {
+        this._log(job, '使用者取消，中斷切片辨識')
+        throw new Error('Job 已取消')
+      }
+      const chunk = chunks[i]
+      const basePercent = Math.round((i / total) * 100)
+      this._log(job, `切片 ${i+1}/${total} 辨識中...`)
+      job.progress = { percent: basePercent, elapsed: '0s', currentChunk: i + 1, totalChunks: total, message: `切片 ${i+1}/${total} 辨識中...` }
+      this._sendUpdate(job)
+
+      const chunkResult = await this._runSingleTranscribe(
+        job,
+        chunk.file,
+        modelSize,
+        useGpu,
+        gpuDevice,
+        // onProgress：將單一 chunk 進度映射到整體百分比
+        (percent) => {
+          const overall = basePercent + Math.round((percent / 100) * (100 / total))
+          job.progress = { percent: overall, elapsed: job.progress.elapsed, currentChunk: i + 1, totalChunks: total, message: `切片 ${i+1}/${total} 辨識中...` }
+          this._sendUpdate(job)
+        }
+      )
+
+      if (chunkResult && chunkResult.success && chunkResult.segments) {
+        // 時間偏移加回原檔座標
+        for (const seg of chunkResult.segments) {
+          seg.start += chunk.startOffset
+          seg.end += chunk.startOffset
+        }
+        allSegments.push(...chunkResult.segments)
+      } else {
+        const errMsg = (chunkResult && chunkResult.error) || '切片辨識失敗'
+        this._log(job, `切片 ${i+1}/${total} 失敗: ${errMsg}`)
+        // 拋出例外
+        throw new Error(`切片 ${i+1}/${total} 辨識失敗: ${errMsg}`)
+      }
+    }
+
+    // 清理 chunks
+    audioChunker.cleanupChunkDir(tmpDir)
+    job.progress = { percent: 100, elapsed: job.progress.elapsed, currentChunk: total, totalChunks: total, message: '完成' }
+    this._sendUpdate(job)
+    job.result = { success: true, segments: allSegments }
+  }
+
+  /**
+   * 執行單一 runWhisper（含 GPU 自動 fallback 到 CPU）
+   * v1.20.9: 供 _executeTranscribe 在「不切片」與「切片後逐 chunk」兩種路徑使用
+   */
+  async _runSingleTranscribe(job, audioPath, modelSize, useGpu, gpuDevice, onProgress) {
     const procWatchTimer = setInterval(() => {
       const entry = activeWhisperProcs.get(audioPath)
       if (entry && entry.proc) {
@@ -1096,29 +1185,38 @@ class WhisperJobManager {
         clearInterval(procWatchTimer)
       }
     }, 100)
+    const progressCallback = onProgress || ((percent, elapsed, fallback) => {
+      job.progress = { ...(job.progress || {}), percent, elapsed: `${elapsed}s` }
+      if (fallback) job.progress.fallback = true
+      this._sendUpdate(job)
+    })
     try {
-      const result = await runWhisper(audioPath, modelSize, useGpu, gpuDevice, (percent, elapsed, fallback) => {
-        job.progress = { percent, elapsed: `${elapsed}s` }
-        if (fallback) job.progress.fallback = true
-        this._sendUpdate(job)
-      })
+      const result = await runWhisper(audioPath, modelSize, useGpu, gpuDevice, progressCallback)
       // GPU 卡住時自動降級為 CPU 重試
       if (!result.success && result.gpuStalled && useGpu !== false) {
         appLog('WARN', 'whisper', `GPU 辨識卡住，自動降級為 CPU 重試: ${audioPath}`)
-        job.progress = { percent: 0, elapsed: '0s', fallback: true, message: 'GPU 辨識無回應，自動改用 CPU...' }
+        job.progress = { ...(job.progress || {}), percent: 0, elapsed: '0s', fallback: true, message: 'GPU 辨識無回應，自動改用 CPU...' }
         this._sendUpdate(job)
-        const retryResult = await runWhisper(audioPath, modelSize, false, '', (percent, elapsed) => {
-          job.progress = { percent, elapsed: `${elapsed}s` }
-          this._sendUpdate(job)
-        })
-        if (retryResult.success) { job.result = retryResult; return }
+        const retryResult = await runWhisper(audioPath, modelSize, false, '', progressCallback)
+        if (retryResult.success) return retryResult
         throw new Error(retryResult.error || 'CPU 辨識也失敗')
       }
       if (!result.success) throw new Error(result.error || '辨識失敗')
-      job.result = result
+      return result
     } finally {
       clearInterval(procWatchTimer)
     }
+  }
+
+  /**
+   * 讀取設定檔（whisperChunkMinutes 等）
+   */
+  _loadSettings() {
+    try {
+      const p = getSettingsPath()
+      if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf-8'))
+    } catch (e) {}
+    return {}
   }
 
   cancelJob(jobId) {
@@ -1273,7 +1371,7 @@ function getStallTimeoutMs(audioPath, useGpu) {
   return stallMin * 60 * 1000
 }
 
-function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
+function runWhisper(audioPath, modelSize, useGpu, gpuDevice, onProgress) {
   return new Promise((resolve, reject) => {
     try {
       const modelPath = userDataPath('model', `ggml-${modelSize}.bin`)
@@ -1307,6 +1405,9 @@ function runWhisper(audioPath, modelSize, useGpu, gpuDevice) {
           const elapsedSec = parseInt(elapsed)
           percent = Math.min(Math.round((elapsedSec / totalDurationSec) * 100), 99)
         }
+        // v1.20.9: 送給外部 onProgress (若有)
+        if (onProgress) onProgress(percent, elapsed, false)
+        // 向後相容：保留舊版 transcribe:progress 事件
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('transcribe:progress', {
             audioPath,

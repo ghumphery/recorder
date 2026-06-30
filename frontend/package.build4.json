@@ -1,0 +1,46 @@
+{
+  "appId": "com.recorder.app",
+  "productName": "Recorder",
+  "directories": {
+    "output": "dist-electron-build4"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "!node_modules/electron{,/**/*}"
+  ],
+  "extraResources": [
+    {
+      "from": "../whisper_cli",
+      "to": "whisper_cli",
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
+      "from": "../ffmpeg",
+      "to": "ffmpeg",
+      "filter": [
+        "**/*"
+      ]
+    }
+  ],
+  "win": {
+    "target": "portable",
+    "icon": "../assets/app.ico",
+    "certificateFile": "C:/Certs/recorder_selfsign.pfx",
+    "certificatePassword": "RecorderSelfSign2026",
+    "signAndEditExecutable": true,
+    "signtoolOptions": {
+      "rfc3161TimeStampServer": "http://timestamp.digicert.com"
+    }
+  },
+  "portable": {
+    "artifactName": "Recorder-${version}-portable.exe"
+  },
+  "asarUnpack": [
+    "node_modules/onnxruntime-node/**/*",
+    "whisper_cli/**/*",
+    "ffmpeg/**/*"
+  ]
+}

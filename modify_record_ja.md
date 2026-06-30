@@ -2,6 +2,35 @@
 
 > v1.13.0 以降の記録のみ日本語版で管理します。
 
+## [2026-06-30 12:00]
+- **version**: 1.20.9
+- **修正要求**：
+  1. 文字起こし：音声ファイルが 60 分以上の場合は、自動的に 50 分以下の WAV チャンクに分割し、各チャンクを非同期ジョブで個別に文字起こし
+  2. チャンクサイズは設定で調整可能（デフォルト 50 min/chunk、「分割しない」オプションを維持）
+- **計画**：
+  - `frontend/electron/audioChunker.js` (新規)：whisper (main.js) と voiceprint (voiceprint.js) 両方で使う共用オーディオチャンクモジュール。`getAudioDuration / splitLongAudio / chunkLongAudioIfNeeded / cleanupChunkDir / cleanupStaleChunks` を公開
+  - `frontend/electron/voiceprint.js`：`audioChunker` 共用モジュールを require する。`getAudioDuration / splitLongAudio` の重複実装を削除（下位互換のため export は残す）
+  - `frontend/electron/main.js`：
+    1. `./audioChunker` を require し、起動時に `cleanupStaleChunks()` を呼び、`os.tmpdir()/recoder-chunks-*` と `voiceprint-chunk-*` の残骸を消去
+    2. `runWhisper(audioPath, modelSize, useGpu, gpuDevice, onProgress)` — 新しい `onProgress(percent, elapsed, fallback)` パラメータ
+    3. `WhisperJobManager._executeTranscribe(job)` — `settings.whisperChunkMinutes > 0` かつ音声が 60 分以上の場合、`audioChunker.splitLongAudio()` を呼び、chunks を個別に `runWhisper` で処理。segment の `start`/`end` に `chunk.startOffset` を加算して元ファイル座標に対応。完了/失敗時必ず `cleanupChunkDir()`
+    4. 新しい helper `_runSingleTranscribe()` と `_loadSettings()`
+  - `frontend/src/App.vue`：
+    1. data に `whisperChunkMinutes: 50` 追加；`loadSettings / saveSettings` で同期
+    2. 設定パネルに「🔪 長尺音訊の分割」ドロップダウン追加（分割しない / 30 / 40 / 50 / 60 分、デフォルト 50）
+    3. Jobs パネルの進捗テキストに `チャンク N/M 文字起こし中 (X%)` 表示（`job.progress.currentChunk / totalChunks` を使用）
+  - `frontend/src/i18n/{zh-TW,en,ja}.js`：`settings.whisperChunk / noChunk / min / whisperChunkTitle` と `jobs.chunkProgress` の三言語翻訳を追加
+  - `frontend/package.json`：version 1.20.8 → 1.20.9 (Patch)
+- **結果**：
+  - 共用 `audioChunker.js` 抽出完了；voiceprint.js と main.js で共有し重複を削除
+  - WhisperJobManager に長尺音訊チャンク分割を統合 — 60 分以上を自動的に 50 分以下のチャンクに分割し各チャンクを個別に whisper。segment タイムスタンプは元ファイル座標に正しく対応
+  - キャンセル：ジョブが `cancelled` 状態になると次のチャンクは実行されない（throw Error）。chunks テンポラリディレクトリは `cleanupChunkDir()` で削除
+  - 設定パネルに「長尺音訊の分割」オプション追加（デフォルト 50 min/chunk）、0/30/40/50/60 で切替可能
+  - Jobs パネル UI にチャンク進捗（currentChunk / totalChunks）表示
+  - 三言語 i18n 同期
+  - 起動時に `os.tmpdir()/recoder-chunks-*` の残骸を自動クリーンアップ
+- **バックアップファイル名**：backup-202606301200.zip
+
 ## [2026-06-30 11:15]
 - **version**: 1.20.8
 - **修正要求**：

@@ -2,6 +2,35 @@
 
 > Only records from v1.13.0 onward are maintained in this English version.
 
+## [2026-06-30 12:00]
+- **version**: 1.20.9
+- **Requirements**:
+  1. Transcribe: when audio file ≥ 60 minutes, automatically split into ≤ 50-minute WAV chunks, transcribe each independently via async job
+  2. Chunk size adjustable in Settings (default 50 min/chunk, with "No chunking" option preserved)
+- **Plan**:
+  - `frontend/electron/audioChunker.js` (new): shared audio-chunking module exposing `getAudioDuration / splitLongAudio / chunkLongAudioIfNeeded / cleanupChunkDir / cleanupStaleChunks` for both whisper (main.js) and voiceprint (voiceprint.js)
+  - `frontend/electron/voiceprint.js`: require `audioChunker` shared module, remove duplicated `getAudioDuration / splitLongAudio` (keep export for backward-compat)
+  - `frontend/electron/main.js`:
+    1. require `./audioChunker` and call `cleanupStaleChunks()` on startup to wipe leftover `os.tmpdir()/recoder-chunks-*` and `voiceprint-chunk-*`
+    2. `runWhisper(audioPath, modelSize, useGpu, gpuDevice, onProgress)` — new `onProgress(percent, elapsed, fallback)` parameter
+    3. `WhisperJobManager._executeTranscribe(job)` — if `settings.whisperChunkMinutes > 0` AND audio ≥ 60 min, call `audioChunker.splitLongAudio()`, transcribe chunks individually via `runWhisper`, then add `chunk.startOffset` back to each segment. Always `cleanupChunkDir()` after run (success or fail)
+    4. new helpers `_runSingleTranscribe()` and `_loadSettings()`
+  - `frontend/src/App.vue`:
+    1. data: `whisperChunkMinutes: 50`; sync via `loadSettings / saveSettings`
+    2. Settings panel: new "🔪 Transcribe chunking" dropdown (no chunking / 30 / 40 / 50 / 60 min, default 50)
+    3. Jobs panel: new progress text `Chunk N/M transcribing (X%)` using `job.progress.currentChunk / totalChunks`
+  - `frontend/src/i18n/{zh-TW,en,ja}.js`: new `settings.whisperChunk / noChunk / min / whisperChunkTitle` and `jobs.chunkProgress` translations
+  - `frontend/package.json`: version 1.20.8 → 1.20.9 (Patch)
+- **Outcome**:
+  - Shared `audioChunker.js` extracted; voiceprint.js and main.js share it, removing duplication
+  - WhisperJobManager integrates long-audio chunking — audio files ≥ 60 min are split into ≤ 50 min chunks and each is independently whisper'd; segment timestamps correctly mapped back to the original file
+  - Cancellation: when a job enters `cancelled` state, the next chunk is not executed (throw Error); chunk temp directory is deleted via `cleanupChunkDir()`
+  - Settings panel adds "Transcribe chunking" option (default 50 min/chunk), users can switch 0/30/40/50/60
+  - Jobs panel UI shows chunk progress (currentChunk / totalChunks)
+  - 3-language i18n synced
+  - Startup auto-cleans leftover `os.tmpdir()/recoder-chunks-*`
+- **Backup filename**: backup-202606301200.zip
+
 ## [2026-06-30 11:15]
 - **version**: 1.20.8
 - **Requirements**:

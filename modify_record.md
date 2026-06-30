@@ -1,5 +1,34 @@
 # 修改日誌 (Modify Record)
 
+## [2026-06-30 12:00]
+- **version**: 1.20.9
+- **修改要求**：
+  1. voice to text 將大於 ≥ 60 分鐘的音檔自動切成 ≤ 50 分鐘的 WAV chunks，各別進行 voice to text，使用非同步 job 進行
+  2. 切片粒度可由系統設定調整（default 50 min/chunk，保留「不分段」選項）
+- **修改規劃**：
+  - `frontend/electron/audioChunker.js` (新檔)：共用音檔切片模組，提供 `getAudioDuration() / splitLongAudio() / chunkLongAudioIfNeeded() / cleanupChunkDir() / cleanupStaleChunks()` 等 API，給 whisper (main.js) 與 voiceprint (voiceprint.js) 共用
+  - `frontend/electron/voiceprint.js`：改為 require `audioChunker` 共用模組，移除重覆的 `getAudioDuration` / `splitLongAudio` 實作（保留 export 為向後相容）
+  - `frontend/electron/main.js`：
+    1. require `./audioChunker` 並在啟動時呼叫 `cleanupStaleChunks()` 清掉 `os.tmpdir()/recoder-chunks-*` 與 `voiceprint-chunk-*` 殘留
+    2. `runWhisper(audioPath, modelSize, useGpu, gpuDevice, onProgress)` 新增 `onProgress(percent, elapsed, fallback)` 參數
+    3. `WhisperJobManager._executeTranscribe(job)` 重構：若 `settings.whisperChunkMinutes > 0` 且音檔 ≥ 60 分鐘，呼叫 `audioChunker.splitLongAudio()` 切成多個 WAV chunks，依序跑 `runWhisper` 個別辨識，再把 segments 時間偏移加回原檔座標；chunk 跑完/失敗都 `cleanupChunkDir()` 刪除暫存
+    4. 新增 `_runSingleTranscribe()` 與 `_loadSettings()` helper
+  - `frontend/src/App.vue`：
+    1. data 新增 `whisperChunkMinutes: 50`；`loadSettings()` / `saveSettings()` 同步此欄位
+    2. 設定面板新增「🔪 轉寫長音檔切片」下拉選項（不切片 / 30 / 40 / 50 / 60 分鐘，default 50）
+    3. Jobs 面板進度文字新增 `切片 N/M 辨識中 (X%)` 顯示（透過 `job.progress.currentChunk / totalChunks`）
+  - `frontend/src/i18n/{zh-TW,en,ja}.js`：新增 `settings.whisperChunk / noChunk / min / whisperChunkTitle` 與 `jobs.chunkProgress` 三語翻譯
+  - `frontend/package.json`：version 1.20.8 → 1.20.9 (Patch)
+- **修改結果**：
+  - 共用 `audioChunker.js` 模組建立，voiceprint.js 與 main.js 共用，移除重覆實作
+  - WhisperJobManager 整合長音檔切片，支援 ≥ 60 分鐘音檔自動切成 ≤ 50 分鐘 chunks 各別 whisper，segments 時間戳正確對應原檔
+  - 取消機制：job 進入 cancelled 狀態時，下一 chunk 不會繼續執行（throw Error 中斷），chunks 暫存目錄 `cleanupChunkDir()` 刪除
+  - 系統設定新增「轉寫長音檔切片」選項，default 50 min/chunk，使用者可在 0/30/40/50/60 之間切換
+  - Jobs 面板 UI 顯示切片狀態（currentChunk / totalChunks）
+  - 三語 i18n 同步
+  - 啟動時自動清掉 `os.tmpdir()/recoder-chunks-*` 殘留
+- **備份檔名**: backup-202606301200.zip
+
 ## [2026-06-30 11:15]
 - **version**: 1.20.8
 - **修改要求**：

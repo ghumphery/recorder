@@ -4,13 +4,15 @@ const http = require('http')
 const https = require('https')
 const { spawn } = require('child_process')
 const os = require('os')
+const audioChunker = require('./audioChunker')
 
 // 處理 HTTPS 重定向上限（node 原生 https.get 不自動 follow）
 const REDIRECT_LIMIT = 5
 const REQUEST_TIMEOUT_MS = 120000 // 120 秒
-const USER_AGENT = 'Recorder/1.20.7 (Electron; onnxruntime-node)'
+const USER_AGENT = 'Recorder/1.20.9 (Electron; onnxruntime-node)'
 
 // v1.20.7: 長音檔切片 + 聚類強化常數
+// v1.20.9: 改用共用 audioChunker 模組
 const LONG_AUDIO_THRESHOLD_SEC = 3600   // 60 分鐘門檻
 const CHUNK_DURATION_SEC = 3000         // 每段上限 50 分鐘 (3000 秒)
 const MIN_SEGMENT_PAD_SEC = 0.5         // 過短 segment 左右延伸 padding
@@ -662,6 +664,7 @@ function clusterEmbeddings(embeddings, threshold = CLUSTER_THRESHOLD) {
  *   1) 音檔時長 >= 60 分鐘 → 切成 ≤50 分鐘 chunks 後逐段標註 (降 OOM/timeout 風險)
  *   2) 下載前檢查 isModelCached() 避免重覆下載 (已下放至 downloadModel)
  *   3) 過短 segment 自動 padding + 兩段式聚類 (clusterEmbeddings 已強化)
+ * v1.20.9: 改用共用 audioChunker.chunkLongAudioIfNeeded() 避免重覆邏輯
  */
 async function diarizeAudio(audioPath, segments, progressCallback) {
   if (!fs.existsSync(audioPath)) {
@@ -687,28 +690,28 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
   }
 
   const total = segments.length
-  const audioDuration = await getAudioDuration(audioPath)
+  const audioDuration = await audioChunker.getAudioDuration(audioPath)
   let tmpDir = null
   let useChunks = false
   let chunkList = [] // [{ file, startOffset, endOffset }]
   let chunkAudioDuration = audioDuration
 
-  // v1.20.7: 長音檔切片
+  // v1.20.9: 長音檔切片 (改用共用 audioChunker)
   if (audioDuration >= LONG_AUDIO_THRESHOLD_SEC) {
     try {
       console.log(`[voiceprint] 音檔時長 ${Math.round(audioDuration)}s >= ${LONG_AUDIO_THRESHOLD_SEC}s，啟動切片`)
-      const splitResult = await splitLongAudio(audioPath)
-      tmpDir = splitResult.tmpDir
-      chunkList = []
-      let offset = 0
-      for (let i = 0; i < splitResult.files.length; i++) {
-        const dur = splitResult.durations[i] || (CHUNK_DURATION_SEC)
-        chunkList.push({ file: splitResult.files[i], startOffset: offset, endOffset: offset + dur })
-        offset += dur
+      const chunkResult = await audioChunker.chunkLongAudioIfNeeded(audioPath, {
+        thresholdSec: LONG_AUDIO_THRESHOLD_SEC,
+        segmentSec: CHUNK_DURATION_SEC,
+        prefix: 'chunk',
+      })
+      if (chunkResult) {
+        tmpDir = chunkResult.tmpDir
+        chunkList = chunkResult.chunks
+        useChunks = true
+        chunkAudioDuration = chunkResult.totalDuration
+        console.log(`[voiceprint] 切成 ${chunkList.length} 個 chunks`)
       }
-      useChunks = true
-      chunkAudioDuration = audioDuration
-      console.log(`[voiceprint] 切成 ${chunkList.length} 個 chunks`)
     } catch (e) {
       console.error(`[voiceprint] 切片失敗，將直接處理完整音檔: ${e.message}`)
       tmpDir = null

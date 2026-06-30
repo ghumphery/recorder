@@ -46,6 +46,17 @@
           <option :value="60">{{ $t('settings.min60') }}</option>
         </select>
       </div>
+      <!-- v1.20.9: 長音檔轉寫切片閾值 -->
+      <div class="setting-row">
+        <label :title="$t('settings.whisperChunkTitle')">{{ $t('settings.whisperChunk') }}</label>
+        <select v-model="whisperChunkMinutes">
+          <option :value="0">{{ $t('settings.noChunk') }}</option>
+          <option :value="30">{{ $t('settings.min30') }}</option>
+          <option :value="40">40 {{ $t('settings.min') }}</option>
+          <option :value="50">50 {{ $t('settings.min') }}</option>
+          <option :value="60">{{ $t('settings.min60') }}</option>
+        </select>
+      </div>
       <div class="setting-row">
         <label>{{ $t('settings.gpuAccel') }}</label>
         <label class="toggle-label">
@@ -205,7 +216,10 @@
                 <div class="progress-fill" :style="{ width: (job.progress.percent || 0) + '%' }"></div>
               </div>
               <span class="job-progress-text">
-                <template v-if="job.progress.totalBatches > 1">{{ $t('llm.batchProgress', { batch: job.progress.batch, total: job.progress.totalBatches }) }}</template>
+                <template v-if="job.progress.currentChunk && job.progress.totalChunks">
+                  {{ $t('jobs.chunkProgress', { current: job.progress.currentChunk, total: job.progress.totalChunks, percent: job.progress.percent || 0 }) }}
+                </template>
+                <template v-else-if="job.progress.totalBatches > 1">{{ $t('llm.batchProgress', { batch: job.progress.batch, total: job.progress.totalBatches }) }}</template>
                 <template v-else>{{ job.progress.percent || 0 }}%</template>
               </span>
             </div>
@@ -495,6 +509,8 @@ export default {
       languages: LANGUAGES,
       uiLanguage: 'zh-TW',
       models: [], selectedModel: 'small',
+      // v1.20.9: 轉寫長音檔切片設定 (0 = 不切片；>0 = 切片閾值 (分鐘))
+      whisperChunkMinutes: 50,
       audioLoaded: false, hasResult: false, busy: false,
       showProgress: false, progressPercent: 0,
       statusText: '就緒', statusError: false,
@@ -677,6 +693,7 @@ export default {
         if (s.apiKeys) this.apiKeys = { ...s.apiKeys }
         if (s.llmModel) this.llmModel = s.llmModel
         if (s.segmentMinutes !== undefined) this.segmentMinutes = s.segmentMinutes
+        if (s.whisperChunkMinutes !== undefined) this.whisperChunkMinutes = s.whisperChunkMinutes
         if (s.useGpu !== undefined) this.useGpu = s.useGpu
         if (s.gpuDevice !== undefined) this.gpuDevice = s.gpuDevice
         if (s.recoDir) this.recoDir = s.recoDir
@@ -742,7 +759,7 @@ export default {
     async saveSettings() {
       if (!window.electronAPI) { this.statusText = this.$t('status.commError'); this.statusError = true; return }
       try {
-        const result = await window.electronAPI.saveSettings({ uiLanguage: this.uiLanguage, llmProvider: this.llmProvider, apiKeys: { ...this.apiKeys }, llmModel: this.llmModel, segmentMinutes: this.segmentMinutes, useGpu: this.useGpu, gpuDevice: this.gpuDevice })
+        const result = await window.electronAPI.saveSettings({ uiLanguage: this.uiLanguage, llmProvider: this.llmProvider, apiKeys: { ...this.apiKeys }, llmModel: this.llmModel, segmentMinutes: this.segmentMinutes, whisperChunkMinutes: this.whisperChunkMinutes, useGpu: this.useGpu, gpuDevice: this.gpuDevice })
         if (result.success) { this.statusText = this.$t('status.saved'); this.statusError = false; setTimeout(() => { if (this.statusText === this.$t('status.saved')) this.statusText = this.$t('status.ready') }, 2000) }
         else { this.statusText = this.$t('status.saveFail', { error: result.error || '未知錯誤' }); this.statusError = true }
       } catch (e) { this.statusText = this.$t('status.saveFail', { error: e.message }); this.statusError = true }
