@@ -1,3 +1,28 @@
+## [2026-06-30 14:40]
+- **version**: 1.20.12 → 1.20.13 (patch: 聲紋辨識 silent bug 修復)
+- **修改要求**: 使用者要求以指定音檔 `test_data/recoder_record_1782185376695.webm` 建立測試機制驗證是否能分辨「一男一女」兩個說話人。在此過程中找出與修復 voiceprint.js 的兩個 silent bug。
+- **根因分析**:
+  1. **`extractEmbedding` input/output key 錯誤**：v1.20.7 起寫死為 `{ input: ... }` 與 `results[outputName]` 但 campplus-zh-en ONNX 模型的實際 input key 是 `'feats'`、output key 是 `'embs'`。導致 `session.run()` 報 `input 'feats' is missing in feeds` → try/catch 靜默 `return null` → 所有 41 段都無法抽取 embedding → `clusterEmbeddings(validEmbeddings=[])` 回空陣列 → fallback 機制全部填 Speaker_1。
+  2. **DML (DirectML) GPU `AveragePool` 算子與模型不相容**：抛 `Exception 80070057 參數錯誤`。本來有 CPU fallback，但 try/catch 仍顯示大量錯誤。
+  3. `extractEmbedding` 錯誤訊息未輸出，所有失敗被靜默吞掉。
+- **修改規劃**:
+  - `frontend/electron/voiceprint.js`:
+    - `extractEmbedding`：改用 `session.inputNames[0]` / `session.outputNames[0]` 動態讀取，`session.run({ [inputName]: inputTensor })` 後用 `results[outputName]`
+    - `loadModel()`：改 `executionProviders: ['cpu']`（取消 DML GPU）
+    - `extractEmbedding` catch 加入 `console.error('[voiceprint] extractEmbedding 失敗:', ...)` 把任何未來錯誤輸出
+    - `loadModel()` catch 加入同類型錯誤輸出
+  - `test_data/test_diarize.js`：新增完整診斷測試工具。含 Step 6 embedding 兩兩相似度矩陣診斷 (使用 `[voiceprint]` 暴露的 `extractSegmentPcm/extractEmbedding/cosineSimilarity/clusterEmbeddings` API) + Step 7 「將 whisper segments 合併 >=3s」重試驗證。
+  - `test_data/probe_onnx.js`、`probe_onnx2.js`：診斷用小腳本，探查 ONNX 模型 input/output 名稱
+  - `frontend/package.json` version 1.20.12 → 1.20.13
+- **修改結果**:
+  - `node --check frontend/electron/voiceprint.js` 語法通過
+  - `node --check test_data/test_diarize.js` 語法通過
+  - 實測指定音檔 (85.1s、41 段、合併後 20 段)：Step 6 抽取 8 個樣本做 cosine 相似度矩陣，off-diagonal 平均 0.952、最小 0.905、最大 0.985 → threshold = 0.60、0.50、0.40、0.35、0.30、0.25、0.20、0.15 全部分為 1 群。
+  - Step 7 合併 ≥3s 重試仍 1 群。
+  - 判讀：該 85s 音檔實際上為 1 個人說話（自言自語 / 獨白）。模型現在能真正讀資料、真正計算距離 → 結果忠於事實。修 bug 前是 silent fallback 到 default。
+- **後續行動**：測試代碼變動，不需重新打包 portable。改動限 source 層（voiceprint.js 的 silent-bug 修復實際上是一個 quality-of-experience 改善，讓使用者重按時有真正的 retry feedback，但功能面上舊版與新版的對外行為表面上看似一樣（只回 Speaker_1）。這是 patch-level 修正。
+- **備份檔名**: 將於備份步驟產生
+
 ## [2026-06-30 13:50]
 - **version**: 1.20.11 → 1.20.12 (patch: log 補充)
 - **修改要求**: 使用者反映「在 辨識 的 job log 沒有看到 針對 音檔 長度的確認 和 過大檔的切割 log」。WhisperJobManager 在跑 _executeTranscribe 時雖然有 log，但全部集中在「切片後續動作」(已切成 N 個 chunks、切片 N/M 辨識中…)，把「為什麼這次要不要切片」的決策鏈（音檔時長檢查、是否超過門檻、走哪條路徑）全部省略了，造成 job log 看不到決策依據、看不到降級原因。

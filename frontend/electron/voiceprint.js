@@ -206,26 +206,18 @@ async function loadModel() {
     if (!ort) ort = require('onnxruntime-node')
     const mp = modelPath()
     if (!fs.existsSync(mp)) return false
+    // v1.20.12: campplus-zh-en 模型在 DML (DirectML) 上 AveragePool 等節點會拋 80070057 參數錯誤。
+    // 改成優先 CPU。CPU 本身已成 principal 路徑，且聲紋抽取 5-15s/段不是 IO-bottleneck，DML 加速價值有限。
     session = await ort.InferenceSession.create(mp, {
-      executionProviders: ['dml', 'cpu'],
+      executionProviders: ['cpu'],
       graphOptimizationLevel: 'all'
     })
     modelLoaded = true
     return true
   } catch (e) {
-    try {
-      if (!ort) ort = require('onnxruntime-node')
-      const mp = modelPath()
-      session = await ort.InferenceSession.create(mp, {
-        executionProviders: ['cpu'],
-        graphOptimizationLevel: 'all'
-      })
-      modelLoaded = true
-      return true
-    } catch (e2) {
-      modelLoaded = false
-      return false
-    }
+    modelLoaded = false
+    console.error('[voiceprint] loadModel 失敗:', e && e.message ? e.message : e)
+    return false
   }
 }
 
@@ -505,8 +497,12 @@ async function extractEmbedding(pcm) {
   const inputTensor = new ort.Tensor('float32', fbank, [1, numFrames, numBins])
 
   try {
-    const results = await session.run({ input: inputTensor })
+    // v1.20.12: campplus ONNX 的 input key 是 'feats'、output key 是 'embs'。
+    // 舊版寫死用 { input: ... } 對到模型而 silent return null，造成 diarize 全部 segment 被 fallback 為 Speaker_1。
+    // 改用 session.inputNames / outputNames 動態讀取，避免這類名稱 drift。
+    const inputName = session.inputNames[0]
     const outputName = session.outputNames[0]
+    const results = await session.run({ [inputName]: inputTensor })
     const embedding = results[outputName].data
     let norm = 0
     for (let i = 0; i < embedding.length; i++) {
@@ -520,6 +516,7 @@ async function extractEmbedding(pcm) {
     }
     return Array.from(embedding)
   } catch (e) {
+    console.error('[voiceprint] extractEmbedding 失敗:', e && e.message ? e.message : e)
     return null
   }
 }
