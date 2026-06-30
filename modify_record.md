@@ -1,5 +1,21 @@
 # 修改日誌 (Modify Record)
 
+## [2026-06-30 12:15]
+- **version**: 1.20.10
+- **修改要求**：原本 v1.20.7/v1.20.9 已實作聲紋長音檔切片與說話者辨識，但「聲紋辨識還是無法辨識」問題未完全解決：跨 chunk 邊界的 segment (例如 seg.start=2900/end=3100 落在 chunk0 0~3000 與 chunk1 3000~6000 之間) 在 v1.20.9 中會被指給 chunk0，並只讀取 [2900, 3000) 部分而漏掉 [3000, 3100) 段，導致 embedding 計算不準確，最終聚類失敗。
+- **修改規劃**：
+  - `frontend/electron/voiceprint.js`：
+    1. 移除 `segmentToChunk` 單一映射函式
+    2. 新增 `findChunksForSegment(seg)`：回傳該 segment 跨越的所有 chunk indices
+    3. 重構 `diarizeAudio()` 主迴圈：對 useChunks=true 的 segment，依序從各 chunk 抽取 subPcm，最後 `Buffer.concat()` 拼接
+    4. `useChunks=false` 時維持原 `extractSegmentPcm(audioPath, seg.start, seg.end, audioDuration)` 邏輯
+  - `frontend/package.json`：version 1.20.9 → 1.20.10 (Patch)
+- **修改結果**：
+  - 跨 chunk 邊界的 segment (例如 2900~3100 跨 chunk0/chunk1) 現在會完整讀取 200 秒 PCM，embedding 計算準確，聚類更可靠
+  - 維持 v1.20.9 的非同步 Job / GPU 自動降級 / 進度回報等所有功能
+  - 沒有語意改變，只是修正了 chunk 邊界 segment 的 PCM 拼接邏輯
+- **備份檔名**: backup-202606301215.zip
+
 ## [2026-06-30 12:00]
 - **version**: 1.20.9
 - **修改要求**：

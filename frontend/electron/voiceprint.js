@@ -719,14 +719,21 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
     }
   }
 
-  // 將 segments 對應到 chunk (半開區間)
-  const segmentToChunk = (seg) => {
-    if (!useChunks) return null
+  // 將 segments 對應到 chunk (半開區間 [startOffset, endOffset))
+  // v1.20.10 修正: 原先 segmentToChunk 誤判跨 chunk 的 segment，
+  //                 使 seg.start=2900/end=3100 仍指向 chunk 0 而漏掉 [3000,3100) 部分。
+  //                 改為對每個 segment 找出所有跨越的 chunks 依序拼 PCM。
+  const findChunksForSegment = (seg) => {
+    if (!useChunks) return []
+    const result = []
     for (let i = 0; i < chunkList.length; i++) {
       const c = chunkList[i]
-      if (seg.start < c.endOffset || i === chunkList.length - 1) return i
+      // 該 chunk 與 segment 有重疊
+      if (seg.end > c.startOffset && seg.start < c.endOffset) {
+        result.push(i)
+      }
     }
-    return chunkList.length - 1
+    return result
   }
 
   const embeddings = []
@@ -740,18 +747,25 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
 
   for (let i = 0; i < total; i++) {
     const seg = segments[i]
-    const audioSource = useChunks
-      ? (() => {
-          const ci = segmentToChunk(seg)
-          const c = chunkList[ci]
-          // segment 對應到 chunk 內的時間
-          const localStart = Math.max(0, seg.start - c.startOffset)
-          const localEnd = Math.min(c.endOffset - c.startOffset, seg.end - c.startOffset)
-          return { path: c.file, start: localStart, end: localEnd, dur: chunkAudioDuration }
-        })()
-      : { path: audioPath, start: seg.start, end: seg.end, dur: audioDuration }
 
-    const pcm = await extractSegmentPcm(audioSource.path, audioSource.start, audioSource.end, audioSource.dur)
+    let pcm = null
+    if (useChunks) {
+      // 跨多個 chunks 時依序抽取並拼接 PCM
+      const chunkIndices = findChunksForSegment(seg)
+      const pcmChunks = []
+      for (const ci of chunkIndices) {
+        const c = chunkList[ci]
+        const localStart = Math.max(0, seg.start - c.startOffset)
+        const localEnd = Math.min(c.endOffset - c.startOffset, seg.end - c.startOffset)
+        const subPcm = await extractSegmentPcm(c.file, localStart, localEnd, chunkAudioDuration)
+        if (subPcm && subPcm.length > 0) pcmChunks.push(subPcm)
+      }
+      if (pcmChunks.length > 0) {
+        pcm = Buffer.concat(pcmChunks)
+      }
+    } else {
+      pcm = await extractSegmentPcm(audioPath, seg.start, seg.end, audioDuration)
+    }
 
     if (pcm && pcm.length > EMBED_MIN_BYTES) {
       const emb = await extractEmbedding(pcm)
