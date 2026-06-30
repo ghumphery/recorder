@@ -47,8 +47,38 @@ Thumbs.db
 # Environment
 .env
 
-# 測試資料
-test_data/
+# 測試資料（保留測試腳本，不追蹤音檔原始檔）
+/test_data/*
+!/test_data/*.js
+!/test_data/*.json
+!/test_data/*.txt
+!/test_data/*.md
+!/test_data/*.ps1
+!/test_data/*.cmd
+!/test_data/*.sh
+!/test_data/*.bat
+!/test_data/*.onnx
+!/test_data/*.bin
+!/test_data/*.model
+!/test_data/*.wav
+!/test_data/*.webm
+!/test_data/*.mp3
+!/test_data/*.opus
+!/test_data/*.ogg
+!/test_data/*.flac
+!/test_data/*.m4a
+/test_data/*.wav
+/test_data/*.webm
+/test_data/*.mp3
+/test_data/*.opus
+/test_data/*.ogg
+/test_data/*.flac
+/test_data/*.m4a
+/test_data/*.tmp
+/test_data/*.bak
+/test_data/*.zip
+/test_data/*.rar
+/test_data/*.7z
 
 # 舊後端（已棄用）
 backend/
