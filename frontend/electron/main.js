@@ -9,6 +9,7 @@ const OpenCC = require('opencc-js')
 const fetch = require('node-fetch')
 const voiceprint = require('./voiceprint')
 const audioChunker = require('./audioChunker') // v1.20.9: 共用音檔切片模組
+const speakerProfile = require('./speakerProfile') // v1.23.0: Speaker Profile Database
 // v1.20.9: 啟動時清掉殘留的 recoder-chunks-* / voiceprint-chunk-* 暫存
 audioChunker.cleanupStaleChunks()
 
@@ -980,7 +981,10 @@ class WhisperJobManager {
 
   _sendUpdate(job) {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send('transcribe:event', {
+      // v1.20.15 hotfix: completed 事件附帶 result.segments，避免前端再走 transcribe:getResult
+      //   觸發 IPC race 或 catch 區塊吞錯。前端 _onTranscribeEvent 優先讀 inline.result，
+      //   fallback 才 invoke getResult。同時 refresh transcribeJobList（前端事件監聽會做）。
+      const payload = {
         id: job.id,
         type: 'transcribe',
         status: job.status,
@@ -989,7 +993,12 @@ class WhisperJobManager {
         error: job.error,
         audioPath: job.audioPath,
         source: job.source,
-      })
+      }
+      if (job.status === 'completed' && job.result) {
+        payload.result = job.result
+      }
+      appLog('DEBUG', 'whisper-job', `[${job.id}] sendUpdate status=${job.status} hasResult=${!!job.result} hasInlineResult=${!!payload.result}`)
+      this.mainWindow.webContents.send('transcribe:event', payload)
     }
   }
 
@@ -1114,7 +1123,11 @@ class WhisperJobManager {
       this._log(job, `決策: 不切片 (${reason})`)
       // 原本路徑：直接 runWhisper
       this._log(job, `進入直接辨識路徑 (runWhisper)`)
-      return await this._runSingleTranscribe(job, audioPath, modelSize, useGpu, gpuDevice)
+      // v1.20.16 hotfix: 不切片路徑原本只 return，沒寫 job.result，導致 completed 事件下
+      //   job.result 永遠是 null、前端顯示 ❌ 取得辨識結果失敗: 無 result。
+      const directResult = await this._runSingleTranscribe(job, audioPath, modelSize, useGpu, gpuDevice)
+      if (directResult) job.result = { success: true, segments: directResult.segments || [] }
+      return directResult
     }
 
     // 長音檔切片路徑
@@ -1128,7 +1141,10 @@ class WhisperJobManager {
       this._log(job, `切片失敗，降級為直接辨識: ${e.message}`)
       audioChunker.cleanupChunkDir(tmpDir)
       this._log(job, `已切換為直接辨識路徑 (runWhisper)`)
-      return await this._runSingleTranscribe(job, audioPath, modelSize, useGpu, gpuDevice)
+      // v1.20.16 hotfix: 切片失敗降級路徑也需寫 job.result
+      const fallbackResult = await this._runSingleTranscribe(job, audioPath, modelSize, useGpu, gpuDevice)
+      if (fallbackResult) job.result = { success: true, segments: fallbackResult.segments || [] }
+      return fallbackResult
     }
 
     const chunks = audioChunker.pairChunks(chunkInfo.files, chunkInfo.durations)
@@ -1780,9 +1796,14 @@ ipcMain.handle('llm:jobDelete', async (event, { jobId }) => {
   return { success: true, deleted }
 })
 
+// v1.20.15 hotfix: 加 DEBUG log 印出 job 狀態 / audioPath / hasResult，便於以後分析 race
 ipcMain.handle('transcribe:getResult', async (event, { jobId }) => {
   const job = whisperJobManager.getStatus(jobId)
-  if (!job) return { success: false, error: '找不到 job' }
+  if (!job) {
+    appLog('DEBUG', 'transcribe', `getResult(${jobId}) → NOT FOUND`)
+    return { success: false, error: '找不到 job' }
+  }
+  appLog('DEBUG', 'transcribe', `getResult(${jobId}) → status=${job.status} hasResult=${!!job.result} audioPath=${job.audioPath}`)
   if (job.status !== 'completed') return { success: false, error: 'job 尚未完成', status: job.status }
   return { success: true, result: job.result }
 })
@@ -2232,22 +2253,305 @@ ipcMain.handle('reco:deleteLlmDoc', async (event, { recordingId, docId }) => {
   } catch (e) { return { success: false, error: e.message } }
 })
 
-// ── 聲紋說話者標註 ──
 
-ipcMain.handle('voiceprint:status', async () => {
-  return { success: true, cached: voiceprint.isModelCached() }
+// v1.23.0: Speaker Profile Database CRUD
+ipcMain.handle('voiceprint:profileList', async () => {
+  try {
+    const profiles = speakerProfile.listProfiles()
+    const stats = speakerProfile.getStats()
+    return { success: true, profiles, stats }
+  } catch (e) { return { success: false, error: e.message } }
 })
 
-ipcMain.handle('voiceprint:download', async (event) => {
-  appLog('INFO', 'voiceprint', '下載聲紋模型開始')
+ipcMain.handle('voiceprint:profileSave', async (event, profile) => {
+  try { return speakerProfile.saveProfile(profile) }
+  catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('voiceprint:profileRename', async (event, payload) => {
+  try { return speakerProfile.renameProfile(payload.id, payload.newName) }
+  catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('voiceprint:profileDelete', async (event, payload) => {
+  try { return speakerProfile.deleteProfile(payload.id) }
+  catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('voiceprint:profileStats', async () => {
+  try { return { success: true, ...speakerProfile.getStats() } }
+  catch (e) { return { success: false, error: e.message } }
+})
+
+// v1.23.0: 從 seeds 建立 profile
+ipcMain.handle('voiceprint:profileBuildFromSeeds', async (event, payload) => {
+  const { audioPath, segments, seeds, modelKey } = payload
+  appLog("INFO", "voiceprint", `buildProfile: ${audioPath} (${seeds.length} seeds, modelKey=${modelKey})`)
+  try {
+    const profiles = await voiceprint.buildProfile(audioPath, segments, seeds, modelKey)
+    const savedIds = []
+    for (const p of profiles) {
+      const r = speakerProfile.saveProfile(p)
+      if (r.success) savedIds.push(r.id)
+    }
+    appLog("INFO", "voiceprint", `建立 ${savedIds.length}/${profiles.length} 個 profile`)
+    return { success: true, profiles, savedIds, count: savedIds.length }
+  } catch (e) {
+    appLog("ERROR", "voiceprint", `buildProfile 失敗: ${e.message}`)
+    return { success: false, error: e.message }
+  }
+})
+
+// v1.23.0: 從獨立短音檔建立 profile
+ipcMain.handle('voiceprint:profileBuildFromAudioFile', async (event, payload) => {
+  const { audioPath, name, modelKey } = payload
+  appLog("INFO", "voiceprint", `buildProfileFromAudioFile: ${audioPath} name=${name} modelKey=${modelKey}`)
+  try {
+    const p = await voiceprint.buildProfileFromAudioFile(audioPath, name, modelKey)
+    const r = speakerProfile.saveProfile(p)
+    if (r.success) return { success: true, profile: { ...p, id: r.id }, id: r.id }
+    return r
+  } catch (e) {
+    appLog("ERROR", "voiceprint", `buildProfileFromAudioFile 失敗: ${e.message}`)
+    return { success: false, error: e.message }
+  }
+})
+
+// v1.23.0: 開啟檔案選擇器選擇音檔
+ipcMain.handle('voiceprint:openAudioDialog', async () => {
+  try {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: '選擇音檔',
+      properties: ['openFile'],
+      filters: [
+        { name: '音訊檔案', extensions: ['wav', 'mp3', 'opus', 'ogg', 'flac', 'm4a', 'webm'] },
+        { name: '所有檔案', extensions: ['*'] }
+      ]
+    })
+    if (r.canceled || r.filePaths.length === 0) return { success: false, cancelled: true }
+    return { success: true, path: r.filePaths[0] }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// v1.23.0: 有監督式 speaker identification
+ipcMain.handle('voiceprint:identifySpeakers', async (event, payload) => {
+  const { audioPath, segments, modelKey, threshold } = payload
+  appLog("INFO", "voiceprint", `identifySpeakers: ${audioPath} (${segments.length} 句, modelKey=${modelKey})`)
+  try {
+    const profiles = speakerProfile.getProfilesByModel(modelKey || "camplus")
+    if (profiles.length === 0) {
+      return { success: false, error: `沒有 modelKey=${modelKey} 的 profile，請先建立 speaker profile`, profiles: [] }
+    }
+    const opts = {}
+    if (typeof threshold === "number") opts.threshold = threshold
+    const r = await voiceprint.identifySpeakers(audioPath, segments, profiles, opts)
+    appLog("INFO", "voiceprint", `辨識完成: ${r.matches.length} 個 segment 匹配到 profiles`)
+    return { success: true, segments: r.segments, matches: r.matches, modelKey: r.modelKey }
+  } catch (e) {
+    appLog("ERROR", "voiceprint", `identifySpeakers 失敗: ${e.message}`)
+    return { success: false, error: e.message }
+  }
+})
+
+// v1.23.0: 批次對所有歷史錄音套用所有 profiles
+ipcMain.handle('voiceprint:backfillAll', async (event, payload = {}) => {
+  const { modelKey, threshold } = payload
+  appLog("INFO", "voiceprint", `backfillAll: 對所有歷史錄音套用 profiles (modelKey=${modelKey})`)
+  try {
+    const profiles = speakerProfile.getProfilesByModel(modelKey || "camplus")
+    if (profiles.length === 0) return { success: false, error: "無 profile", processed: 0 }
+    const dir = recoDataPath()
+    if (!fs.existsSync(dir)) return { success: true, processed: 0 }
+    const files = scanJsonFiles(dir)
+    const metaFiles = files.filter(f => f.endsWith(".json"))
+    let processed = 0, matched = 0
+    const startTime = Date.now()
+    for (let i = 0; i < metaFiles.length; i++) {
+      const metaPath = metaFiles[i]
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"))
+        if (!meta.segments || meta.segments.length === 0 || !meta.audioPath) continue
+        if (!fs.existsSync(meta.audioPath)) continue
+        if (mainWindow) mainWindow.webContents.send("voiceprint:backfill-progress", { current: i + 1, total: metaFiles.length, recordingId: meta.id })
+        const opts = {}
+        if (typeof threshold === "number") opts.threshold = threshold
+        const r = await voiceprint.identifySpeakers(meta.audioPath, meta.segments, profiles, opts)
+        for (let j = 0; j < r.segments.length && j < meta.segments.length; j++) {
+          meta.segments[j].speaker = r.segments[j].speaker || meta.segments[j].speaker || ""
+          if (r.segments[j].score !== undefined) meta.segments[j].score = r.segments[j].score
+        }
+        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), "utf-8")
+        processed++; matched += r.matches.length
+      } catch (e) {
+        appLog("WARN", "voiceprint", `backfill 跳過 ${metaPath}: ${e.message}`)
+      }
+    }
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+    appLog("INFO", "voiceprint", `backfillAll 完成: ${processed} 個錄音, ${matched} 個匹配, ${elapsed}s`)
+    return { success: true, processed, matched, elapsed }
+  } catch (e) {
+    appLog("ERROR", "voiceprint", `backfillAll 失敗: ${e.message}`)
+    return { success: false, error: e.message }
+  }
+})
+
+// v1.23.0: 跨錄音 speaker-aware 搜尋
+ipcMain.handle('reco:searchBySpeaker', async (event, payload) => {
+  const { speakerName, keyword } = payload
+  appLog("INFO", "reco", `searchBySpeaker: speakerName="${speakerName}" keyword="${keyword || ""}"`)
+  try {
+    const dir = recoDataPath()
+    if (!fs.existsSync(dir)) return { success: true, results: [] }
+    const files = scanJsonFiles(dir)
+    const results = []
+    for (const metaPath of files) {
+      try {
+        const data = JSON.parse(fs.readFileSync(metaPath, "utf-8"))
+        if (!Array.isArray(data.segments)) continue
+        for (let i = 0; i < data.segments.length; i++) {
+          const seg = data.segments[i]
+          if (seg.speaker !== speakerName) continue
+          if (keyword && !seg.text.toLowerCase().includes(keyword.toLowerCase())) continue
+          results.push({
+            recordingId: data.id, filename: data.filename, recordedAt: data.recordedAt,
+            start: seg.start, end: seg.end, text: seg.text, speaker: seg.speaker,
+            score: seg.score || 0, source: "original",
+          })
+        }
+      } catch (e) {}
+    }
+    appLog("INFO", "reco", `searchBySpeaker 完成: ${results.length} 個結果`)
+    return { success: true, results, count: results.length }
+  } catch (e) {
+    appLog("ERROR", "reco", `searchBySpeaker 失敗: ${e.message}`)
+    return { success: false, error: e.message }
+  }
+})
+
+// v1.23.0: 列出所有 speaker 名稱
+ipcMain.handle('voiceprint:listAllSpeakerNames', async () => {
+  try {
+    const nameSet = new Set()
+    for (const p of speakerProfile.listProfiles()) nameSet.add(p.name)
+    const dir = recoDataPath()
+    if (fs.existsSync(dir)) {
+      for (const metaPath of scanJsonFiles(dir)) {
+        try {
+          const data = JSON.parse(fs.readFileSync(metaPath, "utf-8"))
+          if (Array.isArray(data.segments)) {
+            for (const seg of data.segments) {
+              if (seg.speaker && seg.speaker.startsWith("Speaker_") === false) {
+                nameSet.add(seg.speaker)
+              }
+            }
+          }
+        } catch (e) {}
+      }
+    }
+    return { success: true, names: Array.from(nameSet).sort() }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── 聲紋說話者標註 ──
+
+// v1.22.0: 列出所有支援的 speaker embedding 模型 + 狀態
+ipcMain.handle('voiceprint:listModels', async () => {
+  try {
+    const models = voiceprint.listModels()
+    const currentModel = voiceprint.getCurrentModel()
+    return { success: true, models, currentModel }
+  } catch (e) {
+    appLog('ERROR', 'voiceprint', `listModels 失敗: ${e.message}`)
+    return { success: false, error: e.message }
+  }
+})
+
+// v1.22.0: 手動匯入 ONNX 模型檔案
+ipcMain.handle('voiceprint:importModel', async (event, { modelKey, sourcePath }) => {
+  appLog('INFO', 'voiceprint', `手動匯入模型 ${modelKey} 從 ${sourcePath}`)
+  try {
+    const r = voiceprint.importModel(modelKey, sourcePath)
+    if (r.success) {
+      appLog('INFO', 'voiceprint', `模型 ${modelKey} 匯入成功 (${(r.size/1024/1024).toFixed(1)} MB)`)
+    } else {
+      appLog('WARN', 'voiceprint', `模型 ${modelKey} 匯入失敗: ${r.error}`)
+    }
+    return r
+  } catch (e) {
+    appLog('ERROR', 'voiceprint', `importModel 失敗: ${e.message}`)
+    return { success: false, error: e.message }
+  }
+})
+
+// v1.22.0: 開啟檔案選擇器選擇 ONNX 檔案
+ipcMain.handle('voiceprint:openImportDialog', async (event) => {
+  try {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: '選擇 ONNX 模型檔案',
+      properties: ['openFile'],
+      filters: [{ name: 'ONNX 模型', extensions: ['onnx'] }, { name: '所有檔案', extensions: ['*'] }]
+    })
+    if (r.canceled || r.filePaths.length === 0) return { success: false, cancelled: true }
+    return { success: true, path: r.filePaths[0] }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+})
+
+// v1.22.0: 切換當前使用的模型
+ipcMain.handle('voiceprint:setActiveModel', async (event, { modelKey }) => {
+  appLog('INFO', 'voiceprint', `切換模型: ${modelKey}`)
+  try {
+    const r = await voiceprint.setActiveModel(modelKey)
+    if (r.success) {
+      appLog('INFO', 'voiceprint', `已切換到 ${modelKey} (${r.dim}-dim)`)
+    } else {
+      appLog('WARN', 'voiceprint', `切換失敗: ${r.error}`)
+    }
+    return r
+  } catch (e) {
+    appLog('ERROR', 'voiceprint', `setActiveModel 失敗: ${e.message}`)
+    return { success: false, error: e.message }
+  }
+})
+
+// v1.22.0: 取得當前使用中的模型 key
+ipcMain.handle('voiceprint:getCurrentModel', async () => {
+  try {
+    return { success: true, modelKey: voiceprint.getCurrentModel() }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+})
+
+// v1.22.0: 列出當前所有已下載/已匯入模型（簡化版）
+ipcMain.handle('voiceprint:status', async () => {
+  try {
+    const models = voiceprint.listModels()
+    const camplus = models.find(m => m.key === 'camplus')
+    return {
+      success: true,
+      cached: camplus ? camplus.cached : false,
+      models,
+      currentModel: voiceprint.getCurrentModel()
+    }
+  } catch (e) {
+    return { success: true, cached: false }
+  }
+})
+
+// v1.22.0: 下載指定模型（向後相容：未指定 modelKey 時下載預設 campplus）
+ipcMain.handle('voiceprint:download', async (event, { modelKey } = {}) => {
+  const targetKey = modelKey || 'camplus'
+  appLog('INFO', 'voiceprint', `下載聲紋模型 ${targetKey} 開始`)
   try {
     await voiceprint.downloadModel((percent) => {
-      if (mainWindow) mainWindow.webContents.send('voiceprint:download-progress', { percent })
-    })
-    appLog('INFO', 'voiceprint', '聲紋模型下載完成')
+      if (mainWindow) mainWindow.webContents.send('voiceprint:download-progress', { percent, modelKey: targetKey })
+    }, targetKey)
+    appLog('INFO', 'voiceprint', `聲紋模型 ${targetKey} 下載完成`)
     return { success: true }
   } catch (e) {
-    appLog('ERROR', 'voiceprint', `下載失敗: ${e.message}`)
+    appLog('ERROR', 'voiceprint', `${targetKey} 下載失敗: ${e.message}`)
     return { success: false, error: e.message }
   }
 })
@@ -2262,6 +2566,24 @@ ipcMain.handle('voiceprint:diarize', async (event, { audioPath, segments }) => {
     return { success: true, segments: result }
   } catch (e) {
     appLog('ERROR', 'voiceprint', `說話者標註失敗: ${e.message}`)
+    return { success: false, error: e.message }
+  }
+})
+
+// v1.21.0: 半監督式 speaker propagation 同步接口 (秒回，量大仍走 voiceprint:jobSubmit)
+ipcMain.handle('voiceprint:propagate', async (event, { audioPath, segments, seeds, threshold }) => {
+  appLog('INFO', 'voiceprint', `半監督推算開始: ${audioPath} (${segments.length} 句, ${seeds.length} seeds)`)
+  try {
+    const opts = {}
+    if (typeof threshold === 'number') opts.threshold = threshold
+    // v1.21.4: propagateSpeakers() 回傳 { segments, centroidInfo }
+    const r = await voiceprint.propagateSpeakers(audioPath, segments, seeds, opts)
+    const resultSegments = Array.isArray(r) ? r : (r.segments || [])
+    const centroidInfo = (r && r.centroidInfo) || {}
+    appLog('INFO', 'voiceprint', `半監督推算完成: ${resultSegments.length} 句, ${Object.keys(centroidInfo).length} speakers`)
+    return { success: true, segments: resultSegments, centroidInfo }
+  } catch (e) {
+    appLog('ERROR', 'voiceprint', `半監督推算失敗: ${e.message}`)
     return { success: false, error: e.message }
   }
 })

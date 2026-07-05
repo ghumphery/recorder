@@ -545,4 +545,256 @@ ode_modules/onnxruntime-node/**/*
   - rontend/electron/voiceprint.js: minimum PCM 8000 + threshold 0.5.
   - Rebuilt Recorder-1.20.2-portable.exe (188,635,584 bytes, 2026-06-30 03:16) + code sign.
   - git commit + push.
-- **backup**: backup-202606300316.zip
+- **backup**: backup-202606300316.zip## [2026-06-30 16:00] v1.20.15 — Transcribe completion IPC race fix + diagnostic logs
+
+- **version**: 1.20.14 → 1.20.15 (patch: hotfix)
+- **Issue**: For some audio files, the user reported that pressing "Transcribe" caused the UI to display "❌ 未知錯誤" (Unknown error) forever, even though recorder.log showed `exit=0` and "Job completed" on the backend.
+- **Root cause analysis**:
+  1. `WhisperJobManager._sendUpdate()` only pushed `status` in the "completed" event without including `result.segments`.
+  2. Frontend `_onTranscribeEvent` invoked `transcribe:getResult` immediately upon `data.status === 'completed'`.
+  3. Although backend ordering is correct (status → completed → write result → sendUpdate), there exists an IPC race window where the frontend listener triggers `transcribe:getResult` while the backend handler hasn't yet finalized `jobHistory`, returning `{ success: false, error: 'job 尚未完成' }`.
+  4. The frontend `catch` block swallowed `error.message` and fell back to "❌ 未知錯誤", which is useless for debugging.
+- **Fix**:
+  1. `WhisperJobManager._sendUpdate()`: when `job.status === 'completed'` and `job.result` exists, include `result` in the payload pushed to renderer.
+  2. Frontend `_onTranscribeEvent` completed branch: prefer `data.result` (event-inline); only fall back to `transcribeGetResult` if missing.
+  3. `transcribe:getResult` handler: add DEBUG log printing job state / audioPath / hasResult.
+  4. `_sendUpdate`: add DEBUG log printing status / hasResult / hasInlineResult.
+  5. Frontend `_onTranscribeEvent`: add `console.log('[app] transcribe event:', ...)` at entry for future analysis.
+  6. `catch` block: use explicit messages (e.g. `❌ 取得辨識結果失敗: status=...`) instead of the vague "未知錯誤".
+  7. `saveRecordingMeta` already isolates errors internally; wrap it again on the caller side to ensure storage failures don't affect transcript display.
+- **Result**:
+  - `frontend/electron/main.js` `WhisperJobManager._sendUpdate()` and `transcribe:getResult` handler.
+  - `frontend/src/App.vue` `_onTranscribeEvent` completed branch + entry console.log.
+  - `frontend/package.json` version `1.20.14 → 1.20.15`.
+  - Rebuilt `Recorder-1.20.15-portable.exe` + code sign.
+  - git commit + push.
+- **Backup filename**: backup-202606301600.zip
+## [2026-06-30 16:42] v1.20.16 — _executeTranscribe job.result write-missing fix
+
+- **version**: 1.20.15 → 1.20.16 (patch: hotfix)
+- **Issue**: After v1.20.15 hotfix, the user reported that for *some* audio files the UI still showed `❌ 取得辨識結果失敗: 無 result` and the debug log showed `sendUpdate status=completed hasResult=false hasInlineResult=false`.
+- **Root cause analysis**: `WhisperJobManager._executeTranscribe()` has three return paths (no-chunk direct runWhisper, chunk-failure fallback to direct runWhisper, chunked processing). Only the chunked path wrote `job.result = { success: true, segments: allSegments }`. The other two paths only `return await this._runSingleTranscribe(...)` without ever assigning to `job.result`, so the completed event always saw `job.result === null` (the default setting `whisperChunkMinutes=0` triggers the no-chunk path for almost everyone).
+- **Fix**:
+  1. In both no-chunk and fallback paths of `_executeTranscribe()`, capture the result from `_runSingleTranscribe()` and assign `job.result = { success: true, segments: result.segments || [] }` before returning.
+  2. **The v1.20.15 hotfix is still relevant** — the issue had two layers: `_sendUpdate()` not including `result` (fixed in v1.20.15), and `job.result` never being written (fixed here). Both must be fixed for complete resolution.
+- **Result**:
+  - `frontend/electron/main.js` `_executeTranscribe()` now writes `job.result` in all three return paths.
+  - `Product_Design_Guidelines.md` version `1.20.15 → 1.20.16`.
+  - `frontend/package.json` version `1.20.15 → 1.20.16`.
+  - Rebuilt `Recorder-1.20.16-portable.exe` + code sign.
+- **Backup filename**: backup-202606301642.zip
+## [2026-06-30 17:00] v1.21.0 — Semi-supervised speaker propagation
+
+- **version**: 1.20.16 → 1.21.0 (minor: new feature)
+- **Issue**: Solve "short sentences (<1.5s) cannot be precisely attributed to speaker" and support workflow "user manually marks a few sentences → system propagates to remaining segments".
+- **Background**: The existing v1.20.2 `diarizeAudio` is unsupervised clustering (cosine threshold 0.5), which performs poorly on short sentences (one of the v1.20.6 root causes). A common misconception is that "duplicating the same sentence multiple times improves accuracy" — in practice, campplus x-vector models learn speaker characteristics, not semantic content, so duplicating the same sentence provides no new information.
+- **Solution**:
+  1. `frontend/electron/voiceprint.js`:
+     - Add constant `PROPAGATE_MIN_THRESHOLD = 0.5`
+     - Extract shared helper `_extractAllEmbeddings(audioPath, segments, progressCallback)` (with long-audio chunking + cross-chunk splicing)
+     - Extract shared helper `_ensureModelLoaded()` (model exists + size check + InferenceSession creation)
+     - Refactor `diarizeAudio()` to use these helpers, body reduced to ~30 lines
+     - Add `propagateSpeakers(audioPath, segments, seeds, options)`: semi-supervised cosine comparison + L2-normalize centroid + threshold filtering
+     - Export `propagateSpeakers` and `PROPAGATE_MIN_THRESHOLD`
+  2. `frontend/electron/main.js`:
+     - Add IPC handler `ipcMain.handle('voiceprint:propagate', async (event, { audioPath, segments, seeds, threshold }) => ...)`
+     - Log to recorder.log via `appLog`
+  3. `frontend/electron/preload.js`:
+     - Expose `voiceprintPropagate: (p) => ipcRenderer.invoke('voiceprint:propagate', p)`
+  4. `frontend/src/i18n/{zh-TW,en,ja}.js`: Add 19 voiceprint.* keys
+  5. `frontend/src/App.vue`:
+     - data: add `showSpeakerEditor`, `editingSpeakerIdx`, `editingSpeakerName`, `seedMap`, `propagateBusy`, `propagateThreshold`, `showPropagatePanel`
+     - Each segment now has "+👤" button (unmarked) or clickable speaker-tag (marked)
+     - Click opens **Speaker Editor Modal**: enter speaker name → confirm
+     - Add "🪄 Propagate labels to all sentences" button to control bar (purple #7B1FA2)
+     - Click opens **Propagation Panel**: list all seeds, adjustable threshold slider, remove/clear/propagate actions
+     - Three new methods: `setSegmentSpeaker(idx, name)`, `doPropagateSpeakers()`, `clearAllSpeakers()`
+  6. `Product_Design_Guidelines.md`: Add §15 Semi-supervised speaker propagation section
+- **Result**:
+  - Users can manually click a few sentences to mark them as "Alice", "Bob", etc.
+  - Pressing the propagate button completes all other sentence attributions within 5-15 seconds
+  - Propagated results can be further fine-tuned with +👤 editing
+  - Expected: short sentences (<1.5s) previously misattributed to Speaker_1 are now correctly grouped with the correct speaker via seed comparison
+  - Original v1.20.2 unsupervised `diarizeAudio` still works; both coexist in the control bar (v1.20.2 = "👥 Diarize" orange button, v1.21.0 = "🪄 Propagate" purple button)
+- **Backup filename**: backup-202606301700.zip
+
+## [2026-06-30 17:35] v1.21.1 — Fix: every speaker edit/clear creates a new metadata file
+
+- **version**: 1.21.0 → 1.21.1 (patch: hotfix)
+- **Issue**: After v1.21.0 release, "every time the user cancels a label / edits a speaker name" the history list grows by one extra transcript entry. The expected behavior is in-place edit, not creating a new file each time.
+- **Root cause**:
+  1. `frontend/src/App.vue` `saveRecordingMeta(segments)` originally generated a new ID based on the current timestamp whenever `currentRecordingId` was empty.
+  2. Each call from `setSegmentSpeaker()` / `doPropagateSpeakers()` / `clearAllSpeakers()` invokes `saveRecordingMeta(this.transcriptionResults)`.
+  3. Although `_onTranscribeEvent('completed')` sets `currentRecordingId`, race conditions in the "Review from history" or "cancel then re-mark" path can result in `currentRecordingId` being empty when called multiple times — generating a new file each call.
+  4. Most common path: click +👤 to mark a speaker (one `setSegmentSpeaker` call) → click the same speaker to cancel (another call) → creates two files.
+- **Solution**:
+  1. `frontend/src/App.vue` `saveRecordingMeta()`:
+     - v1.21.1 hotfix: first read `this.currentRecordingId`; if it already exists, **reuse it** — never generate a new ID.
+     - Only fresh transcribe completions or Review entries (where the upper layer explicitly sets an ID) can create new files.
+  2. `frontend/src/App.vue` added `_scheduleSaveRecordingMeta()` debounce helper (500ms):
+     - Clears the prior setTimeout and resets the timer to avoid race conditions / multiple concurrent save IPCs.
+  3. `frontend/src/App.vue` three hotfix sites switched to `_scheduleSaveRecordingMeta()`:
+     - `setSegmentSpeaker()`
+     - `doPropagateSpeakers()`
+     - `clearAllSpeakers()`
+  4. `frontend/package.json`: version 1.21.0 → 1.21.1
+  5. `Product_Design_Guidelines.md` version and modification date updated
+  6. New entry appended to modify_record (zh-TW / en / ja)
+- **Result**:
+  - The same transcript / same recordingId remains a single file no matter how many times the user marks, cancels, propagates, or clears.
+  - "Transcribe complete → view in history" only adds one entry, never gets "刷" into multiple entries by repeated mark/cancel actions.
+  - 500ms debounce guarantees that rapid consecutive edits trigger only one full save, preventing I/O storms.
+- **Backup filename**: to be generated in the backup step
+
+## [2026-06-30 23:45] v1.21.2 — 修正講者標籤編輯後逐字稿變成無音檔狀態
+
+- **version**: 1.21.1 → 1.21.2（patch: hotfix）
+- **修改要求**: 使用者反映 v1.21.1 後，「從歷史記錄 Review 進入逐字稿 → 編輯講者標籤」會使該記錄在歷史列表中變成「無音檔」狀態（原本明明有音檔）。
+- **根因分析**:
+  1. eviewRecording() 進入時將 	his.currentAudioPath = null 與 	his.audioLoaded = false。
+  2. 講者標籤編輯（setSegmentSpeaker()）觸發 _scheduleSaveRecordingMeta() → saveRecordingMeta()。
+  3. saveRecordingMeta() 第 1156 行寫死 const audioPath = this.currentAudioPath || ''，
+ull 進來後變成空字串。
+  4. IPC ecoSaveMeta 被叫起時傳入 udioPath: '' 覆寫原本 metadata 中的 udioPath 欄位為空字串。
+  5. 下次 eco:list 讀歷史時 hasAudio 判斷變成 false，逐字稿在歷史中變成「無音檔」狀態。
+- **修正方案**:
+  1. rontend/src/App.vue saveRecordingMeta()：當 currentAudioPath 為空且 currentRecordingId 存在時，主動呼叫 ecoLoadMeta 從舊 metadata 載入原本的 udioPath 保留，避免覆寫。
+  2. rontend/src/App.vue eviewRecording()：不再將 currentAudioPath 強制設為 
+ull，改為讀取 .meta.audioPath 或 
+ull；同時在進入時若 udioPath 存在則主動呼叫 loadAudioUrl 載入音檔 URL，讓「Review」進入後逐字稿可點擊播放。
+  3. rontend/package.json: version 1.21.1 → 1.21.2
+  4. Product_Design_Guidelines.md 版本號 / 修改日期一併更新
+  5. 三語 modify_record 新增本條目
+- **修改結果**:
+  - 從歷史 Review 進入逐字稿後，無論編輯幾次講者標籤、推算、清除，音檔連結 (udioPath) 都不會被洗掉。
+  - 「有音檔」狀態記號在歷史列表中永久保持。
+  - Review 進入後逐字稿可點擊播放（原來需手動先點「▶️ 播放」才會載入音檔，現自動載入）。
+- **備份檔名**: 將於備份步驟產生
+
+## [2026-07-01 09:00] v1.21.3 — 逐字稿講者標籤顯示每一句的聲紋值
+
+- **version**: 1.21.2 → 1.21.3（minor: 新功能）
+- **修改要求**: 使用者反映「在逐字稿講者標記顯示每一句的聲紋值」— 希望除了「誰說的」之外還能看出「這句與該 speaker 的相似度有多高」，方便判斷標註可信度。
+- **背景**: v1.20.2 diarizeAudio 與 v1.21.0 propagateSpeakers 演算法都會對每個 segment 計算 cosine similarity（diarize 算 vs 群組 centroid；propagate 算 vs 種子 centroid），但之前只回傳 .speaker 標籤而把 score 丟掉了。
+- **修正方案**:
+  1. rontend/electron/voiceprint.js：
+     - diarizeAudio()：重新計算每個群組的 centroid，再對每個 segment 用 cosineSimilarity() 算對其群組 centroid 的相似度，存入 esult[i].score。原本 algorithm 已將 centroid 算出來過，但因沒回傳就直接丟了，現在手動重建以取出每群組的 centroid。
+     - propagateSpeakers()：本來就已經在算 estSim，改為直接存入 esult[i].score（取 Math.max(0, bestSim) 保證非負）。
+     - 兩者都對無效的 segment（null embedding）回傳 score: 0。
+  2. rontend/src/App.vue：
+     - initJobListener 的 voiceprint completed 分支：把 data.segments[i].score 同步寫入 	ranscriptionResults[i].score。
+     - doPropagateSpeakers：同樣寫入 	ranscriptionResults[i].score。
+     - 逐字稿 speaker tag 旁邊增加 <span class="speaker-score">{{ (seg.score * 100).toFixed(0) }}</span>，用半透明背景呈現百分比（例：👤 張三 85），hover 顯示完整 1 位小數。
+  3. 新增 .speaker-score CSS：白色半透明背景、9px 字、6px radius，與 .speaker-tag 並列顯示。
+  4. rontend/package.json: version 1.21.2 → 1.21.3
+  5. 三語 modify_record 新增本條目
+  6. Product_Design_Guidelines.md 版本號更新
+- **修改結果**:
+  - 執行 👥 標註說話者 或 🪄 依標註推算 後，每一句的 speaker tag 後方多了一個 0~100 的相似度數字
+  - 高於 80% = 高可信度、50-80% = 中等、< 50% = 低（該 segment 跟所屬 speaker 群的 centroid 相似度不高，可能需要重新編輯或加 seed）
+  - score 與 speaker 一起持久化到 metadata，重新開啟逐字稿後仍可見
+- **備份檔名**: 將於備份步驟產生
+
+## [2026-07-01 15:00] v1.21.4 — 強化多 seed centroid 計算 (trimmed mean + outlier rejection)
+
+- **version**: 1.21.3 → 1.21.4（minor: 演算法強化）
+- **修改要求**: 使用者反映「同時標注同一個人的多段句子是否可以提升語音比對準確度」— 想確認是否真的能幫助半監督式 speaker propagation。
+- **回答**: 是的，可以，但「不是 seed 越多越好」。多個同一 speaker 的 embeddings 平均後的 centroid 會更穩定，減少單一 segment 受 fbank 雜訊、背景音、語速變化影響。但**邊際效益遞減**：3-5 個乾淨的 seed 已足夠，10+ 個 seed 提升有限。**真正危險的是 outlier seed**（咳嗽、背景音、按鍵聲）會把 centroid 拉偏。
+- **修正方案**:
+  1. rontend/electron/voiceprint.js propagateSpeakers():
+     - 1-2 個 seeds：取 simple mean（沒有足夠統計量剔除 outlier）
+     - 3 個以上 seeds：採用 **trimmed mean centroid**：
+       - 對所有 seed embeddings 兩兩算 cosine similarity
+       - 計算每個 seed 與其他 seed 的平均相似度作為「內部一致性指標」
+       - 去掉平均相似度最低與最高各一個 (outlier) → 取中間值的平均
+       - 同時記錄 internalCoherence（全體 seeds 內部一致性平均）作為品質指標
+  2. 1-2 個 seeds 時不剔除 outlier，3 個以上用 floor(seedCount/4) 計算 dropN，但 dropN 最大只到 1（避免剔除過多）
+- **修改結果**:
+  - 多個同一 speaker 的 seeds 標注後，centroid 更穩定，可靠度提升
+  - 自動剔除 outlier seed（背景雜音、按鍵聲、與該 speaker 不相關的句子）造成的 centroid 偏移
+  - 學理上：3-5 個乾淨的 seed 是甜蜜點，10+ 個 seeds 提升有限
+- **備份檔名**: 將於備份步驟產生
+
+
+## [2026-07-02 01:35] v1.22.0 — Multi-Model Speaker Embedding Architecture (MODEL_REGISTRY factory pattern)
+
+- **version**: 1.21.4 → 1.22.0 (minor: multi-model architecture)
+- **Change request**: Support multiple ONNX speaker embedding models (camplus / ECAPA-TDNN / ResNet-SE) with a factory pattern design
+- **Plan**:
+  1. Researched ECAPA-TDNN / ResNet ONNX sources → conclusion: HF/ModelScope/speechbrain official ONNX mirrors all return 401/404
+  2. Refactored voiceprint.js to MODEL_REGISTRY factory pattern with 3 model entries (camplus / ecapa_tdnn / resnet_se)
+  3. Dynamic ONNX session management: loadModel(modelKey) releases old session before loading new model
+  4. File name isolation: each modelKey maps to independent path (voiceprint/<modelKey>/model.onnx)
+  5. main.js added 6 IPC handlers: listModels / importModel / setActiveModel / openImportDialog / getCurrentModel / download accepting modelKey
+  6. preload.js exposed 5 new APIs
+  7. i18n three languages added 22 voiceprint.* keys
+  8. App.vue data added voiceprintModels / currentVoiceprintModel + settings panel "Voiceprint Model Management" section
+  9. App.vue methods added 5 new: loadVoiceprintModels / downloadVoiceprintModel / importVoiceprintModel / setActiveVoiceprintModel / recommendVoiceprintModel
+  10. App.vue mounted() calls loadVoiceprintModels
+- **Result**:
+  - Syntax check: vite build succeeded (15 modules transformed)
+  - Build output: frontend/dist-electron-build5/Recorder-1.22.0-portable.exe (188.6 MB, with signtool signature)
+  - camplus is default auto-downloadable; ECAPA-TDNN / ResNet-SE require manual ONNX import
+  - Users can freely download / import / switch between three embedding architectures in settings panel
+  - Auto model switching: loadModel() releases old session before loading new, backend routes by modelKey
+  - Three-language readme + Product_Design_Guidelines §16 + modify_record three languages all synced
+- **Backup filename**: backup-202607020126.zip
+
+
+## [2026-07-02 05:08] v1.22.1 — ResNet-SE now auto-downloadable (WeSpeaker official ONNX)
+
+- **version**: 1.22.0 → 1.22.1 (patch: complete downloadable URL)
+- **Change request**: User asked "where to download resnet_se onnx". v1.22.0 defined resnet_se but url was empty (required manual import).
+- **Plan**:
+  1. Used curl + HuggingFace API models endpoint to find Wespeaker/wespeaker-cnceleb-resnet34-LM public ONNX
+  2. Verified download URL: https://huggingface.co/Wespeaker/wespeaker-cnceleb-resnet34-LM/resolve/main/cnceleb_resnet34_LM.onnx (HTTP 200, 26.5 MB)
+  3. Used onnxruntime-node to check ONNX structure: inputNames=[feats], outputNames=[embs], 256-dim embedding (interface identical to campplus)
+  4. Updated voiceprint.js MODEL_REGISTRY.resnet_se: url + filename + dim changed to 256
+  5. Bumped package.json version 1.22.0 → 1.22.1
+  6. Updated three-language readme with new v1.22.1 entry
+- **Result**:
+  - voiceprint.js settings updated; resnet_se is now auto-downloadable (alongside campplus)
+  - Advanced option (114MB ResNet293 large model) still requires manual import
+  - Three-language readme (zh-TW/en/ja) and modify_record synchronized
+- **Backup filename**: backup-202607020508.zip (to be generated)
+## [2026-07-02 22:39]
+- **version**: 1.22.1 → 1.23.0 (minor: Supervised Speaker Recognition + Profile Database)
+- **Requirement**: User asked "Can repeating the same phrase improve speaker recognition?", "How to find a specific speaker's voice in an audio file?", and "Support supervised learning (identification method)". After confirmation, decided to add Speaker Profile Database + supervised speaker recognition module to address v1.21.0 semi-supervised propagation's short-utterance weakness.
+- **Core design**:
+  - **Profile Database (persistent JSON)**: Stored at ~/recoder/speaker_profiles.json, each profile records {id, name, modelKey, dim, centroid, samples, internalCoherence, source, createdAt, updatedAt}, grouped by modelKey to avoid dimension mixing. MAX_PROFILES = 200.
+  - **buildProfile(audioPath, segments, seeds, modelKey)**: Extract audio from user-marked seeds, compute embeddings, calculate trimmed mean centroid, return Array<Profile>. Supports v1.22.0 multi-model (camplus 192-d / ecapa_tdnn 192-d / resnet_se 256-d).
+  - **buildProfileFromAudioFile(audioPath, name, modelKey)**: Build profile directly from a short standalone audio file (for "repeat the same phrase" scenarios).
+  - **identifySpeakers(audioPath, segments, profiles)**: Supervised identification — extract embeddings of all segments, compute cosine similarity against all profile centroids, mark best match. Returns {segments: [{start, end, text, speaker, score}], modelKey}.
+  - **backfillAll(profiles)**: Batch re-annotate all historical recordings with all profiles, useful after creating a new profile. Supports progress event (onVoiceprintBackfillProgress).
+- **New module**:
+  - rontend/electron/speakerProfile.js — full CRUD persistence layer (listProfiles / getProfile / saveProfile / renameProfile / deleteProfile / getDbPath / getStats).
+- **API expansion**:
+  - oiceprint.js adds 4 exported functions: buildProfile, buildProfileFromAudioFile, identifySpeakers, _computeCentroidFromEmbeddings.
+  - main.js adds 10 IPC handlers: voiceprint:profileList / profileSave / profileRename / profileDelete / profileStats / profileBuildFromSeeds / profileBuildFromAudioFile / openAudioDialog / identifySpeakers / backfillAll + reco:searchBySpeaker.
+  - preload.js exposes 11 new APIs to frontend.
+- **UI integration** (App.vue):
+  - 3 new buttons: 👤 Create Profile, 🎯 Identify Speakers (Supervised), 🔄 Apply to All History.
+  - New panel: "Speaker Database" modal — list all profiles, show name, model, sample count, internal coherence (%), support rename/delete.
+  - data adds profiles / showProfilePanel / identifyBusy / backfillBusy / backfillProgress.
+  - methods add loadProfiles / openProfilePanel / doIdentifySpeakers / doBackfillAll / renameProfile / deleteProfile.
+  - CSS adds .profile-item / .profile-header / .profile-name / .profile-model / .profile-stats / .profile-actions styles.
+- **i18n fix**:
+  - en.js / ja.js / zh-TW.js add 19 voiceprint.profile.* keys.
+  - Fix en.js line 308-313 multiline string errors ('confirm.deleteFolder' etc.).
+  - PowerShell script auto-quote unquoted key names (prevent recurrence).
+- **Build and deploy**:
+  - rontend/package.json version 1.22.1 → 1.23.0.
+  - vite build success (222.20 kB / 62.26 kB gz).
+  - electron-builder success, output dist-electron-build6/Recorder-1.23.0-portable.exe (179.89 MB).
+  - Code Sign: Recorder.exe / whisper-cli.exe / ffmpeg.exe / elevate.exe all signed with C:\Certs\recorder_selfsign.pfx, Subject=CN=Cheng-Feng Iron Factory, expires 2029/6/26.
+- **Result**: Successfully implemented supervised Speaker Recognition and Profile Database, providing more reliable short-utterance recognition than v1.21.0 semi-supervised method. Users can quickly build personal profiles using short audio of repeated phrases, then batch backfill all historical recordings. Build success, backup complete.
+- **Backup filename**: backup-202607022239.zip
+
+
+## [2026-07-04 06:23] v1.23.0 hotfix1 / 5 / 7 / 8
+- **version**: 1.23.0 (cumulative hotfix)
+- **hotfix1 (missing UI entry)**: User reported "I can't find where to create a profile in 👤 Create Profile". Root cause: v1.23.0 main feature already implemented Speaker Database panel but forgot to add "💾 Build from Labels" and "📂 Build from Audio File" buttons inside the panel. Fix: Added green profile-create-row block at top of Speaker Database panel with 2 build buttons + corresponding doBuildProfileFromSeeds / doBuildProfileFromAudioFile methods + 200 profile limit check.
+- **hotfix5 (IPC return format mismatch)**: After clicking, user got JS exception Cannot read property 'samples' of undefined. Root cause: main.js oiceprint:profileBuildFromSeeds handler returns { success, profiles: [...], savedIds, count } (array), but frontend doBuildProfileFromSeeds reads .profile.samples.length (single object), causing JS exception. Fix: Use const p = (r.profiles && r.profiles[0]) || null; if (p) { ... } to match correct format.
+- **hotfix7 (Electron doesn't support window.prompt)**: After hotfix5, user still reported "clicking has no response". Root cause: Chromium disables window.prompt by default (to prevent destructive dialogs), causing prompt() to immediately return null and silently exit. Fix: App.vue added custom <div v-if="showPromptDialog"> modal + _showPromptDialog(title, message, defaultValue) Promise-based function + confirmPromptDialog / cancelPromptDialog handlers, replacing all window.prompt() calls.
+- **hotfix8 (preload.js missing v1.23.0 11 APIs)**: User reported "After entering profile name and pressing confirm, ❌ exception: window.electronAPI.voiceprintProfileBuildFromSeeds is not a function". Root cause: Previous build process didn't add v1.23.0's 11 IPC APIs and 1 event listener to rontend/electron/preload.js for renderer exposure. Fix: Added 14 APIs at end of preload.js: oiceprintProfileList/Save/Rename/Delete/Stats + oiceprintProfileBuildFromSeeds/BuildFromAudioFile + oiceprintOpenAudioDialog/IdentifySpeakers/BackfillAll + oiceprintListAllSpeakerNames + ecoSearchBySpeaker + onVoiceprintBackfillProgress.
+- **Backup filename**: backup-202607040623.zip

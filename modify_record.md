@@ -1568,4 +1568,256 @@ ode_modules/onnxruntime-node/**/*
   - rontend/electron/voiceprint.js: 最小 PCM 8000 + threshold 0.5
   - 重新編譯 Recorder-1.20.2-portable.exe（188,635,584 bytes，2026/6/30 03:16）+ code sign
   - git commit + push
-- **備份檔名**: backup-202606300316.zip
+- **備份檔名**: backup-202606300316.zip## [2026-06-30 16:00] v1.20.15 — 辨識完成 IPC race 修正 + 診斷 log
+
+- **version**: 1.20.14 → 1.20.15（patch: hotfix）
+- **修改要求**: 使用者回報對特定錄音檔執行「辨識」後，前端永遠顯示「❌ 未知錯誤」而不顯示逐字稿；但 recorder.log 顯示後端 whisper 已成功 exit=0、Job 已 completed。
+- **根因分析**:
+  1. `WhisperJobManager._sendUpdate()` 在「completed」事件中只推送 `status` 而不附帶 `result.segments`。
+  2. 前端 `_onTranscribeEvent` 在 `data.status === 'completed'` 時立即呼叫 `transcribe:getResult`。
+  3. 雖然後端時序正確（status → completed → result 寫入 → sendUpdate），但 IPC race 條件下，前端 listener 收到事件時 `transcribe:getResult` handler 在某些路徑可能尚未同步寫入 jobHistory，導致回傳 `{ success: false, error: 'job 尚未完成' }`。
+  4. 前端的 catch 區塊吞掉 error.message，前端 fallback 顯示「❌ 未知錯誤」，對除錯毫無幫助。
+- **修正方案**:
+  1. `WhisperJobManager._sendUpdate()`：當 `job.status === 'completed'` 且 `job.result` 存在時，把 `result` 附在 payload 一併推送給前端
+  2. 前端 `_onTranscribeEvent` 的 completed 分支：優先讀 `data.result`（事件內附帶），僅在 fallback 才 invoke `transcribeGetResult`
+  3. `transcribe:getResult` handler：加 DEBUG log 印出 job 狀態 / audioPath / hasResult
+  4. `_sendUpdate`：加 DEBUG log 印出 status / hasResult / hasInlineResult
+  5. 前端 `_onTranscribeEvent`：開頭加 `console.log('[app] transcribe event:', ...)` 印出 event 內容，便於以後分析
+  6. catch 區塊：用更明確的錯誤訊息（如 `❌ 取得辨識結果失敗: status=...`）取代模糊的「未知錯誤」
+  7. `saveRecordingMeta` 內部已 try/catch 隔離錯誤，再於呼叫端獨立包 try/catch 確保儲存失敗不會影響逐字稿顯示
+- **修改結果**:
+  - `frontend/electron/main.js` 的 `WhisperJobManager._sendUpdate()` 與 `transcribe:getResult` handler
+  - `frontend/src/App.vue` 的 `_onTranscribeEvent` completed 分支 + 開頭 console.log
+  - `frontend/package.json`: version `1.20.14 → 1.20.15`
+  - 重新編譯 `Recorder-1.20.15-portable.exe` + code sign
+  - git commit + push
+- **備份檔名**: backup-202606301600.zip
+## [2026-06-30 16:42] v1.20.16 — _executeTranscribe job.result 未寫入修正
+
+- **version**: 1.20.15 → 1.20.16（patch: hotfix）
+- **修改要求**: v1.20.15 hotfix 後使用者回報「對部份音檔」仍出現 `❌ 取得辨識結果失敗: 無 result`，debug log 顯示 `sendUpdate status=completed hasResult=false hasInlineResult=false`。
+- **根因分析**: `WhisperJobManager._executeTranscribe()` 有 3 條回傳路徑（不切片直接 runWhisper、切片失敗降級為直接 runWhisper、切片後逐 chunk），但只有切片路徑 (`allSegments.push(...) → job.result = { success: true, segments: allSegments }`) 寫入了 `job.result`。其餘兩條路徑只 `return await this._runSingleTranscribe(...)` 而完全沒寫 `job.result`，導致 completed 事件時 `job.result === null`（預設設定 `whisperChunkMinutes=0` 會走不切片路徑，幾乎全部使用者都會碰到）。
+- **修正方案**:
+  1. `_executeTranscribe()` 的兩處不切片/降級路徑：呼叫 `_runSingleTranscribe` 後，把 result 寫入 `job.result = { success: true, segments: result.segments || [] }`，再 return。
+  2. **v1.20.15 hotfix 仍然有效** — 因為根因本來就是 2 層：`_sendUpdate` 在 completed 沒附 `result` (v1.20.15 修)、以及 `job.result` 從未被寫入 (v1.20.16 修)。兩者都修才能徹底解決。
+- **修改結果**:
+  - `frontend/electron/main.js` `_executeTranscribe()` 三條回傳路徑現在全部都會寫入 `job.result`
+  - `Product_Design_Guidelines.md` 版本號 `1.20.15 → 1.20.16`
+  - `frontend/package.json`: version `1.20.15 → 1.20.16`
+  - 重新編譯 `Recorder-1.20.16-portable.exe` + code sign
+- **備份檔名**: backup-202606301642.zip
+## [2026-06-30 17:00] v1.21.0 — 半監督式 speaker propagation
+
+- **version**: 1.20.16 → 1.21.0（minor: 新功能）
+- **修改要求**: 解決「短語句 (<1.5s) 無法精準分出 speaker」問題，並支援「使用者手動標記幾句 → 自動推算其它句子」的工作流。
+- **背景**: 既有 v1.20.2 `diarizeAudio` 是無監督聚類 (cosine 閾值 0.5)，對短句子效果不佳（v1.20.6 root cause 之一）。常見誤以為「把同一句重覆好幾次可提升辨識率」 — 實務上 campplus x-vector 學的是聲紋特徵不是語意內容，重覆同句並無新資訊。
+- **修正方案**:
+  1. `frontend/electron/voiceprint.js`：
+     - 新增常數 `PROPAGATE_MIN_THRESHOLD = 0.5`
+     - 抽出共用 helper `_extractAllEmbeddings(audioPath, segments, progressCallback)` (含長音檔切片 + 跨 chunk 拼接)
+     - 抽出共用 helper `_ensureModelLoaded()` (model 存在 + 大小 + InferenceSession 建立)
+     - 重構 `diarizeAudio()` 使用以上 helper，body 縮短為 30 行
+     - 新增 `propagateSpeakers(audioPath, segments, seeds, options)`：半監督式 cosine 比對 + L2-normalize centroid + threshold 過濾
+     - `module.exports` 加入 `propagateSpeakers` 與 `PROPAGATE_MIN_THRESHOLD`
+  2. `frontend/electron/main.js`：
+     - 新增 IPC handler `ipcMain.handle('voiceprint:propagate', async (event, { audioPath, segments, seeds, threshold }) => ...)`
+     - 沿用 `appLog` 寫入 recorder.log
+  3. `frontend/electron/preload.js`：
+     - 暴露 `voiceprintPropagate: (p) => ipcRenderer.invoke('voiceprint:propagate', p)`
+  4. `frontend/src/i18n/{zh-TW,en,ja}.js`：新增 19 個 voiceprint.* keys (mark / propagate / propagating / propagateSuccess / uncertain / editSpeakerName / clearSpeakers / markThis / unmark / addSpeakerName / speakersList / noSeedYet / thresholdLabel / voiceprintPanelTitle / propagateNoSeed / propagateNoAudio / confirmSpeakers / propagateNoAudio / propagateNoSeed)
+  5. `frontend/src/App.vue`：
+     - data: 新增 `showSpeakerEditor`, `editingSpeakerIdx`, `editingSpeakerName`, `seedMap`, `propagateBusy`, `propagateThreshold`, `showPropagatePanel`
+     - 逐字稿每段新增「+👤」按鈕（未標）或可點擊的 speaker-tag（已標）
+     - 點擊彈出 **Speaker Editor Modal**：輸入講者名稱 → 確定
+     - 控制列新增「🪄 依標註推算所有句子」按鈕（紫色 #7B1FA2）
+     - 點擊推算按鈕彈出 **半監督式推算 Panel**：列出所有 seeds、調門檻 slider、刪除/清除/推算動作
+     - `setSegmentSpeaker(idx, name)`、`doPropagateSpeakers()`、`clearAllSpeakers()` 三個 methods
+  6. `Product_Design_Guidelines.md`：新增 §15 半監督式 speaker propagation 完整段落（背景、演算法、IPC 契約、UI 互動、與 v1.20.2 關係）
+- **修改結果**:
+  - 使用者可手動點選幾個句子標記「張三」、「李四」等 speaker 名稱
+  - 按下推算按鈕後，5-15 秒內完成所有其它句子的 speaker 標註
+  - 推算結果可再用 +👤 編輯微調
+  - 預期短語句（< 1.5s）原本被判為 Speaker_1 的，改用 seed 比對後可正確分到「李四」等正確 speaker
+  - 原始 v1.20.2 無監督 `diarizeAudio` 仍可用；兩者並存於控制列（v1.20.2 為「👥 標註說話者」橘色按鈕、v1.21.0 為「🪄 依標註推算」紫色按鈕）
+- **備份檔名**: backup-202606301700.zip
+
+## [2026-06-30 17:35] v1.21.1 — 修正每次消取/編輯 speaker 都建立新 metadata 檔
+
+- **version**: 1.21.0 → 1.21.1（patch: hotfix）
+- **修改要求**: 使用者反映 v1.21.0 上線後，「每次取消標記 / 編輯講者名稱」歷史記錄就多一筆逐字稿。預期是「編輯回存」同一份 metadata，不該每次都新開檔。
+- **根因分析**:
+  1. `frontend/src/App.vue` 的 `saveRecordingMeta(segments)` 內部原本邏輯是「若無 `currentRecordingId`，就以「現在時間」生成新 ID」並寫入檔案。
+  2. 每次 `setSegmentSpeaker()` / `doPropagateSpeakers()` / `clearAllSpeakers()` 都會呼叫 `saveRecordingMeta(this.transcriptionResults)`。
+  3. 雖然辨識完成時 `_onTranscribeEvent('completed')` 有設 `currentRecordingId`，但「從歷史記錄 Review 進入」或「取消後重新標註」時的 race condition / 時序不同，可能造成 `currentRecordingId` 是空字串時被多次呼叫 → 每次都生成新檔。
+  4. 使用者最常見路徑：點 +👤 標一個 speaker（呼叫 `setSegmentSpeaker` 一次） → 又點同一個 speaker 取消（再呼叫一次）→ 產生兩個檔案。
+- **修正方案**:
+  1. `frontend/src/App.vue` `saveRecordingMeta()`: 
+     - v1.21.1 hotfix：先讀 `this.currentRecordingId`，若已存在就沿用，**不再生成新 ID**。
+     - 只有全新辨識完成 / Review 進入時由上層明確設好 ID 才會存。
+  2. `frontend/src/App.vue` 新增 `_scheduleSaveRecordingMeta()` debounce helper（500ms）：
+     - 取消 setTimeout 並重設，避免連續編輯造成 race / 多個 save 事件同時送 IPC。
+  3. `frontend/src/App.vue` 三處 hotfix 改用 `_scheduleSaveRecordingMeta()`：
+     - `setSegmentSpeaker()`
+     - `doPropagateSpeakers()`
+     - `clearAllSpeakers()`
+  4. `frontend/package.json`: version 1.21.0 → 1.21.1
+  5. `Product_Design_Guidelines.md` 版本號 / 修改日期一併更新
+  6. 三語 modify_record 新增本條目
+- **修改結果**:
+  - 同一份逐字稿 / 同一個 recordingId，無論使用者標記、取消、推算、清空多少次 → 始終是同一個檔案。
+  - 「辨識完成 → 進到歷史記錄」也只多一筆，不會被重複標註/取消「刷」成多筆。
+  - debounce 500ms 保證連續快速編輯只觸發一次完整儲存，不造成 IO 風暴。
+- **備份檔名**: 將於備份步驟產生
+
+## [2026-06-30 23:45] v1.21.2 — 修正講者標籤編輯後逐字稿變成無音檔狀態
+
+- **version**: 1.21.1 → 1.21.2（patch: hotfix）
+- **修改要求**: 使用者反映 v1.21.1 後，「從歷史記錄 Review 進入逐字稿 → 編輯講者標籤」會使該記錄在歷史列表中變成「無音檔」狀態（原本明明有音檔）。
+- **根因分析**:
+  1. eviewRecording() 進入時將 	his.currentAudioPath = null 與 	his.audioLoaded = false。
+  2. 講者標籤編輯（setSegmentSpeaker()）觸發 _scheduleSaveRecordingMeta() → saveRecordingMeta()。
+  3. saveRecordingMeta() 第 1156 行寫死 const audioPath = this.currentAudioPath || ''，
+ull 進來後變成空字串。
+  4. IPC ecoSaveMeta 被叫起時傳入 udioPath: '' 覆寫原本 metadata 中的 udioPath 欄位為空字串。
+  5. 下次 eco:list 讀歷史時 hasAudio 判斷變成 false，逐字稿在歷史中變成「無音檔」狀態。
+- **修正方案**:
+  1. rontend/src/App.vue saveRecordingMeta()：當 currentAudioPath 為空且 currentRecordingId 存在時，主動呼叫 ecoLoadMeta 從舊 metadata 載入原本的 udioPath 保留，避免覆寫。
+  2. rontend/src/App.vue eviewRecording()：不再將 currentAudioPath 強制設為 
+ull，改為讀取 .meta.audioPath 或 
+ull；同時在進入時若 udioPath 存在則主動呼叫 loadAudioUrl 載入音檔 URL，讓「Review」進入後逐字稿可點擊播放。
+  3. rontend/package.json: version 1.21.1 → 1.21.2
+  4. Product_Design_Guidelines.md 版本號 / 修改日期一併更新
+  5. 三語 modify_record 新增本條目
+- **修改結果**:
+  - 從歷史 Review 進入逐字稿後，無論編輯幾次講者標籤、推算、清除，音檔連結 (udioPath) 都不會被洗掉。
+  - 「有音檔」狀態記號在歷史列表中永久保持。
+  - Review 進入後逐字稿可點擊播放（原來需手動先點「▶️ 播放」才會載入音檔，現自動載入）。
+- **備份檔名**: 將於備份步驟產生
+
+## [2026-07-01 09:00] v1.21.3 — 逐字稿講者標籤顯示每一句的聲紋值
+
+- **version**: 1.21.2 → 1.21.3（minor: 新功能）
+- **修改要求**: 使用者反映「在逐字稿講者標記顯示每一句的聲紋值」— 希望除了「誰說的」之外還能看出「這句與該 speaker 的相似度有多高」，方便判斷標註可信度。
+- **背景**: v1.20.2 diarizeAudio 與 v1.21.0 propagateSpeakers 演算法都會對每個 segment 計算 cosine similarity（diarize 算 vs 群組 centroid；propagate 算 vs 種子 centroid），但之前只回傳 .speaker 標籤而把 score 丟掉了。
+- **修正方案**:
+  1. rontend/electron/voiceprint.js：
+     - diarizeAudio()：重新計算每個群組的 centroid，再對每個 segment 用 cosineSimilarity() 算對其群組 centroid 的相似度，存入 esult[i].score。原本 algorithm 已將 centroid 算出來過，但因沒回傳就直接丟了，現在手動重建以取出每群組的 centroid。
+     - propagateSpeakers()：本來就已經在算 estSim，改為直接存入 esult[i].score（取 Math.max(0, bestSim) 保證非負）。
+     - 兩者都對無效的 segment（null embedding）回傳 score: 0。
+  2. rontend/src/App.vue：
+     - initJobListener 的 voiceprint completed 分支：把 data.segments[i].score 同步寫入 	ranscriptionResults[i].score。
+     - doPropagateSpeakers：同樣寫入 	ranscriptionResults[i].score。
+     - 逐字稿 speaker tag 旁邊增加 <span class="speaker-score">{{ (seg.score * 100).toFixed(0) }}</span>，用半透明背景呈現百分比（例：👤 張三 85），hover 顯示完整 1 位小數。
+  3. 新增 .speaker-score CSS：白色半透明背景、9px 字、6px radius，與 .speaker-tag 並列顯示。
+  4. rontend/package.json: version 1.21.2 → 1.21.3
+  5. 三語 modify_record 新增本條目
+  6. Product_Design_Guidelines.md 版本號更新
+- **修改結果**:
+  - 執行 👥 標註說話者 或 🪄 依標註推算 後，每一句的 speaker tag 後方多了一個 0~100 的相似度數字
+  - 高於 80% = 高可信度、50-80% = 中等、< 50% = 低（該 segment 跟所屬 speaker 群的 centroid 相似度不高，可能需要重新編輯或加 seed）
+  - score 與 speaker 一起持久化到 metadata，重新開啟逐字稿後仍可見
+- **備份檔名**: 將於備份步驟產生
+
+## [2026-07-01 15:00] v1.21.4 — 強化多 seed centroid 計算 (trimmed mean + outlier rejection)
+
+- **version**: 1.21.3 → 1.21.4（minor: 演算法強化）
+- **修改要求**: 使用者反映「同時標注同一個人的多段句子是否可以提升語音比對準確度」— 想確認是否真的能幫助半監督式 speaker propagation。
+- **回答**: 是的，可以，但「不是 seed 越多越好」。多個同一 speaker 的 embeddings 平均後的 centroid 會更穩定，減少單一 segment 受 fbank 雜訊、背景音、語速變化影響。但**邊際效益遞減**：3-5 個乾淨的 seed 已足夠，10+ 個 seed 提升有限。**真正危險的是 outlier seed**（咳嗽、背景音、按鍵聲）會把 centroid 拉偏。
+- **修正方案**:
+  1. rontend/electron/voiceprint.js propagateSpeakers():
+     - 1-2 個 seeds：取 simple mean（沒有足夠統計量剔除 outlier）
+     - 3 個以上 seeds：採用 **trimmed mean centroid**：
+       - 對所有 seed embeddings 兩兩算 cosine similarity
+       - 計算每個 seed 與其他 seed 的平均相似度作為「內部一致性指標」
+       - 去掉平均相似度最低與最高各一個 (outlier) → 取中間值的平均
+       - 同時記錄 internalCoherence（全體 seeds 內部一致性平均）作為品質指標
+  2. 1-2 個 seeds 時不剔除 outlier，3 個以上用 floor(seedCount/4) 計算 dropN，但 dropN 最大只到 1（避免剔除過多）
+- **修改結果**:
+  - 多個同一 speaker 的 seeds 標注後，centroid 更穩定，可靠度提升
+  - 自動剔除 outlier seed（背景雜音、按鍵聲、與該 speaker 不相關的句子）造成的 centroid 偏移
+  - 學理上：3-5 個乾淨的 seed 是甜蜜點，10+ 個 seeds 提升有限
+- **備份檔名**: 將於備份步驟產生
+
+
+## [2026-07-02 01:35] v1.22.0 — 多模型 Speaker Embedding 架構 (MODEL_REGISTRY factory pattern)
+
+- **version**: 1.21.4 → 1.22.0 (minor: 多模型架構)
+- **修改要求**: 支援多個 ONNX speaker embedding 模型 (camplus / ECAPA-TDNN / ResNet-SE)，採用 factory pattern 設計
+- **修改規劃**:
+  1. 調研 ECAPA-TDNN / ResNet ONNX 模型來源 → 結論：HF/ModelScope/speechbrain 官方 ONNX 鏡像皆 401/404
+  2. 重構 voiceprint.js 為 MODEL_REGISTRY factory 模式，定義 3 個 model entries (camplus / ecapa_tdnn / resnet_se)
+  3. 動態 ONNX session 管理：loadModel(modelKey) 釋放舊 session 後載入新模型
+  4. 檔案名稱隔離：每個 modelKey 對應獨立路徑 (voiceprint/<modelKey>/model.onnx)
+  5. main.js 新增 6 個 IPC handler：listModels / importModel / setActiveModel / openImportDialog / getCurrentModel / download 接受 modelKey
+  6. preload.js 暴露 5 個新 API
+  7. i18n 三語新增 22 個 voiceprint.* keys
+  8. App.vue data 加入 voiceprintModels / currentVoiceprintModel + settings panel 「👥 聲紋模型管理」區塊
+  9. App.vue methods 新增 5 個：loadVoiceprintModels / downloadVoiceprintModel / importVoiceprintModel / setActiveVoiceprintModel / recommendVoiceprintModel
+  10. App.vue mounted() 呼叫 loadVoiceprintModels
+- **修改結果**:
+  - 語法驗證：vite build 成功 (15 modules transformed)
+  - 編譯產出：frontend/dist-electron-build5/Recorder-1.22.0-portable.exe (188.6 MB, 含 signtool 簽署)
+  - camplus 為預設可自動下載；ECAPA-TDNN / ResNet-SE 需手動 ONNX 匯入
+  - 使用者可在設定面板自由下載 / 匯入 / 切換三種 embedding 架構
+  - 自動模型切換：loadModel() 釋放舊 session 後載入新模型，後端以 modelKey 路由
+  - 三語 readme + Product_Design_Guidelines §16 + modify_record 三語皆已同步更新
+- **備份檔名**: backup-202607020126.zip
+
+
+## [2026-07-02 05:08] v1.22.1 — ResNet-SE 改為可自動下載 (WeSpeaker 官方 ONNX)
+
+- **version**: 1.22.0 → 1.22.1 (patch: 補完可下載 URL)
+- **修改要求**: 使用者提問「resnet_se onnx 那裡下載」，v1.22.0 雖定義 resnet_se 但 url 為空需手動匯入
+- **修改規劃**:
+  1. 用 curl 查 HuggingFace API models 找到 Wespeaker/wespeaker-cnceleb-resnet34-LM 公開 ONNX
+  2. 驗證下載 URL: https://huggingface.co/Wespeaker/wespeaker-cnceleb-resnet34-LM/resolve/main/cnceleb_resnet34_LM.onnx (HTTP 200, 26.5 MB)
+  3. 用 onnxruntime-node 檢查 ONNX 結構: inputNames=[feats], outputNames=[embs], 256-dim embedding (與 campplus input/output 介面相容)
+  4. 更新 voiceprint.js MODEL_REGISTRY.resnet_se: url + filename + dim 改為 256
+  5. 升級 package.json version 1.22.0 → 1.22.1
+  6. 三語 readme 同步新增 v1.22.1 條目
+- **修改結果**:
+  - voiceprint.js 設定已更新，resnet_se 現在可自動下載 (與 camplus 並列)
+  - 進階選項 (114MB ResNet293 大模型) 仍需手動匯入
+  - 三語 readme (繁中/英/日) 與 modify_record 已同步更新
+- **備份檔名**: 即將產生 (backup-202607020508.zip)
+## [2026-07-02 22:39]
+- **version**: 1.22.1 → 1.23.0 (minor: 監督式 Speaker Recognition + Profile Database)
+- **修改要求**: 使用者提問「是否可以採用重覆複製同一句話來提高人員辨識」、「如何在音檔裡找特定人語音」、「支援有監督學習（辨識法）」。經確認後決議新增 Speaker Profile Database + 監督式 speaker recognition 模組，解決 v1.21.0 半監督式 propagation 對短句辨識率不足、需要重複相同句子才能建立可靠 seed 的痛點。
+- **核心設計**:
+  - **Profile Database (持久化 JSON)**: 儲存路徑 ~/recoder/speaker_profiles.json，每個 profile 記錄 {id, name, modelKey, dim, centroid, samples, internalCoherence, source, createdAt, updatedAt}，按 modelKey 分組避免不同 embedding 維度混淆。MAX_PROFILES = 200。
+  - **buildProfile(audioPath, segments, seeds, modelKey)**: 從使用者標註的 seeds 擷取音檔、提取 embedding、計算 trimmed mean centroid，回傳 Array<Profile>。支援 v1.22.0 多模型架構（camplus 192-d / ecapa_tdnn 192-d / resnet_se 256-d）。
+  - **buildProfileFromAudioFile(audioPath, name, modelKey)**: 從獨立短音檔直接建立 profile（用於「重覆複製同一句話」場景）。該音檔可包含一人多句對白或一人一句重複錄音。
+  - **identifySpeakers(audioPath, segments, profiles)**: 有監督 identification — 提取整段音檔所有 segment embedding，逐一與所有 profile 的 centroid 計算 cosine similarity，標記最佳匹配。回傳 {segments: [{start, end, text, speaker, score}], modelKey}。
+  - **backfillAll(profiles)**: 批次對歷史所有錄音套用所有 profiles 重新標註，適用於建立新 profile 後自動套用。支援 progress event（onVoiceprintBackfillProgress）。
+- **新增模組**:
+  - rontend/electron/speakerProfile.js — 完整 CRUD 持久化層（listProfiles / getProfile / saveProfile / renameProfile / deleteProfile / getDbPath / getStats）。
+- **API 擴充**:
+  - oiceprint.js 新增 4 個 exported functions：buildProfile、buildProfileFromAudioFile、identifySpeakers、_computeCentroidFromEmbeddings。
+  - main.js 新增 10 個 IPC handlers：voiceprint:profileList / profileSave / profileRename / profileDelete / profileStats / profileBuildFromSeeds / profileBuildFromAudioFile / openAudioDialog / identifySpeakers / backfillAll + reco:searchBySpeaker。
+  - preload.js 暴露 11 個新 API 給前端。
+- **UI 整合** (App.vue):
+  - 3 個新按鈕：👤 Create Profile、🎯 Identify Speakers (Supervised)、🔄 Apply to All History。
+  - 新 panel：「Speaker Database」modal — 列出所有 profile，顯示名稱、模型、樣本數、內部一致性 (coherence %)，可重新命名/刪除。
+  - data 新增 profiles / showProfilePanel / identifyBusy / backfillBusy / backfillProgress。
+  - methods 新增 loadProfiles / openProfilePanel / doIdentifySpeakers / doBackfillAll / renameProfile / deleteProfile。
+  - CSS 新增 .profile-item / .profile-header / .profile-name / .profile-model / .profile-stats / .profile-actions 樣式。
+- **i18n 修復**:
+  - en.js / ja.js / zh-TW.js 補上 19 個 voiceprint.profile.* keys。
+  - 修掉 en.js line 308-313 多行字串錯誤（'confirm.deleteFolder' 等）。
+  - 用 PowerShell script 自動補上未加引號的 key names（避免重複發生）。
+- **build 與部署**:
+  - rontend/package.json version 1.22.1 → 1.23.0。
+  - vite build 成功（222.20 kB / 62.26 kB gz）。
+  - electron-builder 編譯成功，產出 dist-electron-build6/Recorder-1.23.0-portable.exe (179.89 MB)。
+  - Code Sign: Recorder.exe / whisper-cli.exe / ffmpeg.exe / elevate.exe 全部用 C:\Certs\recorder_selfsign.pfx 簽章，Subject=CN=Cheng-Feng Iron Factory, 效期至 2029/6/26。
+- **修改結果**: 成功實作監督式 Speaker Recognition 與 Profile Database，提供比 v1.21.0 半監督式更可靠的短句辨識能力，使用者可用「重覆一句話」短音檔快速建立個人 profile，再批次回溯標註所有歷史錄音。build 成功，備份完成。
+- **備份檔名**: backup-202607022239.zip
+
+
+## [2026-07-04 06:23] v1.23.0 hotfix1 / 5 / 7 / 8 修正
+- **version**: 1.23.0 (hotfix 累積)
+- **hotfix1（缺 UI 入口）**：使用者反饋「在 👤 Create Profile 找不到建立 profile 的地方」。原因：v1.23.0 主要功能已實作 Speaker Database panel 但忘了在 panel 內加入「💾 從標註建立 Profile」與「📂 從音檔建立 Profile」按鈕。修正：在 Speaker Database panel 頂端加入綠色 profile-create-row 區塊與 2 個建立按鈕 + 對應 doBuildProfileFromSeeds / doBuildProfileFromAudioFile methods + 200 個 profile 上限檢查。
+- **hotfix5（IPC 回傳格式不匹配）**：使用者反饋「按了沒反應」時 throw JS 例外 Cannot read property 'samples' of undefined。原因：main.js 的 oiceprint:profileBuildFromSeeds handler 回傳 { success, profiles: [...], savedIds, count }（陣列），但前端 doBuildProfileFromSeeds 用 .profile.samples.length 讀取（單一物件），導致 JS 拋例外。修正：改用 const p = (r.profiles && r.profiles[0]) || null; if (p) { ... } 對應正確格式。
+- **hotfix7（Electron 不支援 window.prompt）**：hotfix5 修好 IPC 格式後，使用者反饋「按了沒反應」仍存在。原因：Chromium 預設禁用 window.prompt（防止破壞性對話框），導致 prompt() 立即 return null，靜默退出。修正：App.vue 新增自製 <div v-if="showPromptDialog"> modal + _showPromptDialog(title, message, defaultValue) Promise-based 函式 + confirmPromptDialog / cancelPromptDialog handlers，取代所有 window.prompt() 呼叫。
+- **hotfix8（preload.js 漏 v1.23.0 11 個 API）**：使用者反饋「輸入 profile 名稱按確認後出現 ❌ 異常: window.electronAPI.voiceprintProfileBuildFromSeeds is not a function」。原因：先前 build 過程中 rontend/electron/preload.js 沒補上 v1.23.0 的 11 個 IPC API 與 1 個 event listener 暴露給 renderer。修正：在 preload.js 結尾加入 oiceprintProfileList/Save/Rename/Delete/Stats + oiceprintProfileBuildFromSeeds/BuildFromAudioFile + oiceprintOpenAudioDialog/IdentifySpeakers/BackfillAll + oiceprintListAllSpeakerNames + ecoSearchBySpeaker + onVoiceprintBackfillProgress 等 14 個 API。
+- **備份檔名**: backup-202607040623.zip

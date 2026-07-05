@@ -83,5 +83,41 @@ Thumbs.db
 # 舊後端（已棄用）
 backend/
 
+# 暫存檢查目錄（cabal 提取 app.asar 用，不要 commit）
+-p/app_check*/
+-p/quote_i18n_v1230.ps1
+-p/quote_i18n_v1230_all.ps1
+-p/fix_i18n.js
+-p/fix_i18n_v2.js
+-p/append_i18n.js
+
+# 為了避免超過 GitHub 100MB 限制，只追蹤最新 build 產物
+frontend/dist-electron-build6/
+frontend/dist-electron-build7/
+frontend/dist-electron-build8/
+frontend/dist-electron-build9/
+frontend/dist-electron-build*/
+!frontend/dist-electron-build*/Recorder-*.exe
+!frontend/dist-electron-build*/builder-effective-config.yaml
+!frontend/dist-electron-build*/builder-debug.yml
+!frontend/dist-electron-build*/latest.yml
+!frontend/dist-electron-build*/win-unpacked/version
+!frontend/dist-electron-build*/win-unpacked/Recorder.exe
+!frontend/dist-electron-build*/win-unpacked/resources/app.asar
+!frontend/dist-electron-build*/win-unpacked/resources/whisper_cli/whisper-cli.exe
+!frontend/dist-electron-build*/win-unpacked/resources/whisper_cli/*.dll
+!frontend/dist-electron-build*/win-unpacked/resources/ffmpeg/ffmpeg.exe
+!frontend/dist-electron-build*/win-unpacked/resources/elevate.exe
+
+# Whisper 模型本體（不 commit 巨大模型檔）
+frontend/dist-electron-build*/win-unpacked/resources/ggml-*.bin
+model/
+
+# 中間產物（.bak / 提取出的 source）
+*.bak
+frontend/src/i18n/*.bak
+frontend/electron/speakerProfile.js.bak
+frontend/package.json.bak
+
 # ffmpeg（超過 GitHub 100MB 限制，請自行下載）
 ffmpeg/

@@ -40,14 +40,14 @@ npm run electron:dev
 
 ### リリース版のダウンロード
 
-[GitHub Releases](https://github.com/ghumphery/recorder/releases) から最新の `Recorder-1.20.1-portable.exe` をダウンロード。
+[GitHub Releases](https://github.com/ghumphery/recorder/releases) から最新の `Recorder-1.21.4-portable.exe` をダウンロード。
 
 ### ソースからビルド
 
 ```bash
 cd frontend
 npm run electron:build
-# 出力: frontend/dist-electron-build2/Recorder-1.20.1-portable.exe
+# 出力: frontend/dist-electron-build5/Recorder-1.21.4-portable.exe
 ```
 
 ### パッケージ版の実行
@@ -96,6 +96,69 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 - **small** (488 MB) — 最高精度、高品質会議に最適
 
 ## 📦 バージョン履歴
+
+### v1.22.1 (2026-07-02) — ResNet-SE が自動ダウンロード可能に（WeSpeaker 公式 ONNX）
+- **v1.22.0 の制限を修正**：これまで `resnet_se` の `url` は空で（公開ミラーが 401/404 を返す）、手動インポートが必要でした。今回は **WeSpeaker 公式 HuggingFace ミラー**を追加し、URL を補完しました。
+- **採用モデル**：`Wespeaker/wespeaker-cnceleb-resnet34-LM`（中国語 CN-Celeb でトレーニング）
+  - サイズ 26.5 MB；256-dim embedding；80-dim fbank @ 16kHz
+  - ライセンス：CC-BY-4.0
+  - **input/output テンソル名が campplus と完全一致**（`feats` / `embs`）、既存の voiceprint.js fbank パイプラインと直接互換
+  - ダウンロード URL：`https://huggingface.co/Wespeaker/wespeaker-cnceleb-resnet34-LM/resolve/main/cnceleb_resnet34_LM.onnx`
+- **上級者向けオプション**（引き続き手動インポート）：`Wespeaker/wespeaker-voxceleb-resnet293-LM` 大モデル（114 MB, 256-dim）
+- **UI 変更**：なし — 既存の「声紋モデル管理」セクションのダウンロードボタンが resnet_se に対して直接動作するようになりました
+- **使い方**：設定パネル → 声紋モデル管理 → resnet_se を探す →「ダウンロード」をクリックして 26.5 MB ONNX を取得
+
+### v1.22.0 (2026-07-02) — 複数モデル Speaker Embedding アーキテクチャ（camplus / ECAPA-TDNN / ResNet-SE）
+- **新アーキテクチャ**：`voiceprint.js` を `MODEL_REGISTRY` ファクトリパターンにリファクタし、複数の ONNX speaker embedding モデルを並列管理できるようになりました。
+- **対応モデル**（新しい `voiceprint.*` i18n キー）：
+  - 🏆 **camplus**（デフォルト）：192-dim x-vector、中国語に親和性が高い、自動ダウンロード対応
+  - **ECAPA-TDNN**：192-dim、手動 ONNX インポートのみ
+  - **ResNet-SE**：512-dim、手動 ONNX インポートのみ
+- **UI 追加**：設定パネルに「👥 声紋モデル管理」セクションを追加。モデル一覧・ステータス・ダウンロード/インポート/デフォルト設定ボタンを表示。
+- **IPC 追加**：`voiceprint:listModels`、`voiceprint:importModel`、`voiceprint:setActiveModel`、`voiceprint:openImportDialog`、`voiceprint:getCurrentModel`。
+- **自動モデル切替**：`loadModel()` は古いセッションを解放してから新しいモデルを読み込みます。バックエンドは `modelKey` で `diarize` / `propagate` をルーティングします。
+- **使用上の注意**：公開 ONNX ミラーが 401/404 を返すため、自動ダウンロードできるのは camplus のみです。他のモデルを使用するにはスキーマに一致する ONNX ファイルを手動でインポートする必要があります。
+
+### v1.21.4 (2026-07-01) — 複数 seed centroid 計算を強化（trimmed mean + 外れ値除外）
+
+**ユーザーの質問に対応：「短い文章で話者識別ができない場合、同じ文章を重複コピーして話者識別精度を向上させることはできますか？」**
+
+- **変更点**：`propagateSpeakers()` を **trimmed mean centroid** アルゴリズムに変更（≥3 個の seed 時）：
+  1. 各 seed と他の seed の平均コサイン類似度を「内部一貫性」として計算
+  2. 一貫性でソートし、上下各 ⌊n/4⌋ 個の外れ値（最大各 1 個）を除外
+  3. 残った seed の平均を centroid として使用
+  4. `centroidInfo.{seedCount, usedCount, droppedCount, internalCoherence}` を保持し UI で表示
+- **解決した問題**：
+  - ✅ **同じ文章の重複 seed** が centroid を偏らせる → trimmed mean が自然に極端値の重みを下げる
+  - ✅ **無関係な文章**（背景音/咳/タイピング音）が centroid を偏らせる → 外れ値除外で直接排除
+- **使用推奨**：
+  - 3〜5 個の **発音内容が明確に異なる** 文章がスイートスポット
+  - 10+ 個の seed は逓減する
+  - ≤2 個の seed は自動的に simple mean にフォールバック（過剰トリミング防止）
+  - `centroidInfo.internalCoherence` を観察：> 0.7 は seed の一貫性高、< 0.5 は seed を選び直す
+
+### v1.21.3 (2026-06-30) — 文字起こしの話者タグに声紋類似度を表示
+
+- `diarizeAudio()` と `propagateSpeakers()` の結果に `score`（コサイン類似度 0〜1）を追加
+- App.vue の話者タグに `[話者] [スコア]`（例「山田 85」= 85% 類似）と表示
+
+### v1.21.2 (2026-06-30) — 話者タグ編集後の「音声なし」状態を修正
+
+- `saveRecordingMeta()` は `currentAudioPath` が空のとき、前の metadata から `audioPath` を読み込んで保持
+- `reviewRecording()` は `currentAudioPath` を `null` に強制せず、`r.meta.audioPath` を読み込んで `loadAudioUrl` を自動呼び出し
+
+### v1.21.1 (2026-06-30) — 話者編集/クリア毎に新しい metadata ファイルが作成される問題を修正
+
+- `saveRecordingMeta()` は新しい ID を生成せず、既存の `currentRecordingId` を再利用
+- 新 `_scheduleSaveRecordingMeta()` 500ms debounce ヘルパーを追加
+- `setSegmentSpeaker()` / `doPropagateSpeakers()` / `clearAllSpeakers()` の 3 箇所で debounced save を使用
+
+### v1.21.0 (2026-06-30) — 半教師あり話者伝播（手動ラベル → 全文章を推論）
+
+- 新「🪄 ラベルから全文章を推論」ボタン（紫 #7B1FA2）で半教師あり話者ラベリング
+- 文字起こしリストの各セグメントに「+👤」ボタンを追加 → Speaker Editor Modal で話者名を入力
+- 推論パネルに全 seed を表示、閾値スライダー 0.30〜0.80、seed 単体削除、全ラベルクリア
+- 短い文章（< 1.5s）が教師なしクラスタリングで区別できない問題を解決
 
 ### v1.20.12 (2026-06-30) — 文字起こし job log に音声長チェックと分割判定を追加
 
@@ -237,3 +300,26 @@ recorder/
               ├── whisper-cli.exe → 音声認識
               ├── https.get → モデルダウンロード
               └── fs.writeFile → 文字起こし出力
+
+## v1.23.0 — 教師あり Speaker Recognition + Profile Database
+
+### 新機能
+- **👤 Speaker Profile Database**（~/recoder/speaker_profiles.json に永続化）：よく使う話者ごとに独立した profile を作成し、録音を跨いで再利用。
+- **🎯 教師あり Speaker Identification**：確立された全 profile に対して各 segment の cosine 類似度で照合。
+- **🔄 一括バックフィル**：新規 profile 作成後、ワンクリックで全履歴録音に適用。
+- **📂 短音声ファイルから Profile 作成**：同じフレーズを繰り返す短音声で迅速に声紋ライブラリを構築。
+- **マルチモデル対応**：camplus (192-d)、ecapa_tdnn (192-d)、resnet_se (256-d) はそれぞれ独立 profile を保存、次元混在を防止。
+
+### ワークフロー
+1. **👤 Create Profile** をクリックして Speaker Database パネルを開く。
+2. 転写結果で同一話者の 2-3 segment をマーク → **💾 Build from Labels** で現録音から構築、または **📂 Build from Audio File** で短音声から構築。
+3. 対象録音を切替 → **🎯 Identify Speakers (Supervised)** をクリックして一括識別。
+4. 新規 profile 作成後、**🔄 Apply to All History** をクリックして全履歴録音を一括バックフィル。
+
+### v1.21.0 半教師ありとの違い
+| 項目 | v1.21.0 半教師あり | v1.23.0 教師あり |
+|------|---------------------|-------------------|
+| 学習データ | 同一録音内の seed segment | 録音を跨いだ累積 profile |
+| 短文認識 | 弱 | 強（累積効果） |
+| 録音跨ぎ検索 | 非対応 | 対応（searchBySpeaker） |
+| 永続化 | なし | あり（speaker_profiles.json） |

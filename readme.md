@@ -40,14 +40,14 @@ npm run electron:dev
 
 ### 下載打包版
 
-從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.20.1-portable.exe`，直接執行即可。
+從 [GitHub Releases](https://github.com/ghumphery/recorder/releases) 下載最新版 `Recorder-1.21.4-portable.exe`，直接執行即可。
 
 ### 自行打包
 
 ```bash
 cd frontend
 npm run electron:build
-# 產出：frontend/dist-electron-build2/Recorder-1.20.1-portable.exe
+# 產出：frontend/dist-electron-build5/Recorder-1.21.4-portable.exe
 ```
 
 ### 直接運行打包版
@@ -96,6 +96,69 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 - **small** (488 MB) — 最準確，適合高品質會議記錄
 
 ## 📦 版本歷史
+
+### v1.22.1 (2026-07-02) — ResNet-SE 模型可自動下載 (WeSpeaker 官方 ONNX)
+- **解決 v1.22.0 限制**：原本 `resnet_se` 的 `url` 為空（公開鏡像 401/404），需手動匯入；本次找到 **WeSpeaker 官方 HuggingFace 鏡像**並補上 URL
+- **採用模型**：`Wespeaker/wespeaker-cnceleb-resnet34-LM` (中文 CN-Celeb 訓練)
+  - 大小 26.5 MB；256-dim embedding；80-dim fbank @ 16kHz
+  - License：CC-BY-4.0
+  - **input/output 張量名稱與 campplus 完全相同**（`feats` / `embs`），可與現有 voiceprint.js fbank pipeline 直接相容
+  - 下載 URL：`https://huggingface.co/Wespeaker/wespeaker-cnceleb-resnet34-LM/resolve/main/cnceleb_resnet34_LM.onnx`
+- **進階選擇**（仍需手動匯入）：`Wespeaker/wespeaker-voxceleb-resnet293-LM` 大模型（114 MB, 256-dim）
+- **UI 改動**：零 — 既有「👥 聲紋模型管理」區塊的下載按鈕現在可以直接下載 resnet_se
+- **用法**：設定面板 → 聲紋模型管理 → 找到 resnet_se → 點「下載」即開始下載 26.5 MB ONNX
+
+### v1.22.0 (2026-07-02) — 多模型 Speaker Embedding 架構（camplus / ECAPA-TDNN / ResNet-SE）
+- **新架構**：重構 `voiceprint.js` 為 `MODEL_REGISTRY` factory 模式，支援多個 ONNX speaker embedding 模型並行管理。
+- **支援模型**（`voiceprint.*` i18n keys 新增）：
+  - 🏆 **camplus**（預設）：192-dim x-vector，中文友善；提供下載來源
+  - **ECAPA-TDNN**：192-dim；提供手動 ONNX 匯入
+  - **ResNet-SE**：512-dim；提供手動 ONNX 匯入
+- **UI 新增**：設定面板「👥 聲紋模型管理」區塊，列出模型清單、狀態、下載/匯入/設為預設按鈕。
+- **IPC 新增**：`voiceprint:listModels`、`voiceprint:importModel`、`voiceprint:setActiveModel`、`voiceprint:openImportDialog`、`voiceprint:getCurrentModel`。
+- **自動模型切換**：`loadModel()` 釋放舊 session 後載入新模型；後端用 `modelKey` 路由 `diarize` / `propagate`。
+- **使用限制**：因公開 ONNX 鏡像檔 401/404，camplus 為唯一可自動下載的模型；其他模型需使用者手動匯入符合 schema 的 ONNX 檔。
+
+### v1.21.4 (2026-07-01) — 強化多 seed centroid 計算（trimmed mean + outlier rejection）
+
+**回應使用者提問：「針對短語句無法辨識區分說話人員，是否可以採用重覆複製同一句話來提高人員辨識？」**
+
+- **改動**：`propagateSpeakers()` 改用 **trimmed mean centroid** 演算法（≥3 個 seeds 時）：
+  1. 計算每個 seed 與其他 seed 的平均 cosine similarity 作為該 seed 的「內部一致性」
+  2. 排序後去掉最高/最低各 ⌊n/4⌋ 個 outliers（最多各 1 個）
+  3. 用剩餘 seeds 的 mean 作為 centroid
+  4. 保留 `centroidInfo.{seedCount, usedCount, droppedCount, internalCoherence}` 供 UI 顯示
+- **解決問題**：
+  - ✅ **同句重覆標記** 拉偏 centroid — trimmed mean 自然降低極端值權重
+  - ✅ **無關句子**（背景音/咳嗽/打字聲）拉偏 centroid — outlier rejection 直接排除
+- **使用建議**：
+  - 3–5 個 **發音內容明顯不同** 的句子是甜蜜點
+  - 10+ 個 seeds 邊際效益遞減
+  - ≤2 個 seeds 自動降級為 simple mean（避免過度裁切）
+  - 觀察 `centroidInfo.internalCoherence`：> 0.7 表示 seed 一致性高；< 0.5 建議重選 seeds
+
+### v1.21.3 (2026-06-30) — 逐字稿講者標籤顯示聲紋相似度
+
+- `diarizeAudio()` 與 `propagateSpeakers()` 在 result 中加入 `score`（cosine similarity 0~1）
+- App.vue speaker tag 旁顯示「[speaker] [score]」如「張三 85」表示 85% 相似度
+
+### v1.21.2 (2026-06-30) — 修正講者標籤編輯後逐字稿變成無音檔狀態
+
+- `saveRecordingMeta()` 當 `currentAudioPath` 為空時主動從舊 metadata 載入保留 `audioPath`
+- `reviewRecording()` 不再強制將 `currentAudioPath` 設為 `null`，改為讀取 `r.meta.audioPath` 並自動呼叫 `loadAudioUrl` 載入音檔 URL
+
+### v1.21.1 (2026-06-30) — 修正每次消取/編輯 speaker 都建立新 metadata 檔
+
+- `saveRecordingMeta()` 沿用既有 `currentRecordingId` 不再生新 ID
+- 新增 `_scheduleSaveRecordingMeta()` 500ms debounce helper
+- `setSegmentSpeaker()` / `doPropagateSpeakers()` / `clearAllSpeakers()` 三處改用 debounced save
+
+### v1.21.0 (2026-06-30) — 半監督式 speaker propagation（手動標註 → 推算所有句子）
+
+- 新增「🪄 依標註推算所有句子」按鈕（紫色 #7B1FA2），半監督式 speaker 標註
+- 逐字稿列表每個 segment 新增「+👤」按鈕 → 彈出 Speaker Editor Modal 輸入講者名稱
+- 推算 panel 列出 seeds、可調門檻 slider 0.30~0.80、刪除單筆 seed、清除所有標記
+- 解決短語句（< 1.5s）無法用無監督聚類區分不同 speaker 的問題
 
 ### v1.20.12 (2026-06-30) — 辨識 job log 補上音檔時長檢查與切割決策
 
@@ -242,3 +305,26 @@ recorder/
               ├── whisper-cli.exe → 語音轉文字
               ├── https.get → 模型下載
               └── fs.writeFile → 匯出逐字稿
+
+## v1.23.0 — 監督式 Speaker Recognition + Profile Database
+
+### 新增功能
+- **👤 Speaker Profile Database**（持久化於 ~/recoder/speaker_profiles.json）：可為每個常用講者建立獨立 profile，跨錄音反覆使用。
+- **🎯 監督式 Speaker Identification**：依據已建立的 profile 對錄音中的每句做 cosine similarity 匹配，標記講者姓名。
+- **🔄 批次回溯標註（Backfill）**：建立新 profile 後一鍵套用所有歷史錄音，無需逐檔手動重做。
+- **📂 從短音檔建立 Profile**：可用「重覆同一句話」的短音檔快速建立個人聲紋庫。
+- **跨模型支援**：camplus (192-d)、ecapa_tdnn (192-d)、resnet_se (256-d) 各自儲存獨立 profile，避免維度混淆。
+
+### 工作流程
+1. 點 **👤 Create Profile** 開啟 Speaker Database panel。
+2. 在轉寫稿上標記同一人 2-3 句 → 點 **💾 Build from Labels** 從現有錄音建立 profile，或 **📂 Build from Audio File** 從短音檔建立。
+3. 切到目標錄音 → 點 **🎯 Identify Speakers (Supervised)** 一鍵識別。
+4. 建立新 profile 後點 **🔄 Apply to All History** 批次回溯標註全部歷史錄音。
+
+### 與 v1.21.0 半監督式差異
+| 項目 | v1.21.0 半監督式 | v1.23.0 監督式 |
+|------|------------------|------------------|
+| 訓練資料 | 同錄音內的 seed 句子 | 跨錄音累積的 profile |
+| 短句辨識 | 較差 | 較好（多次累積） |
+| 跨錄音搜尋 | 不支援 | 支援（searchBySpeaker） |
+| 持久化 | 否 | 是（speaker_profiles.json） |

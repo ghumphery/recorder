@@ -90,6 +90,36 @@
           <button v-if="m.cached" class="btn btn-tiny" @click="deleteModel(m.name)" style="background:#e53935">{{ $t('settings.modelDelete') }}</button>
         </div>
       </div>
+      <!-- v1.22.0: 聲紋模型管理（多模型架構）-->
+      <div class="setting-section-title">👥 {{ $t('voiceprint.modelPanelTitle') }}</div>
+      <div v-if="voiceprintModels.length === 0" class="empty-hint" style="padding:8px;font-size:12px">⏳ {{ $t('status.ready') }}</div>
+      <div v-else>
+        <div v-for="m in voiceprintModels" :key="m.key" class="voiceprint-model-item" :class="{ 'voiceprint-model-active': m.key === currentVoiceprintModel }">
+          <div class="voiceprint-model-header">
+            <span class="voiceprint-model-name">
+              <span v-if="m.key === currentVoiceprintModel" class="voiceprint-active-badge">{{ $t('voiceprint.modelActive') }}</span>
+              {{ m.label }}
+            </span>
+            <span class="voiceprint-model-dim">{{ m.dim }}-dim</span>
+            <span class="voiceprint-model-status">
+              <span v-if="m.cached">✅</span>
+              <span v-else-if="m.downloadable">⬇️</span>
+              <span v-else>📦</span>
+            </span>
+          </div>
+          <div class="voiceprint-model-desc">{{ $t(m.descriptionKey) }}</div>
+          <div class="voiceprint-model-actions">
+            <button v-if="!m.cached && m.downloadable" class="btn btn-tiny" @click="downloadVoiceprintModel(m.key)" :disabled="voiceprintDownloading" style="background:#FF8F00">{{ $t('voiceprint.modelDownload') }}</button>
+            <button v-if="!m.cached" class="btn btn-tiny" @click="importVoiceprintModel(m.key)" style="background:#1565C0">📥 {{ $t('voiceprint.modelImport') }}</button>
+            <button v-if="m.cached && m.key !== currentVoiceprintModel" class="btn btn-tiny" @click="setActiveVoiceprintModel(m.key)" style="background:#7B1FA2">⭐ {{ $t('voiceprint.modelSetActive') }}</button>
+            <span v-if="m.defaultModel" class="voiceprint-model-default">🏆 {{ $t('voiceprint.modelActive') }}</span>
+          </div>
+        </div>
+        <div v-if="voiceprintDownloading" class="voiceprint-download-progress" style="margin-top:6px">
+          <div class="progress-bar" style="height:6px"><div class="progress-fill" :style="{ width: voiceprintDownloadPercent + '%', background: '#FF8F00' }"></div></div>
+          <div style="font-size:11px;color:#666;margin-top:2px">⏬ {{ voiceprintDownloadPercent }}%</div>
+        </div>
+      </div>
       <div class="setting-row" style="justify-content:flex-end;gap:6px">
         <button class="btn btn-small btn-save" @click="saveSettings">{{ $t('settings.save') }}</button>
         <button class="btn btn-small" @click="showSettings = false">{{ $t('settings.close') }}</button>
@@ -145,6 +175,10 @@
       <button class="btn btn-undo" @click="redo" :disabled="llmBusy || !canRedo" :title="$t('llm.redoTitle')">{{ $t('llm.redo') }}</button>
       <button class="btn btn-small" @click="showLlmDocPanel = !showLlmDocPanel" style="background:#1565C0" :title="$t('llm.docManager')">{{ $t('llm.docManager') }}</button>
       <button class="btn btn-small" @click="doDiarize" :disabled="voiceprintBusy || !hasResult" style="background:#FF5722" :title="$t('voiceprint.diarize')">{{ $t('voiceprint.diarize') }}</button>
+      <button class="btn btn-small" @click="showPropagatePanel = !showPropagatePanel" style="background:#7B1FA2;color:white;position:relative" :disabled="!hasResult" :title="$t('voiceprint.propagate')">🪄 {{ $t('voiceprint.propagate') }}<span v-if="Object.keys(propagateCentroidInfo).length > 0" class="jobs-badge" style="background:#FF8F00;top:-2px;right:-2px">🧬</span></button>
+      <button class="btn btn-small" @click="openProfilePanel" :disabled="voiceprintBusy || !hasResult" style="background:#00897B;color:white" :title="$t('voiceprint.profileCreate')">👤 {{ $t('voiceprint.profileCreate') }}</button>
+      <button class="btn btn-small" @click="doIdentifySpeakers" :disabled="voiceprintBusy || !hasResult || identifyBusy" style="background:#D81B60;color:white" :title="$t('voiceprint.profileIdentify')">🎯 {{ $t('voiceprint.profileIdentify') }}</button>
+      <button class="btn btn-small" @click="doBackfillAll" :disabled="voiceprintBusy || backfillBusy" style="background:#5E35B1;color:white" :title="$t('voiceprint.profileBackfillAll')">🔄 {{ $t('voiceprint.profileBackfillAll') }}</button>
       <span v-if="voiceprintBusy" class="llm-spinner" style="color:#FF5722">
         <span>{{ $t('voiceprint.processing') }} {{ voiceprintProgress }}%</span>
       </span>
@@ -239,6 +273,122 @@
       </div>
     </div>
 
+    <!-- v1.21.0: Speaker Editor Modal（點單筆 speaker tag 時彈出） -->
+    <div v-if="showSpeakerEditor" class="label-editor-overlay" @click.self="closeSpeakerEditor">
+      <div class="label-editor-panel" style="width:400px">
+        <div class="panel-header">{{ $t('voiceprint.editSpeakerName') }} (#{{ editingSpeakerIdx + 1 }})</div>
+        <div class="panel-body">
+          <p style="font-size:12px;color:#666;margin-bottom:8px">{{ $t('voiceprint.markHint') }}</p>
+          <div class="label-editor-input-row">
+            <input v-model="editingSpeakerName" :placeholder="$t('voiceprint.mark')" class="label-input" @keyup.enter="setSegmentSpeaker(editingSpeakerIdx, editingSpeakerName); closeSpeakerEditor()" />
+            <button class="btn btn-small" @click="setSegmentSpeaker(editingSpeakerIdx, editingSpeakerName); closeSpeakerEditor()" style="background:#43A047">{{ $t('llm.docView') === '檢視' ? '確定' : 'OK' }}</button>
+          </div>
+          <div class="label-editor-actions" style="margin-top:8px">
+            <button v-if="editingSpeakerIdx >= 0 && transcriptionResults[editingSpeakerIdx] && transcriptionResults[editingSpeakerIdx].speaker" class="btn btn-tiny" @click="setSegmentSpeaker(editingSpeakerIdx, ''); closeSpeakerEditor()" style="background:#888">{{ $t('voiceprint.unmark') }}</button>
+            <button class="btn btn-small" @click="closeSpeakerEditor">{{ $t('labelEditor.cancel') }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- v1.21.0: 半監督式推算 Panel -->
+    <div v-if="showPropagatePanel" class="label-editor-overlay" @click.self="showPropagatePanel = false">
+      <div class="label-editor-panel" style="width:520px">
+        <div class="panel-header">🪄 {{ $t('voiceprint.voiceprintPanelTitle') }}</div>
+        <div class="panel-body" style="max-height:500px;overflow-y:auto">
+          <p style="font-size:12px;color:#666;margin-bottom:8px">{{ $t('voiceprint.markHint') }}</p>
+          <div class="setting-row" style="margin-bottom:8px">
+            <label>{{ $t('voiceprint.thresholdLabel') }}: {{ propagateThreshold.toFixed(2) }}</label>
+            <input type="range" v-model.number="propagateThreshold" min="0.30" max="0.80" step="0.05" style="flex:1" />
+          </div>
+          <div style="margin-bottom:8px">
+            <div class="panel-header" style="background:#f5e6ff">{{ $t('voiceprint.speakersList') }} ({{ Object.keys(seedMap).length }})</div>
+            <div v-if="Object.keys(seedMap).length === 0" class="empty-hint" style="padding:12px">{{ $t('voiceprint.noSeedYet') }}</div>
+            <div v-else class="label-editor-list">
+              <div v-for="(name, idx) in seedMap" :key="idx" class="label-editor-item">
+                <span class="label-tag" style="background:#7B1FA2;color:white;border-color:#7B1FA2">{{ name }}</span>
+                <span class="history-date">#{{ parseInt(idx) + 1 }} [{{ formatTime(transcriptionResults[idx]?.start || 0) }}]</span>
+                <span class="history-segments">"{{ (transcriptionResults[idx]?.text || '').slice(0, 30) }}{{ (transcriptionResults[idx]?.text || '').length > 30 ? '...' : '' }}"</span>
+                <button class="btn btn-tiny" @click="setSegmentSpeaker(parseInt(idx), ''); delete seedMap[idx]" style="background:#e53935">{{ $t('voiceprint.unmark') }}</button>
+              </div>
+            </div>
+          </div>
+          <!-- v1.21.4: Centroid quality 資訊（internalCoherence / seedCount / droppedCount） -->
+          <div v-if="Object.keys(propagateCentroidInfo).length > 0" class="centroid-info" style="background:#fff7e6;border:1px solid #ffd591;border-radius:6px;padding:10px;margin-bottom:8px">
+            <div class="panel-header" style="background:#ffe7ba;font-size:12px;padding:4px 8px">📊 {{ $t('voiceprint.centroidInfo') }}</div>
+            <div v-for="(info, name) in propagateCentroidInfo" :key="name" style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:6px;padding:4px 0;border-bottom:1px solid #ffe7ba">
+              <span class="label-tag" style="background:#7B1FA2;color:white;border-color:#7B1FA2">{{ name }}</span>
+              <span style="color:#666">{{ $t('voiceprint.seeds') }}: <b>{{ info.seedCount }}</b></span>
+              <span v-if="info.droppedCount > 0" style="color:#999;font-size:11px">({{ $t('voiceprint.dropped') }}: {{ info.droppedCount }})</span>
+              <span style="flex:1"></span>
+              <span :title="$t('voiceprint.coherenceTip')" :style="{ color: info.internalCoherence >= 0.7 ? '#389e0d' : (info.internalCoherence >= 0.5 ? '#d48806' : '#cf1322'), fontWeight: 'bold' }">
+                🧬 {{ $t('voiceprint.coherence') }}: {{ (info.internalCoherence * 100).toFixed(0) }}%
+              </span>
+            </div>
+            <div v-if="propagateCoherenceTip" style="font-size:11px;color:#888;margin-top:6px;line-height:1.4">{{ propagateCoherenceTip }}</div>
+          </div>
+        </div>
+        <div class="label-editor-actions">
+          <button class="btn btn-small" @click="doPropagateSpeakers" :disabled="propagateBusy || Object.keys(seedMap).length === 0" style="background:#7B1FA2;color:white">
+            <span v-if="propagateBusy">{{ $t('voiceprint.propagating') }}</span>
+            <span v-else>🪄 {{ $t('voiceprint.propagate') }}</span>
+          </button>
+          <button class="btn btn-small" @click="clearAllSpeakers" style="background:#888">{{ $t('voiceprint.clearSpeakers') }}</button>
+          <button class="btn btn-small" @click="showPropagatePanel = false">{{ $t('llm.jobClose') }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- v1.23.0: Speaker Profile Database Panel -->
+    <div v-if="showProfilePanel" class="label-editor-overlay" @click.self="showProfilePanel = false">
+      <div class="label-editor-panel" style="width:560px">
+        <div class="panel-header">👤 {{ $t('voiceprint.profilePanel') }} ({{ profiles.length }})</div>
+        <div class="panel-body" style="max-height:500px;overflow-y:auto">
+          <div class="profile-create-row" style="background:#e0f2f1;border:1px solid #00897B;border-radius:6px;padding:10px;margin-bottom:8px">
+            <div style="font-size:12px;color:#00695C;font-weight:bold;margin-bottom:6px">➕ {{ $t('voiceprint.profileCreate') }}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-small" @click="doBuildProfileFromSeeds" :disabled="profileBuildBusy || Object.keys(seedMap).length === 0" style="background:#7B1FA2;color:white" :title="$t('voiceprint.profileBuildFromSeeds')">💾 {{ $t('voiceprint.profileBuildFromSeeds') }} ({{ Object.keys(seedMap).length }})</button>
+              <button class="btn btn-small" @click="doBuildProfileFromAudioFile" :disabled="profileBuildBusy" style="background:#1565C0;color:white" :title="$t('voiceprint.profileBuildFromAudioFile')">📂 {{ $t('voiceprint.profileBuildFromAudioFile') }}</button>
+            </div>
+            <div v-if="Object.keys(seedMap).length === 0" style="font-size:10px;color:#888;margin-top:4px;line-height:1.4">提示：可先點 🪄 半監督式面板標記同一人 2-3 個句子，後用「💾 Build from Labels」建立 profile。</div>
+          </div>
+          <div v-if="profiles.length === 0" class="empty-hint" style="padding:12px">{{ $t('voiceprint.profileEmpty') }}</div>
+          <div v-else>
+            <div v-for="p in profiles" :key="p.id" class="profile-item">
+              <div class="profile-header">
+                <span class="profile-name">👤 {{ p.name }}</span>
+                <span class="profile-model">{{ p.modelKey }}</span>
+                <span class="profile-stats">{{ $t('voiceprint.profileSamples') }}: <b>{{ p.samples.length }}</b></span>
+                <span class="profile-stats" :title="$t('voiceprint.coherenceTip')">🧬 {{ $t('voiceprint.profileCoherence') }}: {{ (p.internalCoherence * 100).toFixed(0) }}%</span>
+              </div>
+              <div class="profile-actions">
+                <button class="btn btn-tiny" @click="renameProfile(p)" style="background:#FF8F00">{{ $t('voiceprint.profileRename') }}</button>
+                <button class="btn btn-tiny" @click="deleteProfile(p)" style="background:#e53935">{{ $t('voiceprint.profileDelete') }}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="label-editor-actions">
+          <button class="btn btn-small" @click="showProfilePanel = false">{{ $t('llm.jobClose') }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- v1.23.0 hotfix7: 自製 prompt dialog（Electron 不支援 window.prompt） -->
+    <div v-if="showPromptDialog" class="label-editor-overlay" @click.self="cancelPromptDialog">
+      <div class="label-editor-panel" style="width:400px">
+        <div class="panel-header">{{ promptTitle || '輸入' }}</div>
+        <div class="panel-body">
+          <p style="font-size:12px;color:#666;margin-bottom:8px">{{ promptMessage }}</p>
+          <input v-model="promptInput" :placeholder="promptDefault" class="label-input" @keyup.enter="confirmPromptDialog" ref="promptInputEl" />
+          <div class="label-editor-actions" style="margin-top:8px">
+            <button class="btn btn-small btn-save" @click="confirmPromptDialog">確定</button>
+            <button class="btn btn-small" @click="cancelPromptDialog">取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Job Log Modal（v1.20.0） -->
     <div v-if="showJobLogModal" class="label-editor-overlay" @click.self="showJobLogModal = false">
       <div class="label-editor-panel" style="width:700px">
@@ -280,11 +430,12 @@
           <span v-if="nowPlaying" class="playing-badge">{{ $t('transcript.playing') }}</span>
           <button v-if="nowPlaying" class="btn btn-small btn-stop-playback" @click="stopPlayback" :title="$t('transcript.stopPlayback')">{{ $t('transcript.stopPlayback') }}</button>
         </div>
-        <div class="panel-body">
-          <div v-for="(seg, idx) in transcriptionResults" :key="idx" class="segment" :class="{ 'segment-playing': playingSegmentIdx === idx }" @click="playSegment(idx)" :title="currentAudioUrl ? $t('transcript.clickToPlay') : ''">
+          <div class="panel-body">
+          <div v-for="(seg, idx) in transcriptionResults" :key="idx" class="segment" :class="{ 'segment-playing': playingSegmentIdx === idx }" @click.stop="openSpeakerEditor(idx, seg)" :title="currentAudioUrl ? $t('transcript.clickToPlay') : ''">
             <span class="timestamp">[{{ formatTime(seg.start) }} - {{ formatTime(seg.end) }}]</span>
-            <span v-if="seg.speaker" class="speaker-tag">👤 {{ seg.speaker }}</span>
-            <span class="text">{{ seg.text }}</span>
+            <span v-if="seg.speaker" class="speaker-tag" @click.stop="openSpeakerEditor(idx, seg)">👤 {{ seg.speaker }}<span v-if="typeof seg.score === 'number' && seg.score > 0" class="speaker-score" :title="$t('voiceprint.scoreTitle', { score: (seg.score * 100).toFixed(1) })"> {{ (seg.score * 100).toFixed(0) }}</span></span>
+            <button v-else class="btn btn-tiny speaker-mark-btn" @click.stop="openSpeakerEditor(idx, seg)" :title="$t('voiceprint.markThis')">+👤</button>
+            <span class="text" @click="playSegment(idx)">{{ seg.text }}</span>
             <span v-if="playingSegmentIdx === idx" class="play-indicator">▶️</span>
           </div>
         </div>
@@ -575,6 +726,37 @@ export default {
       _transcribeEventUnsub: null,
       _transcribingAudioPath: null,
       _transcribingJobId: null,
+      // v1.21.0 半監督式 speaker propagation
+      showSpeakerEditor: false,
+      editingSpeakerIdx: -1,
+      editingSpeakerName: '',
+      seedMap: {},          // idx → speaker name (使用者標記的)
+      propagateBusy: false,
+      propagateThreshold: 0.5,
+      showPropagatePanel: false,
+      // v1.21.4: 推算結果的 centroid 品質資訊（用於 UI 顯示 internalCoherence / seedCount / droppedCount）
+      propagateCentroidInfo: {},
+      propagateCoherenceTip: '',
+      // v1.22.0: 多模型 Speaker Embedding 架構
+      voiceprintModels: [],          // [{key, label, dim, minSize, cached, defaultModel, downloadable, descriptionKey}]
+      currentVoiceprintModel: 'camplus',
+      showVoiceprintModelManager: false,
+      voiceprintDownloading: false,  // 哪個 modelKey 正在下載
+      voiceprintDownloadPercent: 0,
+      // v1.23.0: Speaker Profile Database + 監督式 speaker recognition
+      profiles: [],                  // [{id, name, modelKey, dim, centroid, samples, internalCoherence, source, createdAt, updatedAt}]
+      showProfilePanel: false,
+      identifyBusy: false,
+      backfillBusy: false,
+      backfillProgress: null,        // {current, total}
+      profileBuildBusy: false,
+      // v1.23.0 hotfix7: 自製 prompt dialog 狀態
+      showPromptDialog: false,
+      promptTitle: '',
+      promptMessage: '',
+      promptDefault: '',
+      promptInput: '',
+      _promptResolver: null,
     }
   },
   computed: {
@@ -627,6 +809,7 @@ export default {
     await this.fetchModels()
     await this.fetchLlmProviders()
     await this.loadSettings()
+    await this.loadVoiceprintModels()  // v1.22.0: 載入多聲紋模型清單
     this.initJobListener()
     this.initTranscribeEventListener()
   },
@@ -672,6 +855,111 @@ export default {
         if (r.success) { this.statusText = this.$t('settings.modelDeleted'); await this.fetchModels() }
         else { this.statusText = this.$t('settings.modelDeleteFail', { error: r.error }); this.statusError = true }
       } catch (e) { this.statusText = this.$t('settings.modelDeleteFail', { error: e.message }); this.statusError = true }
+    },
+
+    // ── v1.22.0: 聲紋模型管理（多模型架構）──
+    async loadVoiceprintModels() {
+      if (!window.electronAPI) return
+      try {
+        const d = await window.electronAPI.voiceprintListModels()
+        this.voiceprintModels = d.models || []
+        this.currentVoiceprintModel = d.currentModel || 'camplus'
+        // 同步狀態給舊的 voiceprintModelCached 變數（保持向下相容）
+        const current = this.voiceprintModels.find(m => m.key === this.currentVoiceprintModel)
+        this.voiceprintModelCached = !!(current && current.cached)
+      } catch (e) {
+        console.warn('loadVoiceprintModels 失敗:', e)
+      }
+    },
+    async downloadVoiceprintModel(key) {
+      if (!window.electronAPI) return
+      const m = this.voiceprintModels.find(x => x.key === key)
+      if (!m) { this.statusText = `❌ 找不到模型 ${key}`; this.statusError = true; return }
+      if (!m.downloadable) { this.statusText = this.$t('voiceprint.modelNoDownloadUrl'); this.statusError = true; return }
+      this.voiceprintDownloading = true
+      this.voiceprintDownloadPercent = 0
+      this.statusText = this.$t('voiceprint.modelDownloading', { model: m.label })
+      this.statusError = false
+      try {
+        if (window.electronAPI.onVoiceprintDownloadProgress) {
+          window.electronAPI.onVoiceprintDownloadProgress((data) => {
+            if (data.modelKey === key || !data.modelKey) {
+              this.voiceprintDownloadPercent = data.percent || 0
+            }
+          })
+        }
+        const r = await window.electronAPI.voiceprintDownload({ modelKey: key })
+        if (r.success) {
+          this.statusText = `✅ ${this.$t('voiceprint.modelDownload')} ${m.label}`
+          await this.loadVoiceprintModels()
+        } else {
+          this.statusText = `❌ ${this.$t('voiceprint.modelDownloadFail') || '下載失敗'}: ${r.error}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 下載異常: ${e.message}`
+        this.statusError = true
+      } finally {
+        this.voiceprintDownloading = false
+        setTimeout(() => { this.voiceprintDownloadPercent = 0 }, 2000)
+      }
+    },
+    async importVoiceprintModel(key) {
+      if (!window.electronAPI) return
+      try {
+        const dlg = await window.electronAPI.voiceprintOpenImportDialog()
+        if (!dlg || !dlg.success) {
+          if (dlg && dlg.canceled) return
+          this.statusText = `❌ ${this.$t('voiceprint.modelImportFail')}: ${dlg?.error || '未知'}`
+          this.statusError = true
+          return
+        }
+        const r = await window.electronAPI.voiceprintImportModel({ sourcePath: dlg.path, modelKey: key })
+        if (r.success) {
+          this.statusText = `✅ ${this.$t('voiceprint.modelImportSuccess', { model: r.modelKey || key })}`
+          await this.loadVoiceprintModels()
+        } else {
+          this.statusText = `❌ ${this.$t('voiceprint.modelImportFail')}: ${r.error}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 匯入異常: ${e.message}`
+        this.statusError = true
+      }
+    },
+    async setActiveVoiceprintModel(key) {
+      if (!window.electronAPI) return
+      if (key === this.currentVoiceprintModel) return
+      this.statusText = this.$t('voiceprint.modelSetActive') + '...'
+      this.statusError = false
+      try {
+        const r = await window.electronAPI.voiceprintSetActiveModel({ modelKey: key })
+        if (r.success) {
+          this.currentVoiceprintModel = key
+          this.statusText = `✅ ${this.$t('voiceprint.modelSetActiveSuccess', { model: r.modelKey || key })}`
+          await this.loadVoiceprintModels()
+        } else {
+          this.statusText = `❌ ${this.$t('voiceprint.modelSetActive')}: ${r.error}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 切換異常: ${e.message}`
+        this.statusError = true
+      }
+    },
+    // v1.22.0: 根據當前音檔特性推薦模型
+    recommendVoiceprintModel() {
+      if (!this.voiceprintModels || this.voiceprintModels.length === 0) return null
+      const segCount = this.transcriptionResults.length
+      const totalDur = this.transcriptionResults.length > 0
+        ? this.transcriptionResults[this.transcriptionResults.length - 1].end
+        : 0
+      const avgSegLen = segCount > 0 ? totalDur / segCount : 0
+      // 規則：短句 (<3s) 且多 speaker → campplus；長句雜訊多 → ecapa_tdnn
+      if (avgSegLen < 3 && segCount >= 5) return 'camplus'
+      if (avgSegLen < 3) return 'camplus'
+      // 中等長度，預設 campplus
+      return 'camplus'
     },
     async fetchLlmProviders() {
       try {
@@ -971,6 +1259,8 @@ export default {
       }
     },
     async _onTranscribeEvent(data) {
+      // v1.20.15 hotfix: 診斷 log 印出 event 內容，便於以後分析
+      console.log('[app] transcribe event:', { id: data.id, status: data.status, audioPath: data.audioPath, currentJobId: this._transcribingJobId, hasInlineResult: !!data.result })
       // 只處理當前 jobs 的事件
       if (data.id !== this._transcribingJobId) return
       if (data.status === 'running' || data.status === 'pending') {
@@ -983,27 +1273,51 @@ export default {
           }
         }
       } else if (data.status === 'completed') {
-        // job 完成，讀取結果
+        // v1.20.15 hotfix: 優先讀 event 內附帶的 result（避免 IPC race／catch 吞錯），
+        //   fallback 才走 transcribeGetResult。同時處理路徑 3 - saveRecordingMeta 裡的 await
+        //   拋例外也不會影響逐字稿寫入 transcriptionResults。
         try {
-          const r = await window.electronAPI.transcribeGetResult({ jobId: this._transcribingJobId })
-          if (r.success && r.result) {
-            this.transcriptionResults = r.result.segments
-            this.hasResult = true
-            this.showProgress = false
-            this.statusText = this.$t('status.transcribed', { count: r.result.segments.length })
-            this.progressPercent = 100
-            this.llmResults = { optimized: '', translated: '', summary: '' }
-            this.documents = []
-            this.llmHistory = { optimized: [], translated: [], summary: [] }
-            this.llmRedo = { optimized: [], translated: [], summary: [] }
-            this.activeSource = 'original'
-            await this.saveRecordingMeta(r.result.segments)
+          let result = null
+          if (data.result && Array.isArray(data.result.segments)) {
+            console.log('[app] 使用 inline result，segments=', data.result.segments.length)
+            result = data.result
           } else {
-            this.statusText = this.$t('status.transcribeFail', { error: r.error || '未知錯誤' }); this.statusError = true
-            this.showProgress = false
+            console.log('[app] event 沒附帶 result，fallback 呼叫 transcribeGetResult')
+            const r = await window.electronAPI.transcribeGetResult({ jobId: this._transcribingJobId })
+            if (!r.success || !r.result) {
+              // v1.20.15 hotfix: 用更明確的錯誤訊息，避免「未知錯誤」對除錯無幫助
+              const reason = r.status ? `status=${r.status}` : (r.error || '無 result')
+              console.error('[app] transcribeGetResult 失敗:', r)
+              this.statusText = `❌ 取得辨識結果失敗: ${reason}`
+              this.statusError = true
+              this.showProgress = false
+              this.busy = false
+              this._transcribingJobId = null
+              this._transcribingAudioPath = null
+              return
+            }
+            result = r.result
+          }
+          this.transcriptionResults = result.segments
+          this.hasResult = true
+          this.showProgress = false
+          this.statusText = this.$t('status.transcribed', { count: result.segments.length })
+          this.progressPercent = 100
+          this.llmResults = { optimized: '', translated: '', summary: '' }
+          this.documents = []
+          this.llmHistory = { optimized: [], translated: [], summary: [] }
+          this.llmRedo = { optimized: [], translated: [], summary: [] }
+          this.activeSource = 'original'
+          // v1.20.15 hotfix: 儲存失敗不應該讓使用者誤以為辨識失敗 — 包成 catch 並在 console 提示
+          try {
+            await this.saveRecordingMeta(result.segments)
+          } catch (e) {
+            console.error('[app] saveRecordingMeta 拋例外（不影響逐字稿顯示）:', e)
           }
         } catch (e) {
-          this.statusText = this.$t('status.transcribeFail', { error: e.message }); this.statusError = true
+          console.error('[app] transcribe completed handler 拋例外:', e)
+          this.statusText = `❌ 處理辨識結果時發生例外: ${e.message || e.toString()}`
+          this.statusError = true
           this.showProgress = false
         } finally {
           this.busy = false
@@ -1052,22 +1366,55 @@ export default {
         console.warn('[saveRecordingMeta] 跳過儲存：audioInfo 為空 (recordingMode=', this.recordingMode, ', currentRecordingId=', this.currentRecordingId, ', currentAudioPath=', this.currentAudioPath, ')')
         return
       }
-      const now = new Date()
-      const id = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}_${this.recordingMode || 'import'}`
+      // v1.21.1 hotfix: 沿用 currentRecordingId（若已存在），避免每次都建立新 metadata 檔
+      let id = this.currentRecordingId
+      let isNew = false
+      let recordedAt
+      if (!id) {
+        const now = new Date()
+        id = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}_${this.recordingMode || 'import'}`
+        recordedAt = now.toISOString()
+        isNew = true
+      } else {
+        recordedAt = new Date().toISOString()
+      }
       const duration = segments.length > 0 ? segments[segments.length-1].end : 0
-      const audioPath = this.currentAudioPath || ''
+      // v1.21.2 hotfix: 當 currentAudioPath 為空時（例如從 reviewRecording() 進入），從舊 metadata 載入 audioPath 保留
+      let audioPath = this.currentAudioPath || ''
+      if (!audioPath && id) {
+        try {
+          const oldMeta = await window.electronAPI.recoLoadMeta({ recordingId: id })
+          if (oldMeta && oldMeta.success && oldMeta.meta && oldMeta.meta.audioPath) {
+            audioPath = oldMeta.meta.audioPath
+            console.log('[saveRecordingMeta] 從舊 metadata 保留 audioPath:', audioPath)
+          }
+        } catch (e) { console.warn('[saveRecordingMeta] 載入舊 audioPath 失敗:', e) }
+      }
       const clonedSegments = JSON.parse(JSON.stringify(segments))
       const clonedLlmResults = JSON.parse(JSON.stringify(llmResults || this.llmResults))
       const clonedDocuments = JSON.parse(JSON.stringify(this.documents))
       try {
-        await window.electronAPI.recoSaveMeta({ recordingId: id, filename: `${id}.webm`, recordingMode: this.recordingMode || 'import', recordedAt: now.toISOString(), duration, modelSize: this.selectedModel, segments: clonedSegments, llmResults: clonedLlmResults, audioPath, documents: clonedDocuments })
-        console.log('[saveRecordingMeta] 已儲存 metadata:', id, `(segments=${clonedSegments.length}, audioPath=${audioPath})`)
+        await window.electronAPI.recoSaveMeta({ recordingId: id, filename: `${id}.webm`, recordingMode: this.recordingMode || 'import', recordedAt, duration, modelSize: this.selectedModel, segments: clonedSegments, llmResults: clonedLlmResults, audioPath, documents: clonedDocuments })
+        console.log('[saveRecordingMeta] 已儲存 metadata:', id, '(isNew=' + isNew + ', segments=' + clonedSegments.length + ', audioPath=' + audioPath + ')')
         this.currentRecordingId = id
         // v1.20.14: 儲存成功後立即刷新錄音歷史列表，避免使用者看不到新紀錄
-        try { await this.loadHistory() } catch (e) { console.warn('[saveRecordingMeta] loadHistory 失敗:', e) }
+        if (isNew) { try { await this.loadHistory() } catch (e) { console.warn('[saveRecordingMeta] loadHistory 失敗:', e) } }
       } catch (e) {
         console.error('[saveRecordingMeta] 儲存失敗:', id, e)
       }
+    },
+    // v1.21.1 hotfix: debounced save — 多次編輯 speaker 只觸發一次完整儲存
+    _scheduleSaveRecordingMeta() {
+      if (this._saveRecordingMetaTimer) clearTimeout(this._saveRecordingMetaTimer)
+      this._saveRecordingMetaTimer = setTimeout(() => {
+        this._saveRecordingMetaTimer = null
+        // 再次檢查 currentRecordingId 可能已被 race 設好
+        if (!this.currentRecordingId) {
+          console.warn('[app] _scheduleSaveRecordingMeta 跳過：currentRecordingId 為空')
+          return
+        }
+        this.saveRecordingMeta(this.transcriptionResults)
+      }, 500)
     },
 
     // ── LLM ──
@@ -1215,7 +1562,7 @@ export default {
               this.voiceprintProgress = 0
             }
           }
-          if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+            if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
             this.voiceprintBusy = false
             this.voiceprintProgress = 0
             if (data.status === 'completed') {
@@ -1224,8 +1571,14 @@ export default {
                 for (let i = 0; i < data.segments.length; i++) {
                   if (this.transcriptionResults[i]) {
                     this.transcriptionResults[i].speaker = data.segments[i].speaker || ''
+                    // v1.21.3: 同時把 cosine 聲紋值寫入 score，給前端 UI 顯示
+                    if (typeof data.segments[i].score === 'number') {
+                      this.transcriptionResults[i].score = data.segments[i].score
+                    }
                   }
                 }
+                // 觸發 Vue 反應
+                this.transcriptionResults = [...this.transcriptionResults]
                 this.statusText = this.$t('status.voiceprintDone', { count: data.segments.length })
                 this.saveRecordingMeta(this.transcriptionResults)
               }
@@ -1674,6 +2027,373 @@ export default {
       if (this.currentAudioUrl) { await this.reviewRecording(item.id) }
       this.statusText = `\u25b6\ufe0f 播放中: ${filename}`
     },
+    // ── v1.21.0 半監督式 speaker propagation ──
+    openSpeakerEditor(idx, seg) {
+      this.editingSpeakerIdx = idx
+      this.editingSpeakerName = seg?.speaker || ''
+      this.showSpeakerEditor = true
+    },
+    closeSpeakerEditor() {
+      this.showSpeakerEditor = false
+      this.editingSpeakerIdx = -1
+      this.editingSpeakerName = ''
+    },
+    setSegmentSpeaker(idx, name) {
+      if (idx < 0 || idx >= this.transcriptionResults.length) return
+      this.transcriptionResults[idx].speaker = name
+      if (name) this.seedMap[idx] = name
+      else delete this.seedMap[idx]
+      // 觸發 Vue 反應
+      this.transcriptionResults = [...this.transcriptionResults]
+      // v1.21.1 hotfix: 改用 debounced save，避免每次編輯都建立新 metadata 檔
+      this._scheduleSaveRecordingMeta()
+    },
+    async doPropagateSpeakers() {
+      if (!window.electronAPI || !this.hasResult) return
+      // 收集 seeds (只有使用者明確標記的)
+      const seeds = Object.entries(this.seedMap)
+        .filter(([idx, name]) => name && this.transcriptionResults[idx])
+        .map(([idx, name]) => ({ idx: parseInt(idx), name }))
+      if (seeds.length === 0) {
+        this.statusText = this.$t('status.propagateNoSeed') || '需至少標註 1 句才能推算'
+        this.statusError = true
+        return
+      }
+      if (!this.currentAudioPath && this.currentRecordingId) {
+        try {
+          const meta = await window.electronAPI.recoLoadMeta({ recordingId: this.currentRecordingId })
+          if (meta.success && meta.meta && meta.meta.audioPath) this.currentAudioPath = meta.meta.audioPath
+        } catch (e) { /* ignore */ }
+      }
+      if (!this.currentAudioPath) {
+        this.statusText = this.$t('voiceprint.propagateNoAudio')
+        this.statusError = true
+        return
+      }
+      this.propagateBusy = true
+      this.statusText = this.$t('voiceprint.propagating')
+      this.statusError = false
+      try {
+        const segments = this.transcriptionResults.map(s => ({ start: s.start, end: s.end, text: s.text, speaker: s.speaker || '' }))
+        const r = await window.electronAPI.voiceprintPropagate({
+          audioPath: this.currentAudioPath,
+          segments,
+          seeds,
+          threshold: this.propagateThreshold,
+        })
+        if (r.success) {
+          // 套用結果 (保留使用者 seeds)
+          for (let i = 0; i < r.segments.length && i < this.transcriptionResults.length; i++) {
+            this.transcriptionResults[i].speaker = r.segments[i].speaker || this.transcriptionResults[i].speaker || ''
+            // v1.21.3: 同時把 cosine 聲紋值寫入 score
+            if (typeof r.segments[i].score === 'number') {
+              this.transcriptionResults[i].score = r.segments[i].score
+            }
+          }
+          this.transcriptionResults = [...this.transcriptionResults]
+          // v1.21.4: 儲存 centroidInfo 並產生 coherence tip
+          this.propagateCentroidInfo = r.centroidInfo || {}
+          this.propagateCoherenceTip = this._buildCoherenceTip(this.propagateCentroidInfo)
+          this.statusText = `✅ ${this.$t('voiceprint.propagateSuccess', { count: seeds.length })} · 🧬 查看 Centroid 品質`
+          // v1.21.1 hotfix: 改用 debounced save，避免每次編輯都建立新 metadata 檔
+          this._scheduleSaveRecordingMeta()
+          // v1.21.4: 不關閉 panel，保留 centroid 品質資訊供使用者查看
+          this.showPropagatePanel = true
+        } else {
+          this.statusText = `❌ ${r.error || '推算失敗'}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 推算異常: ${e.message}`
+        this.statusError = true
+      } finally {
+        this.propagateBusy = false
+      }
+    },
+    clearAllSpeakers() {
+      if (!confirm(this.$t('voiceprint.confirmSpeakers') || '確定清除所有標記嗎？')) return
+      for (const seg of this.transcriptionResults) seg.speaker = ''
+      this.seedMap = {}
+      this.propagateCentroidInfo = {}  // v1.21.4: 清除 centroid 品質資訊
+      this.propagateCoherenceTip = ''
+      this.transcriptionResults = [...this.transcriptionResults]
+      // v1.21.1 hotfix: 改用 debounced save，避免每次編輯都建立新 metadata 檔
+      this._scheduleSaveRecordingMeta()
+    },
+    // v1.21.4: 根據 centroidInfo 產生給使用者的提示
+    _buildCoherenceTip(centroidInfo) {
+      if (!centroidInfo || Object.keys(centroidInfo).length === 0) return ''
+      const names = Object.keys(centroidInfo)
+      const lowCoherence = names.filter(n => centroidInfo[n].internalCoherence < 0.5)
+      const highDropped = names.filter(n => centroidInfo[n].droppedCount > 0)
+      const all = []
+      if (lowCoherence.length > 0) {
+        all.push(`⚠️ ${lowCoherence.join('、')} 內部一致性 < 50%，可能是同句重覆或混到背景音，建議重選 seeds。`)
+      }
+      if (highDropped.length > 0) {
+        all.push(`🛡️ ${highDropped.join('、')} 自動排除了 outliers。`)
+      }
+      if (all.length === 0) {
+        return '✅ 所有 speaker seeds 品質良好 (>70%)，推算結果可告。'
+      }
+      return all.join('\n')
+    },
+    // ── v1.23.0: Speaker Profile Database + 監督式 speaker recognition ──
+    // ── v1.23.0 hotfix7: 自製 promise-based prompt dialog（Electron 不支援 window.prompt）──
+    _showPromptDialog(title, message, defaultValue) {
+      return new Promise((resolve) => {
+        this.promptTitle = title
+        this.promptMessage = message
+        this.promptDefault = defaultValue || ''
+        this.promptInput = defaultValue || ''
+        this._promptResolver = resolve
+        this.showPromptDialog = true
+        // 自動 focus input
+        this.$nextTick(() => {
+          if (this.$refs.promptInputEl) {
+            this.$refs.promptInputEl.focus()
+            this.$refs.promptInputEl.select()
+          }
+        })
+      })
+    },
+    confirmPromptDialog() {
+      const val = this.promptInput || ''
+      this.showPromptDialog = false
+      if (this._promptResolver) { this._promptResolver(val); this._promptResolver = null }
+    },
+    cancelPromptDialog() {
+      this.showPromptDialog = false
+      if (this._promptResolver) { this._promptResolver(null); this._promptResolver = null }
+    },
+    async loadProfiles() {
+      if (!window.electronAPI) return
+      try {
+        const r = await window.electronAPI.voiceprintProfileList()
+        if (r.success) this.profiles = r.profiles || []
+      } catch (e) { console.warn('loadProfiles 失敗:', e) }
+    },
+    async openProfilePanel() {
+      if (!window.electronAPI) return
+      await this.loadProfiles()
+      // 同時取得當前所有 profile names，供建立/識別用
+      this.showProfilePanel = true
+    },
+    async doBuildProfileFromSeeds() {
+      if (!window.electronAPI) return
+      if (this.profiles.length >= 200) {
+        this.statusText = `❌ profile 已達上限 200`
+        this.statusError = true
+        return
+      }
+      const seeds = Object.entries(this.seedMap)
+        .filter(([idx, name]) => name && this.transcriptionResults[idx])
+        .map(([idx, name]) => ({ idx: parseInt(idx), name }))
+      if (seeds.length === 0) {
+        this.statusText = '❌ 需先標記同一人 2-3 個句子'
+        this.statusError = true
+        return
+      }
+      // v1.23.0 hotfix7: 使用自製 modal 取代 window.prompt（Electron 不支援 window.prompt）
+      const name = await this._showPromptDialog('建立 Profile', '輸入 profile 名稱（例：張三）:', `Speaker ${this.profiles.length + 1}`)
+      if (!name || !name.trim()) return
+      if (!this.currentAudioPath && this.currentRecordingId) {
+        try {
+          const meta = await window.electronAPI.recoLoadMeta({ recordingId: this.currentRecordingId })
+          if (meta.success && meta.meta && meta.meta.audioPath) this.currentAudioPath = meta.meta.audioPath
+        } catch (e) { /* ignore */ }
+      }
+      if (!this.currentAudioPath) {
+        this.statusText = this.$t('voiceprint.propagateNoAudio')
+        this.statusError = true
+        return
+      }
+      this.profileBuildBusy = true
+      this.statusText = '💾 建立 profile 中...'
+      this.statusError = false
+      try {
+        const r = await window.electronAPI.voiceprintProfileBuildFromSeeds({
+          audioPath: this.currentAudioPath,
+          segments: JSON.parse(JSON.stringify(this.transcriptionResults)),
+          seeds,
+          name: name.trim(),
+          modelKey: this.currentVoiceprintModel,
+        })
+        if (r.success) {
+          const p = (r.profiles && r.profiles[0]) || null
+          if (p) {
+            this.statusText = `✅ Profile「${name.trim()}」建立成功（${p.samples.length} 個樣本，coherence ${(p.internalCoherence * 100).toFixed(0)}%）`
+          } else {
+            this.statusText = `✅ 建立 ${r.count || 0} 個 profile`
+          }
+          await this.loadProfiles()
+        } else {
+          this.statusText = `❌ ${r.error || '建立失敗'}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 異常: ${e.message}`
+        this.statusError = true
+      } finally {
+        this.profileBuildBusy = false
+      }
+    },
+    async doBuildProfileFromAudioFile() {
+      if (!window.electronAPI) return
+      if (this.profiles.length >= 200) {
+        this.statusText = `❌ profile 已達上限 200`
+        this.statusError = true
+        return
+      }
+      // 開啟檔案選擇對話框
+      const dlg = await window.electronAPI.voiceprintOpenAudioDialog()
+      if (!dlg || !dlg.success) {
+        if (dlg && dlg.canceled) return
+        this.statusText = `❌ ${dlg?.error || '開啟檔案失敗'}`
+        this.statusError = true
+        return
+      }
+      const name = prompt(`輸入 profile 名稱（音檔：${dlg.filename}）:`, dlg.filename.replace(/\.[^.]+$/, ''))
+      if (!name || !name.trim()) return
+      this.profileBuildBusy = true
+      this.statusText = '📂 建立 profile 中...'
+      this.statusError = false
+      try {
+        const r = await window.electronAPI.voiceprintProfileBuildFromAudioFile({
+          audioPath: dlg.path,
+          name: name.trim(),
+          modelKey: this.currentVoiceprintModel,
+        })
+        if (r.success) {
+          this.statusText = `✅ Profile「${name.trim()}」建立成功（${r.profile.samples.length} 個樣本，coherence ${(r.profile.internalCoherence * 100).toFixed(0)}%）`
+          await this.loadProfiles()
+        } else {
+          this.statusText = `❌ ${r.error || '建立失敗'}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 異常: ${e.message}`
+        this.statusError = true
+      } finally {
+        this.profileBuildBusy = false
+      }
+    },
+    async doIdentifySpeakers() {
+      if (!window.electronAPI || !this.hasResult) return
+      if (this.profiles.length === 0) {
+        this.statusText = this.$t('voiceprint.profileNoProfile')
+        this.statusError = true
+        return
+      }
+      // 補 audioPath
+      if (!this.currentAudioPath && this.currentRecordingId) {
+        try {
+          const meta = await window.electronAPI.recoLoadMeta({ recordingId: this.currentRecordingId })
+          if (meta.success && meta.meta && meta.meta.audioPath) this.currentAudioPath = meta.meta.audioPath
+        } catch (e) { /* ignore */ }
+      }
+      if (!this.currentAudioPath) {
+        this.statusText = this.$t('voiceprint.propagateNoAudio')
+        this.statusError = true
+        return
+      }
+      this.identifyBusy = true
+      this.statusText = '🎯 ' + this.$t('voiceprint.profileIdentify') + '...'
+      this.statusError = false
+      try {
+        const segments = this.transcriptionResults.map(s => ({ start: s.start, end: s.end, text: s.text, speaker: s.speaker || '' }))
+        const r = await window.electronAPI.voiceprintIdentifySpeakers({
+          audioPath: this.currentAudioPath,
+          segments,
+          profiles: JSON.parse(JSON.stringify(this.profiles)),
+        })
+        if (r.success) {
+          let matched = 0, unmatched = 0
+          for (let i = 0; i < r.segments.length && i < this.transcriptionResults.length; i++) {
+            this.transcriptionResults[i].speaker = r.segments[i].speaker || ''
+            if (typeof r.segments[i].score === 'number') this.transcriptionResults[i].score = r.segments[i].score
+            if (r.segments[i].speaker) matched++; else unmatched++
+          }
+          this.transcriptionResults = [...this.transcriptionResults]
+          this.statusText = `🎯 ${matched} 句已識別${unmatched > 0 ? `、${unmatched} 句未匹配` : ''}`
+          this._scheduleSaveRecordingMeta()
+        } else {
+          this.statusText = `❌ ${r.error || '辨識失敗'}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 辨識異常: ${e.message}`
+        this.statusError = true
+      } finally {
+        this.identifyBusy = false
+      }
+    },
+    async doBackfillAll() {
+      if (!window.electronAPI) return
+      if (this.profiles.length === 0) {
+        this.statusText = this.$t('voiceprint.profileNoProfile')
+        this.statusError = true
+        return
+      }
+      if (!confirm('將套用所有 profile 到歷史錄音，可能需要數分鐘。確定繼續？')) return
+      this.backfillBusy = true
+      this.backfillProgress = { current: 0, total: 0 }
+      this.statusText = '🔄 ' + this.$t('voiceprint.profileBackfillAll') + '...'
+      this.statusError = false
+      try {
+        // 註冊 progress 監聽
+        if (window.electronAPI.onVoiceprintBackfillProgress) {
+          window.electronAPI.onVoiceprintBackfillProgress((data) => {
+            this.backfillProgress = { current: data.current, total: data.total }
+            this.statusText = `🔄 ${this.$t('voiceprint.profileBackfillProgress', { current: data.current, total: data.total })}`
+          })
+        }
+        const r = await window.electronAPI.voiceprintBackfillAll({
+          profiles: JSON.parse(JSON.stringify(this.profiles)),
+        })
+        if (r.success) {
+          this.statusText = `✅ 回溯完成：${r.processed} 個錄音已標註`
+        } else {
+          this.statusText = `❌ ${r.error || '回溯失敗'}`
+          this.statusError = true
+        }
+      } catch (e) {
+        this.statusText = `❌ 回溯異常: ${e.message}`
+        this.statusError = true
+      } finally {
+        this.backfillBusy = false
+        this.backfillProgress = null
+      }
+    },
+    async renameProfile(profile) {
+      if (!window.electronAPI) return
+      const newName = prompt('輸入新名稱:', profile.name)
+      if (!newName || newName === profile.name) return
+      try {
+        const r = await window.electronAPI.voiceprintProfileRename({ id: profile.id, newName: newName.trim() })
+        if (r.success) {
+          this.statusText = `✅ 已重新命名`
+          await this.loadProfiles()
+        } else {
+          this.statusText = `❌ ${r.error}`
+          this.statusError = true
+        }
+      } catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true }
+    },
+    async deleteProfile(profile) {
+      if (!window.electronAPI) return
+      if (!confirm(`確定刪除 profile「${profile.name}」？`)) return
+      try {
+        const r = await window.electronAPI.voiceprintProfileDelete({ id: profile.id })
+        if (r.success) {
+          this.statusText = `✅ 已刪除 profile`
+          await this.loadProfiles()
+        } else {
+          this.statusText = `❌ ${r.error}`
+          this.statusError = true
+        }
+      } catch (e) { this.statusText = `❌ ${e.message}`; this.statusError = true }
+    },
     async reviewRecording(id) {
       if (!window.electronAPI) return
       this.nowPlaying = false; this.playingSegmentIdx = -1; this.busy = true
@@ -1687,10 +2407,18 @@ export default {
           this.documents = r.meta.documents || []
           this.llmHistory = { optimized: [], translated: [], summary: [] }
           this.llmRedo = { optimized: [], translated: [], summary: [] }
-          this.activeSource = 'original'; this.currentAudioPath = null; this.audioLoaded = false
+          this.activeSource = 'original'
+          // v1.21.2 hotfix: 不再將 currentAudioPath 強制設為 null，保留原 metadata 的 audioPath
+          //   避免後續 speaker 編輯觸發 saveRecordingMeta 時將 audioPath 寫為空
+          this.currentAudioPath = r.meta.audioPath || null
+          this.audioLoaded = !!r.meta.audioPath
           this.audioInfo = { filename }; this.activeTab = 'transcript'
           this.currentRecordingId = id
           this.currentPlayingFilename = filename
+          if (r.meta.audioPath) {
+            // 同時載入可用的 audioUrl，方便逐字稿可點擊播放
+            try { await this.loadAudioUrl(r.meta.audioPath) } catch (e) { console.warn('reviewRecording 載入 audioUrl 失敗:', e) }
+          }
           this.statusText = filename ? this.$t('status.loadedWithName', { count: r.meta.segments.length, filename }) : this.$t('status.loaded', { count: r.meta.segments.length })
         } else { this.statusText = this.$t('status.loadFail', { error: r.error || '無資料' }); this.statusError = true }
       } catch (e) { this.statusText = this.$t('status.loadError', { message: e.message }); this.statusError = true }
@@ -1831,6 +2559,7 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .play-indicator { margin-left: 6px; font-size: 11px; color: #1565C0; }
 .playing-badge { margin-left: 8px; font-size: 11px; color: #e53935; font-weight: bold; animation: blink 1s infinite; }
 .speaker-tag { display: inline-block; background: #FF5722; color: white; padding: 1px 6px; border-radius: 8px; font-size: 10px; font-weight: bold; margin-right: 4px; }
+.speaker-score { display: inline-block; margin-left: 4px; padding: 0 4px; background: rgba(255,255,255,0.3); border-radius: 6px; font-size: 9px; font-weight: normal; color: white; opacity: 0.9; }
 
 /* Label 相關樣式 */
 .label-filter-bar { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
@@ -1924,4 +2653,26 @@ body { font-family: 'Microsoft JhengHei','Segoe UI',sans-serif; background: #faf
 .job-source { color: #555; font-size: 11px; }
 .job-time { color: #888; font-size: 11px; margin-left: auto; font-family: monospace; }
 .job-actions { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+
+/* v1.22.0: 聲紋模型管理 */
+.voiceprint-model-item { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 8px 10px; margin: 4px 0; font-size: 12px; }
+.voiceprint-model-active { border-color: #7B1FA2; background: #f5e6ff; box-shadow: 0 0 0 1px #7B1FA2; }
+.voiceprint-model-header { display: flex; align-items: center; gap: 8px; }
+.voiceprint-model-name { font-weight: bold; color: #333; flex: 1; display: flex; align-items: center; gap: 6px; }
+.voiceprint-active-badge { background: #7B1FA2; color: white; font-size: 9px; padding: 1px 6px; border-radius: 8px; font-weight: bold; }
+.voiceprint-model-dim { color: #666; font-size: 10px; font-family: monospace; }
+.voiceprint-model-status { font-size: 14px; }
+.voiceprint-model-desc { color: #666; font-size: 11px; margin: 4px 0; line-height: 1.4; }
+.voiceprint-model-actions { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+.voiceprint-model-default { color: #7B1FA2; font-size: 10px; font-weight: bold; margin-left: 4px; }
+.voiceprint-download-progress { font-size: 11px; color: #666; }
+
+/* v1.23.0: Speaker Profile Database */
+.profile-item { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 8px 10px; margin: 4px 0; font-size: 12px; }
+.profile-item:hover { border-color: #00897B; background: #e0f2f1; }
+.profile-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.profile-name { font-weight: bold; color: #333; font-size: 13px; }
+.profile-model { background: #00897B; color: white; padding: 1px 6px; border-radius: 8px; font-size: 9px; font-weight: bold; }
+.profile-stats { color: #666; font-size: 11px; }
+.profile-actions { display: flex; gap: 4px; margin-top: 6px; }
 </style>

@@ -40,14 +40,14 @@ npm run electron:dev
 
 ### Download Release
 
-Download the latest `Recorder-1.20.1-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
+Download the latest `Recorder-1.21.4-portable.exe` from [GitHub Releases](https://github.com/ghumphery/recorder/releases).
 
 ### Build from Source
 
 ```bash
 cd frontend
 npm run electron:build
-# Output: frontend/dist-electron-build2/Recorder-1.20.1-portable.exe
+# Output: frontend/dist-electron-build5/Recorder-1.21.4-portable.exe
 ```
 
 ### Run Packaged Version
@@ -96,6 +96,69 @@ frontend\dist-electron\win-unpacked\Recorder.exe
 - **small** (488 MB) — Most accurate, best for high-quality meetings
 
 ## 📦 Version History
+
+### v1.22.1 (2026-07-02) — ResNet-SE now auto-downloadable (WeSpeaker official ONNX)
+- **Fixes v1.22.0 limitation**: Previously `resnet_se` had an empty `url` (public mirrors returned 401/404) requiring manual import. This release adds the **WeSpeaker official HuggingFace mirror**.
+- **Adopted model**: `Wespeaker/wespeaker-cnceleb-resnet34-LM` (trained on Chinese CN-Celeb)
+  - Size 26.5 MB; 256-dim embedding; 80-dim fbank @ 16kHz
+  - License: CC-BY-4.0
+  - **input/output tensor names identical to campplus** (`feats` / `embs`) — fully compatible with existing voiceprint.js fbank pipeline
+  - Download URL: `https://huggingface.co/Wespeaker/wespeaker-cnceleb-resnet34-LM/resolve/main/cnceleb_resnet34_LM.onnx`
+- **Advanced option** (still manual import): `Wespeaker/wespeaker-voxceleb-resnet293-LM` larger model (114 MB, 256-dim)
+- **UI changes**: None — the existing "Voiceprint Model Management" section's download button now works directly for resnet_se
+- **Usage**: Settings Panel → Voiceprint Model Management → find resnet_se → click "Download" to fetch the 26.5 MB ONNX
+
+### v1.22.0 (2026-07-02) — Multi-Model Speaker Embedding Architecture (camplus / ECAPA-TDNN / ResNet-SE)
+- **New architecture**: Refactored `voiceprint.js` to a `MODEL_REGISTRY` factory pattern, supporting multiple ONNX speaker embedding models managed side-by-side.
+- **Supported models** (new `voiceprint.*` i18n keys):
+  - 🏆 **camplus** (default): 192-dim x-vector, Chinese-friendly; auto-download supported
+  - **ECAPA-TDNN**: 192-dim; manual ONNX import only
+  - **ResNet-SE**: 512-dim; manual ONNX import only
+- **New UI**: Settings panel "👥 Voiceprint Model Management" section, listing models, status, download/import/set-default buttons.
+- **New IPC**: `voiceprint:listModels`, `voiceprint:importModel`, `voiceprint:setActiveModel`, `voiceprint:openImportDialog`, `voiceprint:getCurrentModel`.
+- **Auto model switching**: `loadModel()` releases the old session before loading a new model; backend routes `diarize` / `propagate` via `modelKey`.
+- **Usage limitation**: Since public ONNX mirrors returned 401/404, campplus is the only auto-downloadable model; other models require users to manually import an ONNX file matching the schema.
+
+### v1.21.4 (2026-07-01) — Strengthened Multi-Seed Centroid Computation (trimmed mean + outlier rejection)
+
+**Responding to the user question: "For short sentences that cannot be distinguished between speakers, can repeatedly duplicating the same sentence improve speaker recognition?"**
+
+- **Change**: `propagateSpeakers()` now uses the **trimmed mean centroid** algorithm (when ≥3 seeds):
+  1. Compute each seed's average cosine similarity with the other seeds as its "internal coherence"
+  2. Sort by coherence and drop the top/bottom ⌊n/4⌋ outliers (max 1 each)
+  3. Use the mean of the remaining seeds as the centroid
+  4. Retain `centroidInfo.{seedCount, usedCount, droppedCount, internalCoherence}` for the UI to display
+- **Problems solved**:
+  - ✅ **Repeated same-sentence seeds** pulling the centroid off — trimmed mean naturally down-weights extremes
+  - ✅ **Unrelated sentences** (background noise / cough / keystrokes) pulling the centroid off — outlier rejection excludes them directly
+- **Usage recommendations**:
+  - 3–5 sentences with **clearly different pronunciation content** is the sweet spot
+  - 10+ seeds show diminishing returns
+  - ≤2 seeds automatically fall back to simple mean (avoid over-trimming)
+  - Watch `centroidInfo.internalCoherence`: > 0.7 means seeds are coherent; < 0.5 means re-select seeds
+
+### v1.21.3 (2026-06-30) — Transcript speaker tags now show voiceprint similarity score
+
+- `diarizeAudio()` and `propagateSpeakers()` add `score` (cosine similarity 0–1) to results
+- App.vue speaker tag shows `[speaker] [score]` like `John 85` meaning 85% similarity
+
+### v1.21.2 (2026-06-30) — Fixed transcript becoming "no audio" after editing a speaker tag
+
+- `saveRecordingMeta()` now preserves `audioPath` by reading it from the previous metadata when `currentAudioPath` is empty
+- `reviewRecording()` no longer forces `currentAudioPath` to `null`; it reads `r.meta.audioPath` and auto-calls `loadAudioUrl`
+
+### v1.21.1 (2026-06-30) — Fixed each speaker edit/clear creating a new metadata file
+
+- `saveRecordingMeta()` now reuses the existing `currentRecordingId` instead of generating a new one
+- New `_scheduleSaveRecordingMeta()` 500ms debounce helper
+- `setSegmentSpeaker()` / `doPropagateSpeakers()` / `clearAllSpeakers()` now use debounced save
+
+### v1.21.0 (2026-06-30) — Semi-Supervised Speaker Propagation (manual label → infer all sentences)
+
+- New "🪄 Infer all sentences from labels" button (purple #7B1FA2) for semi-supervised speaker labeling
+- Each segment in the transcript now has a "+👤" button → Speaker Editor Modal to enter the speaker name
+- Inference panel lists all seeds, with a threshold slider 0.30–0.80, single-seed delete, and clear-all-marks actions
+- Solves the problem that short sentences (< 1.5s) cannot be distinguished by unsupervised clustering
 
 ### v1.20.12 (2026-06-30) — Transcribe job log now shows duration check and chunk decision
 
@@ -237,3 +300,26 @@ User Action → Electron Vue.js (Frontend)
               ├── whisper-cli.exe → Speech-to-text
               ├── https.get → Model download
               └── fs.writeFile → Export transcript
+
+## v1.23.0 — Supervised Speaker Recognition + Profile Database
+
+### New Features
+- **👤 Speaker Profile Database** (persisted at ~/recoder/speaker_profiles.json): Create independent profiles for each frequently used speaker, reusable across recordings.
+- **🎯 Supervised Speaker Identification**: Cosine similarity match each segment against all established profiles.
+- **🔄 Batch Backfill**: After creating a new profile, apply it to all historical recordings with one click.
+- **📂 Build Profile from Audio File**: Quickly build voiceprint library using short audio with repeated phrases.
+- **Cross-model Support**: campplus (192-d), ecapa_tdnn (192-d), resnet_se (256-d) each store independent profiles to avoid dimension mixing.
+
+### Workflow
+1. Click **👤 Create Profile** to open Speaker Database panel.
+2. Mark 2-3 segments of the same speaker on transcripts → click **💾 Build from Labels** to build from current recording, or **📂 Build from Audio File** to build from a short audio file.
+3. Switch to target recording → click **🎯 Identify Speakers (Supervised)** for one-click identification.
+4. After creating a new profile, click **🔄 Apply to All History** to batch backfill all historical recordings.
+
+### Differences from v1.21.0 Semi-supervised
+| Item | v1.21.0 Semi-supervised | v1.23.0 Supervised |
+|------|--------------------------|----------------------|
+| Training data | Seed segments within same recording | Cross-recording accumulated profile |
+| Short-utterance | Weaker | Stronger (cumulative) |
+| Cross-recording search | Not supported | Supported (searchBySpeaker) |
+| Persistence | No | Yes (speaker_profiles.json) |

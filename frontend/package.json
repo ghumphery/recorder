@@ -1,7 +1,7 @@
 {
   "name": "recoder-frontend",
   "private": true,
-  "version": "1.20.14",
+  "version": "1.23.0",
   "type": "commonjs",
   "main": "electron/main.js",
   "scripts": {
@@ -28,7 +28,7 @@
     "appId": "com.recorder.app",
     "productName": "Recorder",
     "directories": {
-      "output": "dist-electron-build5"
+      "output": "dist-electron-build6"
     },
     "files": [
       "dist/**/*",
@@ -71,3 +71,7 @@
     ]
   }
 }
+
+
+
+

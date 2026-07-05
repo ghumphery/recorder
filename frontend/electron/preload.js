@@ -101,9 +101,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
    voiceprintJobCancel: (p) => ipcRenderer.invoke('voiceprint:jobCancel', p),
    voiceprintJobDelete: (p) => ipcRenderer.invoke('voiceprint:jobDelete', p),
    voiceprintReset: () => ipcRenderer.invoke('voiceprint:reset'),
+   // v1.21.0: 半監督式 speaker propagation 同步接口
+   voiceprintPropagate: (p) => ipcRenderer.invoke('voiceprint:propagate', p),
    onVoiceprintJobUpdate: (callback) => {
      const handler = (event, data) => callback(data)
      ipcRenderer.on('voiceprint:jobUpdate', handler)
      return () => ipcRenderer.removeListener('voiceprint:jobUpdate', handler)
    },
+   // v1.22.0: 多模型 Speaker Embedding 架構
+   voiceprintListModels: () => ipcRenderer.invoke('voiceprint:listModels'),
+   voiceprintImportModel: (p) => ipcRenderer.invoke('voiceprint:importModel', p),
+   voiceprintOpenImportDialog: () => ipcRenderer.invoke('voiceprint:openImportDialog'),
+  voiceprintSetActiveModel: (p) => ipcRenderer.invoke('voiceprint:setActiveModel', p),
+  voiceprintGetCurrentModel: () => ipcRenderer.invoke('voiceprint:getCurrentModel'),
+  // v1.23.0: Speaker Profile Database (持久化 CRUD + 監督式 speaker recognition)
+  voiceprintProfileList: () => ipcRenderer.invoke('voiceprint:profileList'),
+  voiceprintProfileSave: (p) => ipcRenderer.invoke('voiceprint:profileSave', p),
+  voiceprintProfileRename: (p) => ipcRenderer.invoke('voiceprint:profileRename', p),
+  voiceprintProfileDelete: (p) => ipcRenderer.invoke('voiceprint:profileDelete', p),
+  voiceprintProfileStats: () => ipcRenderer.invoke('voiceprint:profileStats'),
+  voiceprintProfileBuildFromSeeds: (p) => ipcRenderer.invoke('voiceprint:profileBuildFromSeeds', p),
+  voiceprintProfileBuildFromAudioFile: (p) => ipcRenderer.invoke('voiceprint:profileBuildFromAudioFile', p),
+  voiceprintOpenAudioDialog: () => ipcRenderer.invoke('voiceprint:openAudioDialog'),
+  voiceprintIdentifySpeakers: (p) => ipcRenderer.invoke('voiceprint:identifySpeakers', p),
+  voiceprintBackfillAll: (p) => ipcRenderer.invoke('voiceprint:backfillAll', p),
+  onVoiceprintBackfillProgress: (callback) => {
+    const handler = (event, data) => callback(data)
+    ipcRenderer.on('voiceprint:backfill-progress', handler)
+    return () => ipcRenderer.removeListener('voiceprint:backfill-progress', handler)
+  },
+  voiceprintListAllSpeakerNames: () => ipcRenderer.invoke('voiceprint:listAllSpeakerNames'),
+  recoSearchBySpeaker: (p) => ipcRenderer.invoke('reco:searchBySpeaker', p),
  })

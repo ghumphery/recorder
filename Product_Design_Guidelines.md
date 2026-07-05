@@ -1,7 +1,11 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.20.11
-> **最後更新日期**: 2026-06-30
+> **版本**: 1.21.4
+> **最後更新日期**: 2026-07-01
+- **v1.21.4 (2026-07-01)**：minor 演算法強化 — 強化多 seed centroid 計算 (trimmed mean + outlier rejection)。`propagateSpeakers()` 在 ≥3 個 seeds 時改為：先計算每個 seed 與其他 seed 的平均 cosine similarity，排序後去掉最高/最低各 ⌊n/4⌋ 個 outliers（最多各 1 個），再用剩餘 seeds 的 mean 作為 centroid；保留 `centroidInfo` 供 UI 顯示 `internalCoherence` (種子內部一致性 0~1)。解決「同一句重覆標記的 seed 拉偏 centroid」與「無關句子（背景音、咳嗽）拉偏 centroid」兩個問題；對大多數實際場景，3–5 個乾淨 seeds 已足夠，10+ 個 seeds 的邊際效益遞減。
+- **v1.21.3 (2026-07-01)**：minor 新功能 — 逐字稿講者標籤顯示每一句的聲紋值。`diarizeAudio()` 與 `propagateSpeakers()` 在 result 中加入 `score` (cosine similarity 0~1)，App.vue speaker tag 旁顯示「[speaker] [score]」如「張三 85」表示 85% 相似度。
+- **v1.21.2 (2026-06-30)**：hotfix — 修正講者標籤編輯後逐字稿變成無音檔狀態。`saveRecordingMeta()` 當 `currentAudioPath` 為空時主動從舊 metadata 載入保留 `audioPath`；`reviewRecording()` 不再強制將 `currentAudioPath` 設為 `null`，改為讀取 `r.meta.audioPath`，並自動呼叫 `loadAudioUrl` 載入音檔 URL。
+- **v1.21.1 (2026-06-30)**：hotfix — 修正每次消取/編輯 speaker 都建立新 metadata 檔。`saveRecordingMeta()` 沿用既有 `currentRecordingId` 不再生新 ID；新增 `_scheduleSaveRecordingMeta()` 500ms debounce helper；`setSegmentSpeaker()` / `doPropagateSpeakers()` / `clearAllSpeakers()` 三處改用 debounced save。
 - **v1.20.11 (2026-06-30)**：聲紋模型下載 hotfix。`MIN_MODEL_SIZE` 從 `40 MB` 改為 `25 MB`，解決使用者回報「下載不完整(只收到 28283928 bytes)」永不停止的問題。**根因**：v1.20.7 把門檻設太大，但實際 `campplus_cn_en_common_200k.onnx` 真實大小 = **28,283,928 bytes (约 26.97 MB)**——頭 16 bytes `08 08 12 07 70 79 74 6F 72 63 68 1A 06 32 2E 31` 為合法 protobuf ONNX magic(pytorch 2.10.0 exporter)。`isModelCached()` 與 `diarizeAudio()` 依賴同一常數，避免未來魔術數字漂移。
 - **v1.20.7 (2026-06-30)**：聲紋標註三項修正。`downloadModel()` 開頭檢查 `isModelCached()` 避免重覆下載；`getAudioDuration()` 解析 ffmpeg stderr 取得音檔時長；`splitLongAudio()` 用 ffmpeg `-f segment -segment_time 3000` 切長音檔成 ≤50 分鐘 WAV chunks；`extractSegmentPcm()` 過短 segment 自動 ±0.5s padding 並放寬最低長度為 0.3s；`extractEmbedding()` numFrames 門檻 <5 → <3；`clusterEmbeddings()` 改為兩段式：鄰近滑動視窗 median cosine ≥ 0.55 union-find 強制合併 + 全域 centroid cosine ≥ 0.5 貪婪合併；統一 `MIN_MODEL_SIZE = 25MB` 移除重覆常數；新增 `getFfmpegPath()` 共用輔助函式。
 - **v1.8.4 (2026-06-30)**：解 v1.20.2 增量功能。doDiarize() 改為提交非同步 Job、VoiceprintJobManager 類別與 6 個 IPC、Voiceprint tab UI、speaker badge、voiceprint i18n keys、refreshJobList 同時載入 voiceprintJobList、stopJob/deleteJob/openJobLog 新增 voiceprint 分支、isModelCached 加檔案大小檢查 + resetModel。
@@ -239,6 +243,134 @@ onXxxJobUpdate: (cb) => {
   - `jobs.tab.<類型>` / `jobs.panelTitle`
 - **不允許**使用 hard-code emoji + 中文字串在 App.vue；所有顯示文字都須走 i18n key。
 
+### 15. v1.21.0 新增 — 半監督式 speaker propagation
+
+> **定位**：本節是 v1.21.0 帶來的**使用者介入式**說話者標註功能。涵蓋原則、演算法、UI 互動、IPC 契約。
+
+#### 15.1 背景與需求
+- 無監督聚類（v1.20.2 的 `diarizeAudio`）在短語句（< 1.5s）依賴中位數 cosine 推斷，但實務上幾乎一定會將差異極大的 speaker 推入同一 group（v1.20.6 root cause）。
+- 「同句重覆」**不能**提升辨識率 — campplus x-vector 學的是「發聲人特徵」，非語意內容；多個同樣句子的 embedding 全部都極相似，並無新資訊。
+- **可提升品質的正確作法**：讓使用者**明示標註幾句是誰** → 系統用這些 seeds 的平均 embedding 作為 centroid，再比對其它未標段。
+
+#### 15.2 演算法
+- 輸入：`audioPath` 、 `segments` (Array<{start, end, text, speaker}> )、 `seeds` (Array<{idx, name}> )、 `threshold` (default 0.5)
+- 階段 1：抽取所有 segments 的 192-dim x-vector embedding (reuse `_extractAllEmbeddings`)
+- 階段 2：對每個 seed 取其 segment 的 embedding → 同 speaker 全部取 L2-normalize 平均成 centroid
+- 階段 3：對每個未標 segment：
+  - 計算與每個 centroid 的 cosine similarity
+  - 取最高者，若 ≥ `threshold` → 標為該 name；否則留空
+- 階段 4：保留所有使用者原 seeds（不覆寫）；未被標到的 segment 以前後 speaker 填補
+
+#### 15.3 演算法關鍵常數（對齊 voiceprint.js）
+- `PROPAGATE_MIN_THRESHOLD = 0.5`：低於此 cosine 視為不確定
+- seed embedding 必須在 `_extractAllEmbeddings` 內至少有一個有效樣本（numFrames ≥ 3）
+- 整個過程仍可吃長音檔切片 (60min/chunk) 與長度過短 padding (±0.5s) 機制
+
+#### 15.4 IPC 契約
+- 與 `voiceprint:diarize` 拆分，這是**同步**接口（預期 5-15s 完成）：
+  ```js
+  ipcMain.handle('voiceprint:propagate', async (event, { audioPath, segments, seeds, threshold }) => {
+    const result = await voiceprint.propagateSpeakers(audioPath, segments, seeds, { threshold })
+    return { success: true, segments: result }
+  })
+  ```
+- preload 暴露 `voiceprintPropagate: (params) => ipcRenderer.invoke('voiceprint:propagate', params)`
+- **不另建 JobManager**：該操作本來就秒回，無必要過 queue；若量大，後續可加。
+
+#### 15.5 共用 helper 重構
+- 提取 `_extractAllEmbeddings(audioPath, segments, progressCallback)` — 計算嵌入 + 跨 chunk 拼接
+- 提取 `_ensureModelLoaded()` — 模型磁碟存在 + 大小檢查 + InferenceSession 建立；供 `diarizeAudio` 與 `propagateSpeakers` 共用
+- diarizeAudio 與 propagateSpeakers 改為 20-30 行高階函式，所有 PCM/fbank/embed 細節下沉至 helper
+
+#### 15.6 前端 UI 互動
+- 逐字稿列表中**每個 segment** 新增一顆「+👤」小按鈕（未標）或可點擊的 speaker-tag（已標）
+- 點擊後彈出 **Speaker Editor Modal**（`showSpeakerEditor=true`）：輸入「講者名稱」→ 確定後寫入 `transcriptionResults[i].speaker` 與 `seedMap[i]`
+- 控制列新增「🪄 依標註推算所有句子」按鈕（紫色 #7B1FA2）
+- 點擊後彈出 **半監督式推算 Panel**：
+  - 列出目前所有 seeds（idx、name、時間、原文 30字）
+  - 可调門檻 slider 0.30 ~ 0.80（預設 0.5）
+  - 「刪除單筆 seed」 、「清除所有標記」 、「依標註推算」 動作按鈕
+- 推算完成後在逐字稿列表反映所有 segments.speaker；同樣手動點的 seed 不被覆寫
+
+#### 15.7 與既有功能的關係
+- 「🪄 半監督式推算」**不是取代**「👥 標註說話者」（v1.20.2） — 兩者並存：
+  - `diarizeAudio` （無監督）以**聚類**為主
+  - `propagateSpeakers` （半監督）以**種子**為主
+- 若使用者已透過 `diarizeAudio` 得到 Speaker_1/2 標註，也可手動將某句改成「張三」後用 propagate 將其餘張三聚到同一 group（但實際上現有實作不支援既有 speaker name 反推 — 需後續增強）。
+- v1.21.0 為初始版本，僅支援「手動標 seeds → 推算」一個流程，後續可加：
+  - 跨錄音 speaker profile 持久化
+  - 「以現有 diarize 結果為半監督 seeds」一鍵轉換
+  - 自動偵測短句子作為「建議 seeds」提示使用者快速確認
+
+#### 15.8 v1.21.4 強化 — Trimmed Mean Centroid 與 Outlier Rejection
+
+**回應使用者提問**：「針對短語句無法辨識區分說話人員，是否可以採用重覆複製同一句話來提高人員辨識？」
+
+**結論**：**可以提升，但有條件**。`campplus` x-vector 學的是「發聲人特徵」非語意內容：
+- **同句重覆** 拉偏 centroid（多個同樣句子的 embedding 高度相似，並無新資訊）
+- **無關句子**（背景音、咳嗽、打字聲）拉偏 centroid（內含非語音成分）
+- 3–5 個 **不同發音內容** 的句子是甜蜜點；10+ 個 seeds 邊際效益遞減
+
+**演算法升級**（`propagateSpeakers()`）：
+
+```js
+// 步驟 1：計算每個 seed 的「內部一致性」— 與其他 seed 的平均 cosine similarity
+const avgSimPerEmb = embs.map((e, i) => {
+  let s = 0, c = 0
+  for (let j = 0; j < embs.length; j++) {
+    if (i === j) continue
+    s += cosineSimilarity(e, embs[j])
+    c++
+  }
+  return c > 0 ? s / c : 1
+})
+
+// 步驟 2：內部一致性 1.0 = 所有 seed 完全一致 = 全是同一人同句重覆
+//         內部一致性 0.3 = seeds 互不一致 = 有人混了其他聲音
+const internalCoherence = ssum / embs.length
+
+// 步驟 3：≥3 seeds 時去掉最高/最低各 ⌊n/4⌋ 個 outliers（最多各 1 個）
+const dropN = Math.min(1, Math.floor(seedCount / 4))
+const sorted = avgSimPerEmb.map((s, i) => ({ s, i })).sort((a, b) => a.s - b.s)
+const dropSet = new Set([
+  ...sorted.slice(0, dropN).map(x => x.i),    // 最低（背景音/咳嗽）
+  ...sorted.slice(-dropN).map(x => x.i)       // 最高（同句重覆）
+])
+const used = embs.filter((_, i) => !dropSet.has(i))
+
+// 步驟 4：用剩餘 seeds 的 mean 作為 centroid
+const avg = new Float32Array(dim)
+for (const e of used) for (let i = 0; i < dim; i++) avg[i] += e[i]
+// L2-normalize
+```
+
+**特殊情況降級**：
+- 1–2 個 seeds → simple mean（不裁切，避免過度裁切）
+- 3 個 seeds → 最多去掉 1 個 outlier
+- ≥4 個 seeds → 上下各 1 個 outlier
+- ≤2 個 outliers 從未被裁切（最多扣 2 個）
+
+**centroidInfo 資料結構**（供 UI 顯示）：
+```js
+{
+  seedCount: 5,            // 原始 seeds 數量
+  usedCount: 3,            // 實際用於 centroid 的 seeds 數量
+  droppedCount: 2,         // 被裁掉的 outliers 數量
+  internalCoherence: 0.78  // 0~1，越高表示 seeds 一致性越高
+}
+```
+
+**UI 建議**：
+- 顯示 `internalCoherence` 在推算 panel 上
+- `> 0.7` = seeds 品質好（綠色）
+- `0.5~0.7` = 可接受（黃色）
+- `< 0.5` = 建議重選 seeds（紅色）
+
+**v1.21.4 對同句重覆 / 無關句子的處理**：
+- 同句重覆：所有 seed 的 pairwise cosine 接近 1.0（高度相似）→ 排序後落於「最高」分組 → 被裁掉 1 個 → 剩餘 seeds 表現等同「多句不同發音」
+- 無關句子（背景音）：embedding 偏離其他同 speaker 的 seed → pairwise cosine 低 → 排序後落於「最低」分組 → 被裁掉 1 個
+- 兩種 outlier 同時存在時，trimmed mean 可一次解決
+
 #### 14.9 三個實作參考實例（他見什麼是合格、什麼是例外）
 | JobManager | 引入 | 主要用途 | 持久化 | IPC channel 前綴 |
 |---|---|---|---|---|
@@ -247,6 +379,113 @@ onXxxJobUpdate: (cb) => {
 | VoiceprintJobManager | v1.20.2 | 說話者標註 | 無（記憶體） | `voiceprint:` |
 
 未來新增類型（例如 JJB 混合/拼接/揮入 vMix）必額參照上表 + 本節全部子節。
+
+### 16. v1.22.0 新增 — 多模型 Speaker Embedding 架構（MODEL_REGISTRY factory pattern）
+**為解決問題**：原 v1.20.2 架構只能有一個聲紋模型（camplus），所有相關邏輯（download / load / diarize / propagate）以 hard-code 互連，使用者要換模型（如 ECAPA-TDNN、ResNet-SE）必須修改原始碼；同時 v1.21.0 限定使用者只能標記已有語者、不能讓使用者選用不同架構的 embedding 模型。
+
+#### 16.1 MODEL_REGISTRY 設計
+- **單一真相來源**：`voiceprint.js` 頂端定義 `MODEL_REGISTRY` 物件，記錄所有支援模型的 metadata。
+- **語意架構**：每個 entry 含 `key`（唯一識別）/ `url`（下載來源，可空）/ `filename` / `minSize` / `dim`（輸出向量維度）/ `fbankConfig`（FBank 參數）/ `inputName` / `outputName`（ONNX 張量名，可空，載入時動態探查）/ `defaultModel`（是否預設啟用）/ `descriptionKey`（i18n key）。
+- **現有 models**：
+  - 🏆 `camplus`：192-dim x-vector，預設啟用，HF URL 有效可自動下載
+  - `ecapa_tdnn`：192-dim，架構類似 TDNN + attentive stats pooling，url 為空（需手動 ONNX 匯入）
+  - `resnet_se`：512-dim，ResNet + SE block，url 為空（需手動 ONNX 匯入）
+- **設計原因**：以物件映射方式記錄所有型號相關參數，使下游 `diarize / propagate / loadModel` 都以 `modelKey` 路由，無需判斷 if-else 分支。
+- **未來擴充**：新增 embedding 架構只需在 REGISTRY 加一筆 entry + 下載 URL + 匯入驗證。不需動到 main.js、App.vue。
+
+#### 16.2 動態 ONNX session 管理
+- `loadModel(modelKey)` 呼叫 ort.InferenceSession.create() 之前先釋放舊 session：`if (currentSession) { await currentSession.release(); currentSession = null; }`
+- `inputName` / `outputName` 動態探查：ONNX 載入後讀 `session.inputNames[0]` / `session.outputNames[0]` 作為後續 inference 使用的 input/output key。避免被 dead code 警告標記，並保持「不同模型的 input/output 名稱不同」的可撗性。
+- **`_ensureModelLoaded(modelKey)` 參數化**：在 diarize / propagate 進場時都以 `modelKey` 呼叫，後端明以 modelKey 為「現在需要哪個 embedding 模型」的唯一重現。
+
+#### 16.3 檔案名稱隔離（避免不同模型互相覆蓋）
+- **現實問題**：camplus 原本下載到 `~/recoder/voiceprint/camplus_cn_en_common_200k.onnx`。若 ecapa_tdnn 同名下載就會覆蓋。
+- **設計**：以 `modelKey` 為路徑前綴，例如 `voiceprint/ecapa_tdnn/model.onnx`、`voiceprint/resnet_se/model.onnx`，camplus 仍保持原本路徑提供向下相容。
+- **isModelCached(modelKey)** 動態检查各 modelKey 對應的快取檔案是否存在 + 大小是否超過 minSize。
+
+#### 16.4 UI 設計原則
+- **設定面板「👥 聲紋模型管理」區塊**：類比 v1.13.0 後 Whisper 模型管理的 UI 模式，列出每個模型的：
+  - 狀態（✅ 已下載 / ⬇️ 可下載 / 📦 需手動匯入）
+  - dim 標註（192-dim / 512-dim）
+  - descriptionKey i18n 描述文字
+  - 動作按鈕：下載（僅有 url 的型號才顯示）、匯入（`voiceprintOpenImportDialog` 檔案選擇）、設為預設（僅已下載且非現在預設才顯示）
+  - 預設徽章：當 `m.key === currentVoiceprintModel` 時顯示「🟣 使用中」
+- **紫色 `#7B1FA2`** 主題色與 v1.21.0 推算 panel 呼應，視覺上「聲紋相關」以紫色統一。
+
+#### 16.5 IPC 契約
+| Channel | 方向 | Payload | 回傳 | 用途 |
+|---|---|---|---|---|
+| `voiceprint:listModels` | renderer→main | 無 | `{ models, currentModel }` | 列出 REGISTRY + 快取狀態 + 現在預設 |
+| `voiceprint:download` | renderer→main | `{ modelKey }` | `{ success, path? , error? }` | 下載指定模型 |
+| `voiceprint:importModel` | renderer→main | `{ sourcePath, modelKey }` | `{ success, path? }` | 從本地 .onnx 匯入到指定 modelKey 路徑 |
+| `voiceprint:setActiveModel` | renderer→main | `{ modelKey }` | `{ success, modelKey }` | 切換現在預設 embedding 模型 |
+| `voiceprint:openImportDialog` | renderer→main | 無 | `{ success, path? , canceled? }` | 開啟檔案選擇 dialog 過濾 .onnx |
+| `voiceprint:getCurrentModel` | renderer→main | 無 | `{ modelKey }` | 查詢現在預設 |
+
+#### 16.6 設計決策與本上錯
+- **為什麼 ecapa_tdnn/resnet_se url 為空？** HF、ModelScope、speechbrain 3 個平台的官方 ONNX 鏡像都回 401（需登入）或 404（已下架）。camplus 是 welcomyou/3dspeaker project 提供的公開 ONNX，是唯一在公開平台可下載的型號。
+- **手動匯入是什麼？** 使用者若有自己的 .onnx（符合「輸入是 fbank features / 輸出是 1D embedding」schema），可點「📥 匯入」並選本機檔，後端會拷貝到 `voiceprint/<modelKey>/model.onnx` 並儲存快取。
+- **為什麼 modelKey 儲存為 `state.voiceprint.currentModel`，不重新 hard-code？** 提供向下相容：舊客戶端就算不跳過這個 IPC 也會以 `camplus` 為 default 運行（`_ensureModelLoaded` 勍 codepath default）。
+
+#### 16.7 未來 Roadmap
+- **自動選擇模型**：`recommendVoiceprintModel()` 以音檔平均長度 / 句數推論合適模型。App.vue 已有 prototype、僅返 model key 字串，後期可作為「快速賦予預設」按鈕。
+- **模型下載重試**：當某個 modelKey 的 ONNX 下載失敗（例如 URL 移除 / network 問題），可提示使用者改用手動匯入。
+- **多架構熱切換**：同一個音檔可依使用者選擇不同 embedding 模型推算多次，輸出 A/B 比較結果。
+
+#### 16.8 v1.22.1 — ResNet-SE 補上可下載 URL (WeSpeaker 官方 ONNX)
+**v1.22.0 留下的唯一限制**：resnet_se 為「實驗性，需手動匯入」。2026-07-02 進一步研究 HuggingFace 後發現 **WeSpeaker 官方開源 ONNX** 公開且可下載，本次 release 補上。
+
+**採用的模型**：
+- **`Wespeaker/wespeaker-cnceleb-resnet34-LM`** — WeSpeaker 官方 PyAnnote 改版，中文 CN-Celeb 訓練，26.5 MB，256-dim
+  - License：CC-BY-4.0
+  - 下載 URL：`https://huggingface.co/Wespeaker/wespeaker-cnceleb-resnet34-LM/resolve/main/cnceleb_resnet34_LM.onnx`
+- ONNX 張量介面：`feats` (1, T, 80) → `embs` (1, 256) — **與 campplus 完全相同**
+  - 可直接套用現有 `computeFbank()` pipeline (80-dim @ 16kHz)，不需改 fbank 邏輯
+
+**研究過程**：
+- HF API `https://huggingface.co/api/models?search=wespeaker-resnet` 取得 30+ 個候選
+- 用 `curl -L` 實際下載驗證：Wespeaker 系列 4 個模型都回 HTTP 200
+- 過濾項目：
+  - ⏬ 有 ONNX (排除 PyTorch 原生模型)
+  - ✅ 公開可下載 (排除 modelId 為 `pyannote/...` 的衍生，因需要同意授權)
+  - ✅ 與 campplus fbank 介面相容 (Wespeaker 預設 80-bin @ 16kHz)
+  - ✅ 包含中文訓練資料 (CN-Celeb)
+
+**最終選用 Wespeaker-cnceleb** 原因：
+- 與 campplus 同樣以中文為重 (CN-Celeb dataset)
+- 256-dim 比 campplus 192-dim 多一點語者特徵豐富度
+- 26.5 MB 檔案大小適中 (不用像 ResNet293 114 MB)
+- 2.5–3 倍語者數據 (中文) → 中文短句辨識可能比 campplus 更精確
+
+**MODEL_REGISTRY 更新內容**：
+```js
+resnet_se: {
+  key: 'resnet_se',
+  label: 'resnet_se',
+  url: 'https://huggingface.co/Wespeaker/wespeaker-cnceleb-resnet34-LM/resolve/main/cnceleb_resnet34_LM.onnx',
+  filename: 'cnceleb_resnet34_LM.onnx',
+  minSize: 25 * 1024 * 1024,
+  dim: 256,                    // 從 512 改為 256
+  fbankConfig: { numBins: 80, ... },
+  inputName: 'feats',          // 從 null 改為 'feats'
+  outputName: 'embs',          // 從 null 改為 'embs'
+  ...
+}
+```
+
+**進階選項**（仍手動匯入）：
+- `Wespeaker/wespeaker-voxceleb-resnet293-LM` (114 MB, 256-dim, 英文 VoxCeleb) — 大模型
+- `Wespeaker/wespeaker-voxceleb-resnet34-LM` (26.5 MB, 256-dim, 英文 VoxCeleb) — 同 cnceleb 大小，但純英文
+
+**驗證步驟**：
+1. `curl -L -o cnceleb_resnet34.onnx <URL>` → HTTP 200, 26,530,309 bytes
+2. onnxruntime-node `InferenceSession.create()` 成功
+3. 跑 fake fbank forward (1, 200, 80) → output (1, 256) 成功
+4. 確認 input/output 張量名 = ['feats', 'embs'] (與 campplus 完全相容)
+
+**效果**：
+- 原本「需手動匯入」的 ResNet-SE 現在與 camplus 並列，使用者在設定面板點「下載」就能自動取得
+- ECAPA-TDNN 仍維持手動匯入（其 fbank 介面是 mean+std normalization，與 campplus 用的 CMVN 不同；套用會產生錯誤結果。需獨立 pipeline。）
 
 ### 13. v1.20.0 新增 — 首頁非同步 Job 管理面板
 - **首頁控制列新增「📋 Jobs」按鈕**（背景 `#6A1B9A`），需 on-flight jobs 時右上角顯示紅色徽章計數。
@@ -487,3 +726,54 @@ onXxxJobUpdate: (cb) => {
 - **介面語言**：支援繁體中文 (zh-TW)、English (en)、日本語 (ja)，可在設定面板切換或首次啟動時選擇
 - **色彩**：麥克風錄音紅色 (#e53935)、混音錄音橙色 (#FF6F00)、匯入灰色 (#607D8B)、辨識藍色 (#2196F3)、匯出綠色 (#4CAF50)、設定灰色 (#78909C)
 - **Electron 視窗**：最小尺寸 720x500，預設 960x720
+
+## 17. Speaker Profile Database（v1.23.0）
+
+### 設計動機
+- v1.21.0 半監督式 propagation 對短句（< 3s）辨識率不足，需要在同一錄音內重複出現同一人的多個句子才能建立可靠 centroid。
+- 使用者提出「重覆複製同一句話」可作為訓練樣本的需求。
+- 需要跨錄音、跨時段反覆使用的持久化 speaker reference。
+
+### 設計原則
+- **持久化 JSON**：存於 ~/recoder/speaker_profiles.json，按 modelKey 分組避免不同 embedding 維度混淆。
+- **跨模型支援**：每個 profile 必須標註 modelKey (camplus / ecapa_tdnn / resnet_se)；identify 階段只能用同 modelKey 的 profile。
+- **資料上限**：MAX_PROFILES = 200，避免無限制增長。
+- **不加密**：與其他本地資料（reco_data）一致，僅本機存取。
+
+### 核心流程
+1. **buildProfile(audioPath, segments, seeds, modelKey)**
+   - 從使用者標註的 seed segments 擷取對應音檔
+   - 對每段提取 embedding（依 modelKey 呼叫對應 ONNX）
+   - 計算 trimmed mean centroid（v1.21.4 算法）
+   - 計算 internalCoherence（移除 outliers 後的平均 pairwise cosine）
+   - 持久化至 speaker_profiles.json
+2. **buildProfileFromAudioFile(audioPath, name, modelKey)**
+   - 從獨立短音檔建立（無需既有轉寫稿）
+   - 該音檔可包含一人多句或一人一句重複錄音
+3. **identifySpeakers(audioPath, segments, profiles)**
+   - 提取整段音檔所有 segment embedding
+   - 對每個 profile centroid 計算 cosine similarity
+   - 標記最佳匹配（無論相似度高低都標記，便於人工 review）
+4. **backfillAll(profiles)**
+   - 掃描所有歷史錄音
+   - 逐一呼叫 identifySpeakers
+   - 透過 onVoiceprintBackfillProgress 事件回報進度
+   - 自動儲存更新後的 segments
+
+### 與 v1.21.0 半監督式的取捨
+- v1.21.0 適合「快速標註單一錄音」，門檻低但不持久
+- v1.23.0 適合「建立常用講者庫」，門檻高（需要先建立 profile）但效果穩定
+- 兩者並存：使用者可先用 v1.21.0 propagation 快速標註，再針對重要講者用 v1.23.0 建立 profile 並 backfill
+
+### 介面規範
+- **3 個新按鈕**（LLM bar）：
+  - 👤 Create Profile（綠色 #00897B）：開啟 Speaker Database panel
+  - 🎯 Identify Speakers（粉色 #D81B60）：對當前錄音做 supervised 識別
+  - 🔄 Apply to All History（紫色 #5E35B1）：批次回溯標註
+- **Speaker Database panel**：560px 寬 modal，列出所有 profile，顯示名稱、modelKey 標籤、樣本數、coherence %，可重新命名/刪除
+- **progress 顯示**：backfill 進行中時 status bar 顯示 Backfilling 3/15
+
+### 已知限制
+- profile 必須與其 modelKey 一致使用；切換 model 後舊 profile 不可用
+- 短音檔建立 profile 時若 < 1.5s 可能 centroid 不穩定（顯示低 coherence 提示使用者重做）
+- 跨資料夾 backfill 不自動限速，可能 CPU 短時間高負載

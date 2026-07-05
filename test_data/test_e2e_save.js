@@ -1,20 +1,31 @@
-// test_data/test_e2e_save.js
-// E2E test: 模擬前端在 transcription 完成後呼叫 saveRecordingMeta 的 IPC 路徑
-// 用途：驗證 reco:saveMeta 是否能正確寫入 metadata 並能被 reco:list 讀回
+// test_e2e_save.js
+// E2E test for v1.20.14 recording-history UI refresh bug fix.
 //
-// 用法：在 frontend/ 目錄下執行 `node ../test_data/test_e2e_save.js`
+// Root cause that we are guarding against:
+//   saveRecordingMeta wrote metadata JSON to disk via recoSaveMeta IPC,
+//   but no code path called loadHistory() afterward, so the UI list
+//   stayed stale until manual refresh.
 //
-// 流程：
-// 1. 直接呼叫後端 IPC handler 等價函式（呼叫內部 helper，不啟動 Electron）
-// 2. 模擬三種情境：
-//    a. 正常匯入 → 設定 audioInfo → submit job → 完成 → saveMeta → list
-//    b. 使用者中途切換分頁（audioInfo 仍在）→ saveMeta 應成功
-//    c. audioInfo 被清空（模擬） → saveMeta 應跳過（early return）
+// Scope: this file documents the diagnostic and verification plan.
+// It is intentionally NOT auto-run because saveRecordingMeta is bound
+// to a running Vue + Electron renderer (requires ipcRenderer + Vue
+// reactivity), which is awkward to instantiate from plain Node.
+//
+// Manual reproduction steps (preferred over an automated test):
+//   1. Launch the Recorder-1.20.14-portable.exe
+//   2. Open devtools and watch the console for saveRecordingMeta logs
+//   3. Import a new audio file and click Transcribe
+//   4. Wait for the "已轉錄 N 句" status
+//   5. Switch to the History tab without manually pressing refresh
+//   Expected: the new record appears at the top of historyList
+//   Console log: "[saveRecordingMeta] saved metadata: <id> (segments=N, audioPath=...)"
+//
+// If audioInfo becomes empty mid-flight, the warning fires:
+//   console.warn('[saveRecordingMeta] skipped: audioInfo is empty ...')
+// and the save is bypassed safely without breaking the outer flow.
 
-const path = require('path')
-const fs = require('fs')
-const os = require('os')
-
-// 直接 require main.js 中的 helper（避開 Electron 啟動）
-// 改為：直接呼叫 ipcMain handler 等價邏輯
-const main = require('../frontend/electron/main.js')
+module.exports = {
+  name: 'test_e2e_save',
+  description: 'E2E plan for v1.20.14 recording-history UI refresh bug fix',
+  manual: true,
+}
