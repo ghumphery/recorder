@@ -22,6 +22,44 @@
   - `master` ブランチの過去のコミットには `-p/` コンテンツが残っている。歴史の書き換え（`git filter-repo` など）は破壊的操作のため、要求されていない本作業では実行していない。
   - **バックアップファイル名**: バックアップステップで生成。
 
+
+## [2026-07-07 16:30]
+- **version**: 1.23.1 → 1.23.2 (patch: 破損声紋モデルの自動修復)
+- **改修要求**: ユーザーから voiceprint ジョブが繰り返し失敗するという報告あり。recorder.log には「InferenceSession 作成失敗 (ファイルサイズ: 27.0 MB)」と記錄され、同じセッションでモデルが 8 回連続ダウンロードされた（毎回䀘ンスト完了）。原因：HF LFS がたまに「混合內容」（HTML リダイレクトヘッダ + 部分バイナリストリーム）を返し、25 MB 以上の汚染ファイルを書き出すが、サイズチェックは通っても onnxruntime は說めない。
+- **根本原因分析**:
+  1. v1.20.4 完全性チェック: < 1 MB を不完全と見なす。しかし 25~28 MB の汚染ファイルはこの閾値を通り拔ける。
+  2. v1.20.5 text/plain リダイレクト処理: body の先頭 100 文字が「Found. Redirecting to」かをチェック。しかし HF LFS は「混合內容」（HTML ヘッダ + バイナリストリーム）を返すこともあり、ストリーミングレスポンスではカバーできない。
+  3. v1.20.6 25 MB 閾値: 汚染ファイルはわずかに超えるため、isModelCached() が誤って valid を返す。
+  4. isModelCached() はサイズとファイルの存在だけチェックし、ONNX フォーマットを検証していない。
+  5. loadModel() 失敗時は console.error して false を返すだけで、破損ファイルを自動削除しない。
+  6. ユーザーが「ダウンロード」ボタンを 8 回繰り返しクリックすると、voiceprintDownload ハンドラーは「ダウンロード開始 / 完了」を常に表示（isModelCached が true でショートカットされても）、ログは誤解を招く 8 つのエントリで涜れる。
+- **修正計画**:
+  - `frontend/electron/voiceprint.js`:
+    1. `ONNX_MAGIC` 定数 = `Buffer.from([0x08, 0x08, 0x12, 0x07, 0x70, 0x79, 0x74, 0x6F, 0x72, 0x63, 0x68])` (pytorch 2.10+ exporter protobuf ヘッダ)
+    2. `isOnnxMagicValid(filePath, checkBytes=16)` 関数を追加: ファイルの先頭 N バイトを読んで ONNX_MAGIC と比較、不一致 = 破損
+    3. `isModelCached()`: 従来は `size >= modelMinSize()` のみチェック。ONNX magic 検証を追加。失敗 → console.warn + 自動 `resetModel()` + false を返す
+    4. `_ensureModelLoaded()`: 従来は size のみチェック。新しい振る舞い:
+       - size < minSize → リセット (従来通り)
+       - **ONNX magic 無効 → 自動 `resetModel()` + メッセージ**「ファイルの先頭 10 バイトは有効な ONNX ヘッダではありません。自動削除されました。再ダウンロードしてください。」
+       - **loadModel() 失敗 → 自動 `resetModel()` + メッセージ**「InferenceSession の作成に失敗しました。自動リセットされました。再ダウンロードしてください。」
+    5. この修正後、ユーザーは「ダウンロード」を 1 回押すだけで完全に回復できる。
+  - `frontend/electron/main.js`: `voiceprintDownload` ハンドラーは、`voiceprint.isModelCached()` が true のときは「ダウンロード開始 / 完了」ではなく「すでに最新」とだけログ。ログが誤解を招く 8 つのエントリで湜れるのを防ぐ。
+- **修正結果**:
+  - ノード構文チェック合格: voiceprint.js / main.js どちらもロード成功
+  - ユニットテスト `-p/test_v1232_onnx_magic.js` 6 ケース全て合格:
+    - A) 27MB HTML 污染ファイル → isOnnxMagicValid = false ✓
+    - B) pytorch magic 付き 27MB 正規ファイル → true ✓
+    - C) 存在しないファイル → false ✓
+    - D) 小さいが magic は正規のファイル → true (サイズチェックは isModelCached の責務) ✓
+    - E) 先頭 10 バイトが異なる 27MB ファイル → false ✓
+    - F) 100 バイトチェックも動作 ✓
+  - v1.23.2 を再インストールした後、HF LFS が污染ファイルを返した場合:
+    1. 1 回目: ジョブ失敗 → _ensureModelLoaded 自動リセット → 「モデルを再ダウンロードしてください」メッセージ
+    2. ダウンロードを 1 回押す → voiceprintDownload が isModelCached() が false だと認識 → 実際にダウンロード
+    3. ダウンロード後、「話者ラベリング」を再クリック → 成功
+  - 原本のタスク「`-p/` を GitHub と同期しない」は v1.23.1 で完了
+  - **バックアップファイル名**: バックアップステップで生成
+
 ## [2026-06-30 15:20]
 - **version**: 1.20.13 → 1.20.14 (patch: 録音履歴 UI が更新されないバグ修正)
 - **改修要求**: ユーザーから「認識完了しても録音履歴に新しいエントリが追加されない」との指摘あり。調査の結果、`reco:saveMeta` IPC は確かに呼ばれており metadata JSON もディスクへの書き込みに成功していたが、録音履歴一覧 UI が一度も更新されず、結果としてユーザーは「追加されていない」と感じる状態だった。

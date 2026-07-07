@@ -22,6 +22,44 @@
   - Historical commits on the `master` branch still contain `-p/` content; rewriting history with `git filter-repo` was deliberately not done (destructive, not requested).
   - **Backup file name**: produced in the backup step.
 
+
+## [2026-07-07 16:30]
+- **version**: 1.23.1 → 1.23.2 (patch: auto-repair corrupted voiceprint model)
+- **Request**: User reported voiceprint jobs failing repeatedly. recorder.log showed "InferenceSession creation failed (file size: 27.0 MB)" and the same user session downloaded the model 8 times in a row (each time finishing instantly). Root cause: HF LFS occasionally returns "mixed content" (HTML redirect header + partial binary stream), writing a 25+ MB polluted file that passes the size check but onnxruntime cannot read.
+- **Root cause analysis**:
+  1. v1.20.4 integrity check: < 1 MB considered incomplete. But 25-28 MB polluted files pass this threshold.
+  2. v1.20.5 text/plain redirect handling: checks the first 100 chars of the body for "Found. Redirecting to". But HF LFS may return "mixed content" (HTML header + binary stream) which this check does not cover for streaming responses.
+  3. v1.20.6 25 MB threshold: polluted file slightly exceeds it, isModelCached() falsely returns valid.
+  4. isModelCached() only checks size and file existence, never validates ONNX format.
+  5. When loadModel() fails it only console.error and returns false, does not auto-delete the corrupted file.
+  6. User repeatedly clicks the "Download" button 8 times; voiceprintDownload handler always prints "download started / completed" even when the download was short-circuited (isModelCached returns true), flooding the log with 8 misleading entries.
+- **Plan**:
+  - `frontend/electron/voiceprint.js`:
+    1. Add `ONNX_MAGIC` constant = `Buffer.from([0x08, 0x08, 0x12, 0x07, 0x70, 0x79, 0x74, 0x6F, 0x72, 0x63, 0x68])` (pytorch 2.10+ exporter protobuf header).
+    2. Add `isOnnxMagicValid(filePath, checkBytes=16)` function: read the first N bytes of the file and compare against ONNX_MAGIC; mismatch = corrupted.
+    3. `isModelCached()`: previously only checked `size >= modelMinSize()`. Add ONNX magic validation. Failure → console.warn + auto `resetModel()` + return false.
+    4. `_ensureModelLoaded()`: previously only checked size. New behavior:
+       - size < minSize → reset (original)
+       - **ONNX magic invalid → auto `resetModel()` + message** "File's first 10 bytes are not a valid ONNX header. Auto-deleted. Please re-download."
+       - **loadModel() failure → auto `resetModel()` + message** "InferenceSession creation failed, auto-reset. Please re-download."
+    5. After this fix the user only needs to press Download once to fully recover.
+  - `frontend/electron/main.js`: `voiceprintDownload` handler, when `voiceprint.isModelCached()` is true, only logs "Already up to date" instead of printing "Download started / completed". Prevents the log from being flooded by 8 misleading entries when the user repeatedly clicks the button.
+- **Result**:
+  - Node syntax check passed: voiceprint.js / main.js both load successfully.
+  - Unit test `-p/test_v1232_onnx_magic.js` 6 cases all pass:
+    - A) 27MB HTML-polluted file → isOnnxMagicValid = false ✓
+    - B) 27MB valid file with pytorch magic → true ✓
+    - C) Nonexistent file → false ✓
+    - D) Tiny but valid magic file → true (size check is isModelCached's responsibility) ✓
+    - E) 27MB file with wrong first 10 bytes → false ✓
+    - F) 100-byte check also works ✓
+  - After reinstalling v1.23.2, if HF LFS ever returns a polluted file:
+    1. First: Job fails → _ensureModelLoaded auto-resets → "Please re-download the model" message
+    2. Press Download once → voiceprintDownload sees isModelCached() is false → actually downloads
+    3. After download, click "Diarize Speakers" again → succeeds
+  - Original task "`-p/` no longer sync to GitHub" was completed in v1.23.1
+  - **Backup file name**: produced in the backup step.
+
 ## [2026-06-30 15:20]
 - **version**: 1.20.13 → 1.20.14 (patch: recording history UI refresh bug fix)
 - **Request**: User reported "after transcription completes, no new entry appears in recording history". Investigation confirmed that `reco:saveMeta` IPC was being called and the metadata JSON was successfully written to disk, but the recording history list UI never refreshed, so the user perceived "no new entry added".

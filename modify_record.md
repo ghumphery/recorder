@@ -1,3 +1,40 @@
+## [2026-07-07 16:30]
+- **version**: 1.23.1 → 1.23.2 (patch: 聲紋模型損壞自動修復)
+- **修改要求**: 使用者回報 voiceprint Job 重覆失敗，recorder.log 顯示「InferenceSession 建立失敗 (檔案大小: 27.0 MB)」，且同一時段內重覆下載聲紋模型 8 次 (每次瞬間完成)。根因是 HF LFS 偶爾返回「混合內容」(部分 HTML + 部分 binary 雜湊) 寫出剛好 >= 25 MB 的污染檔案，過了 size 門檻但 onnxruntime 讀不了。
+- **根因分析**:
+  1. v1.20.4 完整性檢查：< 1 MB 才視為不完整。但 25~28 MB 的污染檔不遁個門檻。
+  2. v1.20.5 text/plain 重新導向處理：檢查前 100 chars 是否為「Found. Redirecting to」。但 HF LFS 仍可能返回「混合內容」(前段是 HTML redirect header，後段是 binary stream)，這個檢查選取 body 全部看完才 reject，但 stream 型 mixed content 不是這樣。
+  3. v1.20.6 25 MB 門檻：被污染檔剛好超過，isModelCached() 誤判為 valid。
+  4. isModelCached() 只檢查 size 與檔案存在，未驗 ONNX 格式有效性。
+  5. loadModel() 失敗時只 console.error 記錄並回 false，未自動刪除損壞檔。
+  6. 使用者重覆按「下載」按鈕 8 次，voiceprintDownload handler 每次都 print 「下載開始 / 下載完成」中間卻什麼都沒做 (isModelCached 短路返回 true)，造成 log 被 8 條互相誤導的訊息淹沒。
+- **修改規劃**:
+  - `frontend/electron/voiceprint.js`:
+    1. 新增 `ONNX_MAGIC` 常數 = `Buffer.from([0x08, 0x08, 0x12, 0x07, 0x70, 0x79, 0x74, 0x6F, 0x72, 0x63, 0x68])` (pytorch 2.10+ exporter 的 protobuf 開頭)。
+    2. 新增 `isOnnxMagicValid(filePath, checkBytes=16)` 函式：讀檔案前 N bytes 與 ONNX_MAGIC 比對，不匹配則視為損壞。
+    3. `isModelCached()`: 原本只檢查 size >= modelMinSize()，加一個 ONNX magic 驗證。驗證失敗 → console.warn + 自動 resetModel() + 回 false。連「下載狀態」本身都會被修正。
+    4. `_ensureModelLoaded()`: 原本只檢查 size，onload 失敗時只 console.error。修改:
+       - size < minSize → 重設 (原有)
+       - **ONNX magic 驗證失敗 → 自動 resetModel() + 提示** 「檔案前 10 bytes 不是合法 ONNX header，已自動刪除，請重新下載」
+       - **loadModel() 失敗 → 自動 resetModel() + 提示** 「InferentialSession 建立失敗，已自動重設。請重新下載」
+    5. 這樣使用者只要按一次「下載」就能修復全部「看不見的損壞」狀態。
+  - `frontend/electron/main.js`: `voiceprintDownload` handler 在 `voiceprint.isModelCached()` 為 true 時，只 log「已是最新」不 print「下載開始 / 下載完成」。避免重覆按按鈕時 log 被 8 條訊息誤導。
+- **修改結果**:
+  - 節點語法檢查通過：voiceprint.js / main.js 皆可順利載入。
+  - 單元測試 `-p/test_v1232_onnx_magic.js` 6 個案例全通過：
+    - A) 27MB HTML 污染檔 → isOnnxMagicValid = false ✓
+    - B) 27MB 含 pytorch magic 合法檔案 → true ✓
+    - C) 不存在的檔案 → false ✓
+    - D) tiny 但 magic 合法檔案 → true (size 檢查由 isModelCached 負責) ✓
+    - E) 27MB 但前 10 bytes 不對 → false ✓
+    - F) 100 bytes 測試也可以 ✓
+  - 使用者重載安裝 v1.23.2 後，若 HF LFS 重現返回污染檔，會:
+    1. 第一次：Job failed → _ensureModelLoaded 自動 resetModel → 「請重新下載模型」提示
+    2. 按一次「下載」→ voiceprintDownload 檢查 isModelCached() 為 false → 真的下載一次
+    3. 下載完後重按「說話者標註」 → 成功
+  - 原始任務「`-p/` 不再同步到 GitHub」v1.23.1 已完成
+  - **備份檔名**: 將於備份步驟產生
+
 ## [2026-07-07 14:30]
 - **version**: 1.23.0 → 1.23.1 (patch: 倉儲維護 — `-p/` 不再同步到 GitHub)
 - **修改要求**: `-p/` 目錄是開發過程中留下的暫存與工具腳本（cabal 提取、文件追加、模型檢查、build helper 等），不應納入版本控制，避免污染 GitHub repo 與未來 clone 的開發者機器。

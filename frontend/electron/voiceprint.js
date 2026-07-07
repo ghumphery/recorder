@@ -111,12 +111,51 @@ function ensureModelDir() {
   return dir
 }
 
+// v1.23.2: ONNX 檔頭 magic (pytorch 2.10+ exporter)
+//   前 10 bytes 為 protobuf field tag + wire type，
+//   內容大致為 0x08 0x08 0x12 0x07 'pytorch' (0x70 0x79 0x74 0x6F 0x72 0x63 0x68)
+//   HF LFS text/plain 重新導向的 HTML 內容絕對不會有這組 byte 序列。
+const ONNX_MAGIC = Buffer.from([0x08, 0x08, 0x12, 0x07, 0x70, 0x79, 0x74, 0x6F, 0x72, 0x63, 0x68])
+
+/**
+ * v1.23.2: 驗證檔案前 N bytes 是否為合法 ONNX magic。
+ * 防止 v1.20.5 已知情境「HF LFS 改為 text/plain body，Content-Length 與實際 binary 內容都不對」
+ * 後仍寫出 25~28 MB 的污染檔案（剛好超過 minSize 但 onnxruntime 讀不了）。
+ * @param {string} filePath
+ * @param {number} checkBytes 至少要包含 10 bytes (ONNX_MAGIC.length)
+ * @returns {boolean} true = 合法 ONNX / false = 不是 ONNX (損壞/HTML/空)
+ */
+function isOnnxMagicValid(filePath, checkBytes = 16) {
+  try {
+    if (!fs.existsSync(filePath)) return false
+    const fd = fs.openSync(filePath, 'r')
+    try {
+      const buf = Buffer.alloc(Math.max(checkBytes, ONNX_MAGIC.length))
+      const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0)
+      if (bytesRead < ONNX_MAGIC.length) return false
+      return buf.subarray(0, ONNX_MAGIC.length).equals(ONNX_MAGIC)
+    } finally {
+      try { fs.closeSync(fd) } catch (_) {}
+    }
+  } catch (e) {
+    return false
+  }
+}
+
 function isModelCached(modelKey = 'camplus') {
   try {
     const mp = modelPath(modelKey)
     if (!fs.existsSync(mp)) return false
     const size = fs.statSync(mp).size
-    return size >= modelMinSize(modelKey)
+    if (size < modelMinSize(modelKey)) return false
+    // v1.23.2: 額外驗證 ONNX magic header。HF LFS 重新導向的 HTML 內容也可能有 27 MB
+    //   (恰好 ≥ 25 MB) 但 onnxruntime 讀不了 → InferenceSession.create 失敗
+    if (!isOnnxMagicValid(mp)) {
+      console.warn(`[voiceprint] 模型 ${modelKey} 存在但 ONNX magic header 驗證失敗 (size=${(size/1024/1024).toFixed(2)} MB)；視為損壞並自動刪除。`)
+      resetModel(modelKey)
+      return false
+    }
+    return true
   } catch (e) {
     return false
   }
@@ -926,8 +965,22 @@ async function _ensureModelLoaded(modelKey) {
     resetModel(modelKey)
     throw new Error(`聲紋模型檔不完整 (大小: ${(stat.size / 1024 / 1024).toFixed(2)} MB)，已自動重設。請重新下載模型。`)
   }
+  // v1.23.2: ONNX magic header 驗證。v1.20.5 已修 text/plain 重新導向的狀況，
+  //   但 HF LFS xet-bridge 仍可能返回「混合內容」(部分 HTML + 部分 binary 雜湊)
+  //   寫出剛好 >= 25MB 的污染檔案，過了 size 門檻但 onnxruntime 讀不了。
+  if (!isOnnxMagicValid(mp)) {
+    resetModel(modelKey)
+    throw new Error(`聲紋模型檔已損壞 (大小: ${(stat.size / 1024 / 1024).toFixed(1)} MB，但前 10 bytes 不是合法 ONNX header)。已自動刪除，請重新下載。`)
+  }
   if (!await loadModel(modelKey)) {
-    throw new Error(`聲紋模型檔已下載但 InferenceSession 建立失敗 (檔案大小: ${(stat.size / 1024 / 1024).toFixed(1)} MB)；請檢查 onnxruntime-node native binary 是否被 asar 打包、或是 CPU 不支援。建議到開發者控制台查看完整錯誤。`)
+    // v1.23.2: loadModel 失敗時也自動重設一次。
+    //   可能是 onnxruntime native binary 問題 (v1.20.3 已修但需要重編譯)，
+    //   也可能是上述 ONNX 驗證後 size 仍正常但 binary 結構損壞的罕見情境。
+    //   自動重設後使用者只需按一次「下載」即可修復。
+    const sizeMB = (stat.size / 1024 / 1024).toFixed(1)
+    console.error(`[voiceprint] _ensureModelLoaded: loadModel 失敗，可能模型檔損壞。自動重設 ${mp}`)
+    resetModel(modelKey)
+    throw new Error(`聲紋模型 InferenceSession 建立失敗 (檔案大小: ${sizeMB} MB)，已自動重設。請重新下載模型；若重試仍失敗，請到開發者控制台查看完整錯誤。`)
   }
 }
 

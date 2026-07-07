@@ -2541,10 +2541,17 @@ ipcMain.handle('voiceprint:status', async () => {
 })
 
 // v1.22.0: 下載指定模型（向後相容：未指定 modelKey 時下載預設 campplus）
+// v1.23.2: 先檢查快取，isModelCached 為 true 時只 log「已是最新」不 print「下載開始 / 完成」
+//   避免「重覆按按鈕」時 log 被 8 條「下載開始 / 下載完成」淺淺堆滿、誤導使用者。
 ipcMain.handle('voiceprint:download', async (event, { modelKey } = {}) => {
   const targetKey = modelKey || 'camplus'
-  appLog('INFO', 'voiceprint', `下載聲紋模型 ${targetKey} 開始`)
   try {
+    if (voiceprint.isModelCached(targetKey)) {
+      appLog('INFO', 'voiceprint', `聲紋模型 ${targetKey} 已是最新 (cached)，略過下載`)
+      if (mainWindow) mainWindow.webContents.send('voiceprint:download-progress', { percent: 100, modelKey: targetKey })
+      return { success: true, skipped: true }
+    }
+    appLog('INFO', 'voiceprint', `下載聲紋模型 ${targetKey} 開始`)
     await voiceprint.downloadModel((percent) => {
       if (mainWindow) mainWindow.webContents.send('voiceprint:download-progress', { percent, modelKey: targetKey })
     }, targetKey)
