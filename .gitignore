@@ -121,3 +121,6 @@ frontend/package.json.bak
 
 # ffmpeg（超過 GitHub 100MB 限制，請自行下載）
 ffmpeg/
+
+# 暫存 / 工具腳本目錄（不要同步到 GitHub）
+-p/
