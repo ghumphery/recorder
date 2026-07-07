@@ -1,6 +1,25 @@
 
 
 
+
+## [2026-07-07 16:50]
+- **version**: 1.23.2 → 1.23.3 (patch: resnet_se download checks camp bug)
+- **Request**: User reported clicking the resnet_se download button prints "voiceprint model camplus is up to date (cached), skipping download" and resnet_se does not download at all. Indicates a bug in the v1.23.0 multi-model download feature.
+- **Root cause**:
+  1. `frontend/electron/preload.js` originally had `voiceprintDownload: () => ipcRenderer.invoke('voiceprint:download')` **without forwarding payload**.
+  2. App.vue calls `window.electronAPI.voiceprintDownload({ modelKey: 'resnet_se' })` but preload discards the argument.
+  3. Result: main.js's `ipcMain.handle('voiceprint:download', async (event, { modelKey } = {}) =>` always sees `modelKey === undefined` → `targetKey = modelKey || 'camplus'` always defaults to camp.
+  4. If camp is already downloaded → "up to date" short-circuits, misleading the user; resnet_se never gets a chance to download.
+  5. This was a v1.23.0 hotfix1/5/7/8 oversight (hotfix8 added 11 profile APIs, but this pre-existing `voiceprintDownload` bridge was missed).
+- **Plan**:
+  - `frontend/electron/preload.js`: `voiceprintDownload: () => ipcRenderer.invoke('voiceprint:download')` → `voiceprintDownload: (payload) => ipcRenderer.invoke('voiceprint:download', payload)`
+  - `frontend/package.json`: version 1.23.2 → 1.23.3 (patch)
+- **Result**:
+  - v1.23.0 original `voiceprintDownload` patch syntax check passed (preload.js change is one line)
+  - Expected behavior: click resnet_se download button → progress bar completes → resnet_se.onnx (~27 MB) written to ~/recoder/voiceprint/cnceleb_resnet34_LM.onnx
+  - Also verify ecapa_tdnn (no URL, will throw error "no available download URL, please use manual import" — this is the expected behavior)
+- **Backup file name**: produced in the backup step
+
 ## [2026-07-07 14:30]
 - **version**: 1.23.0 → 1.23.1 (patch: repo housekeeping — stop syncing `-p/` to GitHub)
 - **Request**: The `-p/` directory contains scratch scripts accumulated during development (cabal extraction helpers, doc appenders, model checkers, build helpers, etc.) and should not be version-controlled. Leaving it in the repo pollutes the GitHub mirror and confuses anyone who later clones the project.

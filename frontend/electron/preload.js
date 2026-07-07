@@ -86,7 +86,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    recoDeleteLlmDoc: (p) => ipcRenderer.invoke('reco:deleteLlmDoc', p),
    // 聲紋說話者標註
    voiceprintStatus: () => ipcRenderer.invoke('voiceprint:status'),
-   voiceprintDownload: () => ipcRenderer.invoke('voiceprint:download'),
+   voiceprintDownload: (payload) => ipcRenderer.invoke('voiceprint:download', payload),
    voiceprintDiarize: (p) => ipcRenderer.invoke('voiceprint:diarize', p),
    onVoiceprintDownloadProgress: (callback) => {
      ipcRenderer.on('voiceprint:download-progress', (event, data) => callback(data))

@@ -1,3 +1,21 @@
+## [2026-07-07 16:50]
+- **version**: 1.23.2 → 1.23.3 (patch: resnet_se 下載卻檢查 camplus 的 bug 修正)
+- **修改要求**: 使用者反映點 resnet_se 下載按鈕後，log 印出「聲紋模型 camplus 已是最新 (cached)，略過下載」而 resnet_se 完全沒下載。表示 v1.23.0 多模型架構下載 feature 有 bug。
+- **根因分析**:
+  1. `frontend/electron/preload.js` 原本 `voiceprintDownload: () => ipcRenderer.invoke('voiceprint:download')` **沒有帶 payload**。
+  2. App.vue 呼叫 `window.electronAPI.voiceprintDownload({ modelKey: 'resnet_se' })` 卻被 preload 完全棄掉。
+  3. 結果：main.js 端 `ipcMain.handle('voiceprint:download', async (event, { modelKey } = {}) =>)` 收到的 `modelKey` 始終是 undefined → `targetKey = modelKey || 'camplus'` 永遠使用 camp。
+  4. 若 camp 已下載 → 「已是最新」短路、誤導使用者；resnet_se 完全沒機會下載。
+  5. 這是 v1.23.0 hotfix1/5/7/8 時漏修的 bug（hotfix8 補了 11 個 profile API，但這個已存在的 `voiceprintDownload` bridge 漏了 payload 傳遞）。
+- **修改規劃**:
+  - `frontend/electron/preload.js`: `voiceprintDownload: () => ipcRenderer.invoke('voiceprint:download')` → `voiceprintDownload: (payload) => ipcRenderer.invoke('voiceprint:download', payload)`
+  - `frontend/package.json`: version 1.23.2 → 1.23.3 (patch)
+- **修改結果**:
+  - v1.23.0 原始 `voiceprintDownload` 補丁語法檢查通過（preload.js 修改只是一行）
+  - 預期效果: 點 resnet_se 下載按鈕 → 進度條走完 → resnet_se.onnx (約 27 MB) 寫入 ~/recoder/voiceprint/cnceleb_resnet34_LM.onnx
+  - 同時驗證 ecapa_tdnn（沒有 url，會跳 error 「沒有可用的下載 URL，請改用手動匯入」，這是預期行為）
+- **備份檔名**: 將於備份步驟產生
+
 ## [2026-07-07 16:30]
 - **version**: 1.23.1 → 1.23.2 (patch: 聲紋模型損壞自動修復)
 - **修改要求**: 使用者回報 voiceprint Job 重覆失敗，recorder.log 顯示「InferenceSession 建立失敗 (檔案大小: 27.0 MB)」，且同一時段內重覆下載聲紋模型 8 次 (每次瞬間完成)。根因是 HF LFS 偶爾返回「混合內容」(部分 HTML + 部分 binary 雜湊) 寫出剛好 >= 25 MB 的污染檔案，過了 size 門檻但 onnxruntime 讀不了。

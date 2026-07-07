@@ -1,6 +1,24 @@
 
 
 
+## [2026-07-07 16:50]
+- **version**: 1.23.2 → 1.23.3 (patch: resnet_se ダウンロードが camp を見るバグ修正)
+- **改修要求**: ユーザーから resnet_se ダウンロードボタンを押しても、log に「camplus は最新（cached）と表示されるが、resnet_se が全くダウンロードされないという報告あり。v1.23.0 マルチモデルアーキテクチャのダウンロード機能にバグがあると判明。
+- **根本原因**:
+  1. `frontend/electron/preload.js` の `voiceprintDownload: () => ipcRenderer.invoke('voiceprint:download')` は** payload を転送していなかった**。
+  2. App.vue の `window.electronAPI.voiceprintDownload({ modelKey: 'resnet_se' })` 呼び出しが preload で完全破棄。
+  3. 結果、main.js の `ipcMain.handle('voiceprint:download', async (event, { modelKey } = {}) =>` は常に `modelKey === undefined` → `targetKey = modelKey || 'camplus'` は常に camp。
+  4. camp がダウンロード済みなら「最新」でショートカット、ユーザーを誤解させる。resnet_se にはダウンロード機会がない。
+  5. これは v1.23.0 hotfix1/5/7/8 で見落としたバグ（hotfix8 は 11 個の profile API を追加したが、既存の `voiceprintDownload` ブリッジの payload 伝送が見逃された）。
+- **修正計画**:
+  - `frontend/electron/preload.js`: `voiceprintDownload: () => ipcRenderer.invoke('voiceprint:download')` → `voiceprintDownload: (payload) => ipcRenderer.invoke('voiceprint:download', payload)`
+  - `frontend/package.json`: version 1.23.2 → 1.23.3 (patch)
+- **修正結果**:
+  - v1.23.0 元の `voiceprintDownload` パッチの構文チェック合格（preload.js の変更は 1 行）
+  - 予測動作: resnet_se ダウンロードボタンをクリック → 進捗バーが満ちる → resnet_se.onnx (約 27 MB) が ~/recoder/voiceprint/cnceleb_resnet34_LM.onnx に書き込まれる
+  - ecapa_tdnn も検証（URL なし、「利用可能なダウンロード URL がない、手動インポートを使用してください」エラー — 予想される動作）
+- **バックアップファイル名**: バックアップステップで生成
+
 ## [2026-07-07 14:30]
 - **version**: 1.23.0 → 1.23.1 (patch: リポジトリ整理 — `-p/` を GitHub へ同期しない)
 - **改修要求**: `-p/` ディレクトリには開発中に溜まった一時/ツール系スクリプト（cabal 抽出、文档追加、モデル検査、ビルドヘルパーなど）が入っており、バージョン管理すべきものではない。GitHub ミラーに残すとリポジトリが汚染され、後で clone する開発者も混乱する。
