@@ -1,5 +1,27 @@
 
 
+
+## [2026-07-07 14:30]
+- **version**: 1.23.0 → 1.23.1 (patch: repo housekeeping — stop syncing `-p/` to GitHub)
+- **Request**: The `-p/` directory contains scratch scripts accumulated during development (cabal extraction helpers, doc appenders, model checkers, build helpers, etc.) and should not be version-controlled. Leaving it in the repo pollutes the GitHub mirror and confuses anyone who later clones the project.
+- **Root cause**:
+  1. During v1.20–v1.23 development we routinely dropped one-off hotfix scripts into `-p/` (e.g. `append_v1230_docs.ps1`, `append_v1230_hotfix_records.ps1`, `append_v1230_ips.js`) and ran `git add` against them.
+  2. `.gitignore` had partial excludes (`app_check*/`, `quote_i18n_v1230*.ps1`, etc.) but `git ls-files -p/` still listed 26 tracked files, so every `git status` was full of noise unrelated to the shipped build.
+  3. The directory is, by design, a personal scratch space — meaningless to other contributors.
+- **Plan**:
+  - `.gitignore`: append `# 暫存 / 工具腳本目錄（不要同步到 GitHub）\n-p/` to ignore the entire directory.
+  - `git rm -r --cached -p/`: untrack all 26 currently-tracked files while keeping the local working-tree copies intact.
+  - Verify: `git ls-files -p/` → empty; `git check-ignore -p/append_records.ps1 -p/foo.txt` → reported as ignored; local `-p/append_records.ps1` still exists.
+  - `frontend/package.json` version 1.23.0 → 1.23.1 (patch — repo hygiene, no runtime behavior change).
+- **Result**:
+  - `.gitignore` now includes the `-p/` rule.
+  - 26 `-p/` files removed from the index (commit `aa44ad6`); local copies preserved.
+  - `git ls-files -p/` returns no output.
+  - `git status` only shows the `whisper_cpp` submodule pointer (unrelated to this task).
+  - Any new file dropped under `-p/` from now on will be auto-ignored.
+  - Historical commits on the `master` branch still contain `-p/` content; rewriting history with `git filter-repo` was deliberately not done (destructive, not requested).
+  - **Backup file name**: produced in the backup step.
+
 ## [2026-06-30 15:20]
 - **version**: 1.20.13 → 1.20.14 (patch: recording history UI refresh bug fix)
 - **Request**: User reported "after transcription completes, no new entry appears in recording history". Investigation confirmed that `reco:saveMeta` IPC was being called and the metadata JSON was successfully written to disk, but the recording history list UI never refreshed, so the user perceived "no new entry added".

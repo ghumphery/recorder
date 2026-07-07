@@ -1,3 +1,24 @@
+## [2026-07-07 14:30]
+- **version**: 1.23.0 → 1.23.1 (patch: 倉儲維護 — `-p/` 不再同步到 GitHub)
+- **修改要求**: `-p/` 目錄是開發過程中留下的暫存與工具腳本（cabal 提取、文件追加、模型檢查、build helper 等），不應納入版本控制，避免污染 GitHub repo 與未來 clone 的開發者機器。
+- **根因分析**:
+  1. 過往為了逐版本 hotfix 補登文件/腳本（如 `append_v1230_docs.ps1`、`append_v1230_hotfix_records.ps1`、`append_v1230_ips.js` 等），將多個工具檔直接放到 `-p/` 並 `git add` 進了 repo。
+  2. `.gitignore` 雖有局部排除（`app_check*/`、`quote_i18n_v1230*.ps1` 等），但 `git ls-files -p/` 仍列出 26 個被追蹤檔案，每次 `git status` 都會看到一堆與正式版無關的雜訊。
+  3. 該目錄本質是個人開發者 scratch space，對其他協作者無意義。
+- **修改規劃**:
+  - `.gitignore`：在檔尾加入一行 `# 暫存 / 工具腳本目錄（不要同步到 GitHub）\n-p/`，覆蓋整個 `-p/`。
+  - `git rm -r --cached -p/`：從 git index 一次移除全部 26 個已追蹤檔案，**本地檔案完整保留**（`--cached`）。
+  - 驗證：`git ls-files -p/` 應無輸出；`git check-ignore -p/append_records.ps1 -p/foo.txt` 應回報為 ignored；本地檔案仍存在。
+  - `frontend/package.json` version 1.23.0 → 1.23.1 (patch — 純倉儲維護)。
+- **修改結果**:
+  - `.gitignore` 已包含 `-p/` 規則
+  - 26 個 `-p/` 檔案已從 index 移除（commit `aa44ad6`），本地保留
+  - `git ls-files -p/` → 無輸出
+  - `git status` 僅剩 `whisper_cpp` 子模組狀態（與本任務無關）
+  - 後續 `-p/` 下任何新增檔案都會被 .gitignore 自動忽略，無需再手動維護
+  - 既有 commit 歷史中仍含有 `-p/` 內容；如需從 GitHub 歷史中徹底抹除，須額外執行 `git filter-repo` 重寫歷史（破壞性操作，本次未做）
+  - 備份檔名: 將於備份步驟產生
+
 ## [2026-06-30 15:20]
 - **version**: 1.20.13 → 1.20.14 (patch: 錄音記錄 UI 不刷新 bug 修復)
 - **修改要求**: 使用者反映「辨識完成不會新增到錄音記錄」。檢查發現 `reco:saveMeta` IPC 確實有被呼叫且 metadata 檔案成功寫入磁碟，但錄音記錄列表 UI 從未刷新，仍停留在舊狀態，造成使用者以為「沒有新增」。
