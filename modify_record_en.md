@@ -20,6 +20,24 @@
   - Also verify ecapa_tdnn (no URL, will throw error "no available download URL, please use manual import" — this is the expected behavior)
 - **Backup file name**: produced in the backup step
 
+
+
+## [2026-07-07 17:10]
+- **version**: 1.23.3 → 1.23.4 (patch: auto-activate downloaded voiceprint model)
+- **Request**: User reported "after downloading resnet_se the activation setup is not done" — currentModelKey remained camp, so the next "speaker recognition" still used camp. v1.23.3 fixed the download but missed the activation.
+- **Root cause**:
+  1. `ipcMain.handle('voiceprint:download', ...)` handler only logged "download completed" after success, without calling `voiceprint.setActiveModel(targetKey)`.
+  2. Even pressing the "⭐ Set Active" button in the settings panel only switched the current session; after restarting the app it was still camp.
+  3. No persistence: currentModelKey was not written back to settings.json, so reopening the app reverted to camp.
+- **Plan**:
+  - `frontend/electron/main.js` voiceprint:download handler: after download success, immediately call `voiceprint.setActiveModel(targetKey)` to switch the current model; also write targetKey to settings.json under `voiceprintModel` so the next App start still uses this model.
+  - `frontend/electron/preload.js`: add `onVoiceprintActiveModelChanged` event subscription, so the frontend is notified when the backend switches.
+  - `frontend/src/App.vue` `downloadVoiceprintModel(key)`: in addition to event listening, also actively call `voiceprintSetActiveModel` as a safety net (double insurance); after success, update `currentVoiceprintModel` and reload `loadVoiceprintModels` + `voiceprintGetCurrentModel`.
+- **Result**:
+  - Verification: click resnet_se download → progress bar completes → immediately see in recorder.log "已自動切換當前模型為 resnet_se (dim=256)" → frontend UI shows "✅ resnet_se 下載完成並已切換為當前模型 (dim=256)" → Settings panel "⭐ Set Active" badge auto-moves to resnet_se.
+  - Next App launch reads `voiceprintModel` from settings.json, automatically loads resnet_se.
+  - Within 1-3 seconds the user can press the "👥 語者識別" button and the system will use resnet_se for diarize.
+
 ## [2026-07-07 14:30]
 - **version**: 1.23.0 → 1.23.1 (patch: repo housekeeping — stop syncing `-p/` to GitHub)
 - **Request**: The `-p/` directory contains scratch scripts accumulated during development (cabal extraction helpers, doc appenders, model checkers, build helpers, etc.) and should not be version-controlled. Leaving it in the repo pollutes the GitHub mirror and confuses anyone who later clones the project.

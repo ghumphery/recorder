@@ -1,3 +1,19 @@
+## [2026-07-07 17:10]
+- **version**: 1.23.3 → 1.23.4 (patch: resnet_se 下載完成後自動切換為當前模型)
+- **修改要求**: 使用者反映「resnet_se 下載後沒有完成後續啟用設定」— 下載完成後 voiceprintJobManager.currentModelKey 仍是 camp，下一次「語者識別」仍使用 camp。v1.23.3 修了下載但漏了啟用。
+- **根因分析**:
+  1. `ipcMain.handle('voiceprint:download', ...)` handler 成功下載後只 log「下載完成」，沒有呼叫 `voiceprint.setActiveModel(targetKey)` 切換當前模型。
+  2. 即使使用者手動在 Settings 面板按「⭐ Set Active」也只切換當前 session，重開 App 後仍是 camp。
+  3. 缺少持久化：currentModelKey 沒有寫回 settings.json，重開 App 變回 camp。
+- **修改規劃**:
+  - `frontend/electron/main.js` voiceprint:download handler：下載成功後立即呼叫 `voiceprint.setActiveModel(targetKey)` 切換當前模型；同時把 targetKey 寫到 settings.json 的 `voiceprintModel` 欄位，下次 App 開啟仍是此模型。
+  - `frontend/electron/preload.js`：新增 `onVoiceprintActiveModelChanged` event subscription，後端切換完成時主動通知前端。
+  - `frontend/src/App.vue` `downloadVoiceprintModel(key)` 方法：除了監聽事件外，也主動呼叫 `voiceprintSetActiveModel` 作為保險（雙重保險），下載成功後更新 `currentVoiceprintModel` 變數並重新 loadVoiceprintModels + voiceprintGetCurrentModel。
+- **修改結果**:
+  - 驗證流程：點 resnet_se 下載 → 進度條走完 → 立即在 recorder.log 看到「已自動切換當前模型為 resnet_se (dim=256)」→ 前端 UI 看到「✅ resnet_se 下載完成並已切換為當前模型 (dim=256)」→ Settings 面板的「⭐ Set Active」badge 自動移到 resnet_se。
+  - 下次開 App 時 `voiceprintModel` 從 settings.json 讀出，自動載入 resnet_se。
+  - 1-3 秒內使用者可立即用「👥 語者識別」按鈕，系統會使用 resnet_se 進行 diarize。
+
 ## [2026-07-07 16:50]
 - **version**: 1.23.2 → 1.23.3 (patch: resnet_se 下載卻檢查 camplus 的 bug 修正)
 - **修改要求**: 使用者反映點 resnet_se 下載按鈕後，log 印出「聲紋模型 camplus 已是最新 (cached)，略過下載」而 resnet_se 完全沒下載。表示 v1.23.0 多模型架構下載 feature 有 bug。

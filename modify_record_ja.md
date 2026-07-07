@@ -1,6 +1,39 @@
 
 
 
+## [2026-07-07 17:15]
+- **version**: 1.23.3 → 1.23.4 (patch: ダウンロード後の声紋モデル自動アクティブ化)
+- **改修要求**: ユーザーから「resnet_se ダウンロード後、ファイルは voiceprint ディレクトリに保存されるが、その後の有効化設定が完了していない。再起動後でも現在のモデルは camp のまま」と報告あり。v1.23.3 で resnet_se ダウンロードは修正されたが、ダウンロード完了後に「現在のモデル」として自動切替されないため、ユーザーは手動で設定パネルの「アクティブモデル」ドロップダウンを変更する必要があった。
+- **根本原因**:
+  1. `frontend/electron/main.js` の `ipcMain.handle('voiceprint:download', ...)` ハンドラは、ダウンロード成功時に `console.log` だけで `voiceprint.setActiveModel()` を呼んでいなかった。
+  2. アクティブモデル状態は `currentModelKey`（メモリ内）と `settings.json` の `voiceprintModel` フィールド（永続化）の 2 箇所で管理されているが、ダウンロードハンドラはどちらも更新していなかった。
+  3. 結果、ダウンロードしたモデル（例: resnet_se）は `voiceprint/<modelKey>/model.onnx` に書き込まれているが、InferenceSession が読み込まれているのは依然として camp、UI 上の `currentVoiceprintModel` も camp のまま。
+  4. ユーザーが「話者識別」や「Speaker 識別（教師あり）」を実行しても、デフォルトの camp モデルで処理されるため、ダウンロードした resnet_se の精度向上が反映されない。
+  5. ユーザーが手動で「アクティブモデル」ドロップダウンを resnet_se に切り替えて初めて新モデルが有効になる、という分かりにくい仕様になっていた。
+- **修正計画**:
+  1. `frontend/electron/main.js` の `voiceprint:download` ハンドラ：
+     - ダウンロード成功後（resnet_se / camplus どちらでも）、`voiceprint.setActiveModel(targetKey)` を呼び出してメモリ内の `currentModelKey` を更新
+     - `settings.json` の `voiceprintModel` フィールドに `targetKey` を書き込んで永続化
+     - IPC 完了応答に `activated: true, activeKey: targetKey, dim: modelInfo.dim` を含めて、フロントエンドが再読み込みなしに UI 更新できるようにする
+     - `webContents.send('voiceprint:active-model-changed', { activeKey, dim })` でレンダラーに通知
+  2. `frontend/electron/preload.js`：`onVoiceprintActiveModelChanged` イベント購読ブリッジを追加
+  3. `frontend/src/App.vue` `downloadVoiceprintModel(key)`：
+     - IPC 応答の `activated` フラグを確認
+     - 安全ネットとして `voiceprintSetActiveModel(key)` を能動的に呼び出し
+     - `currentVoiceprintModel` と `voiceprintModelDim` を即座に更新
+     - ダウンロード完了後に `loadVoiceprintModels()` + `voiceprintGetCurrentModel()` で再読み込み
+     - ステータステキストを「✅ ダウンロード完了し現在のモデルに切替済 (dim=256)」に変更
+  4. `frontend/package.json`: version 1.23.3 → 1.23.4 (patch)
+- **修正結果**:
+  - resnet_se ダウンロードボタンをクリック → ダウンロード完了 → 即座に `currentModelKey = 'resnet_se'`
+  - 設定永続化：次回アプリ起動時も resnet_se がアクティブのまま
+  - 期待される動作: ダウンロード直後の「話者識別」クリックで resnet_se の 256-dim embedding が使われる
+  - ユーザー操作手順削減：手動でアクティブモデル切替を行う必要がなくなった
+  - 副次効果: ダウンロードログが誤解を招かなくなる（実際のモデル切替が反映される）
+  - 他のダウンロード対象（camplus）も同様に自動アクティブ化される
+- **バックアップファイル名**: バックアップステップで生成
+
+
 ## [2026-07-07 16:50]
 - **version**: 1.23.2 → 1.23.3 (patch: resnet_se ダウンロードが camp を見るバグ修正)
 - **改修要求**: ユーザーから resnet_se ダウンロードボタンを押しても、log に「camplus は最新（cached）と表示されるが、resnet_se が全くダウンロードされないという報告あり。v1.23.0 マルチモデルアーキテクチャのダウンロード機能にバグがあると判明。

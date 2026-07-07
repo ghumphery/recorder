@@ -130,6 +130,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('voiceprint:backfill-progress', handler)
     return () => ipcRenderer.removeListener('voiceprint:backfill-progress', handler)
   },
+  // v1.23.4: 語者模型下載 / 切換完成時主動通知前端
+  onVoiceprintActiveModelChanged: (callback) => {
+    const handler = (event, data) => callback(data)
+    ipcRenderer.on('voiceprint:active-model-changed', handler)
+    return () => ipcRenderer.removeListener('voiceprint:active-model-changed', handler)
+  },
   voiceprintListAllSpeakerNames: () => ipcRenderer.invoke('voiceprint:listAllSpeakerNames'),
   recoSearchBySpeaker: (p) => ipcRenderer.invoke('reco:searchBySpeaker', p),
  })

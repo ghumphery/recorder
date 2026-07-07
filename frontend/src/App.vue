@@ -891,7 +891,31 @@ export default {
         const r = await window.electronAPI.voiceprintDownload({ modelKey: key })
         if (r.success) {
           this.statusText = `✅ ${this.$t('voiceprint.modelDownload')} ${m.label}`
+          if (r.skipped) {
+            this.statusText = `ℹ️ ${m.label} 已是最新，不重複下載`
+          } else {
+            this.statusText = `✅ ${m.label} 下載完成並已切換為當前模型`
+            // v1.23.4: 後端會自動 setActiveModel；為了保險，額外主動呼叫一次。
+            //   避免「下載完但仍是 camp」的情況。
+            try {
+              const sa = await window.electronAPI.voiceprintSetActiveModel({ modelKey: key })
+              if (sa && sa.success) {
+                this.currentVoiceprintModel = sa.modelKey
+                this.voiceprintModelDim = sa.dim || 192
+              }
+            } catch (e2) {
+              console.warn('[voiceprint] setActiveModel 前端保險呼叫失敗 (不影響主流程):', e2)
+            }
+            this.statusText = `✅ ${m.label} 下載完成並已切換為當前模型 (dim=${this.voiceprintModelDim})`
+          }
           await this.loadVoiceprintModels()
+          // 重新載入當前模型狀態（防 race）
+          try {
+            const cur = await window.electronAPI.voiceprintGetCurrentModel()
+            if (cur && cur.success) {
+              this.currentVoiceprintModel = cur.modelKey
+            }
+          } catch (_) {}
         } else {
           this.statusText = `❌ ${this.$t('voiceprint.modelDownloadFail') || '下載失敗'}: ${r.error}`
           this.statusError = true

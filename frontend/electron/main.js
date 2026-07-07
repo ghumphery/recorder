@@ -2556,6 +2556,32 @@ ipcMain.handle('voiceprint:download', async (event, { modelKey } = {}) => {
       if (mainWindow) mainWindow.webContents.send('voiceprint:download-progress', { percent, modelKey: targetKey })
     }, targetKey)
     appLog('INFO', 'voiceprint', `聲紋模型 ${targetKey} 下載完成`)
+    // v1.23.4: 下載成功後自動設為當前模型，讓使用者接下來用「語者識別」時真的使用該模型。
+    //   同時寫回 settings.json，下次 App 開啟仍是此模型。
+    try {
+      const ar = voiceprint.setActiveModel(targetKey)
+      if (ar && ar.success) {
+        appLog('INFO', 'voiceprint', `已自動切換當前模型為 ${targetKey} (dim=${ar.dim})`)
+        if (mainWindow) mainWindow.webContents.send('voiceprint:active-model-changed', { modelKey: targetKey, dim: ar.dim })
+        // 嘗試寫回 settings（避免 main 依賴與 settings 模組互相干擾，使用 try/catch 隔離）
+        try {
+          const settingsPath = path.join(os.homedir(), 'recoder', 'settings.json')
+          let s = {}
+          if (fs.existsSync(settingsPath)) {
+            try { s = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) } catch (_) { s = {} }
+          }
+          s.voiceprintModel = targetKey
+          fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
+          fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2), 'utf-8')
+        } catch (e2) {
+          appLog('WARN', 'voiceprint', `寫回 voiceprintModel 設定失敗 (不影響這次 session): ${e2.message}`)
+        }
+      } else {
+        appLog('WARN', 'voiceprint', `下載完成但 setActiveModel 失敗: ${ar && ar.error}`)
+      }
+    } catch (eAct) {
+      appLog('ERROR', 'voiceprint', `setActiveModel 拋例外: ${eAct.message}`)
+    }
     return { success: true }
   } catch (e) {
     appLog('ERROR', 'voiceprint', `${targetKey} 下載失敗: ${e.message}`)
