@@ -2516,9 +2516,14 @@ ipcMain.handle('voiceprint:setActiveModel', async (event, { modelKey }) => {
 })
 
 // v1.22.0: 取得當前使用中的模型 key
+// v1.23.5: 同時回傳 dim (embedding 維度) 供前端 UI 同步顯示
 ipcMain.handle('voiceprint:getCurrentModel', async () => {
   try {
-    return { success: true, modelKey: voiceprint.getCurrentModel() }
+    return {
+      success: true,
+      modelKey: voiceprint.getCurrentModel(),
+      dim: voiceprint.getCurrentModelDim(),
+    }
   } catch (e) {
     return { success: false, error: e.message }
   }

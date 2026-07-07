@@ -387,6 +387,16 @@ function getCurrentModel() {
   return currentModelKey
 }
 
+/**
+ * v1.23.5: 取得當前使用中的模型 embedding 維度
+ *   若該 modelKey 不在 MODEL_REGISTRY 中，則回傳 null。
+ */
+function getCurrentModelDim() {
+  if (!currentModelKey) return null
+  const entry = MODEL_REGISTRY[currentModelKey]
+  return entry ? entry.dim : null
+}
+
 async function loadModel(modelKey) {
   // 向後相容：未傳 modelKey 時用 currentModelKey
   if (!modelKey) modelKey = currentModelKey
@@ -1367,6 +1377,7 @@ module.exports = {
   importModel,
   setActiveModel,
   getCurrentModel,
+  getCurrentModelDim,  // v1.23.5
   isModelCached,
   downloadModel,
   loadModel,

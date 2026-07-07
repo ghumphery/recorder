@@ -743,6 +743,9 @@ export default {
       showVoiceprintModelManager: false,
       voiceprintDownloading: false,  // 哪個 modelKey 正在下載
       voiceprintDownloadPercent: 0,
+      // v1.23.5: 當前模型的 embedding 維度 (camplus=192/resnet_se=256/ecapa_tdnn=192)
+      //   需在 data() 初始化、否則首次下載且 setActiveModel 失敗時會 render "undefined"
+      voiceprintModelDim: 192,
       // v1.23.0: Speaker Profile Database + 監督式 speaker recognition
       profiles: [],                  // [{id, name, modelKey, dim, centroid, samples, internalCoherence, source, createdAt, updatedAt}]
       showProfilePanel: false,
@@ -894,26 +897,34 @@ export default {
           if (r.skipped) {
             this.statusText = `ℹ️ ${m.label} 已是最新，不重複下載`
           } else {
-            this.statusText = `✅ ${m.label} 下載完成並已切換為當前模型`
+            // v1.23.5: 永遠先以上傳中帶來的 m.dim 作為預設 (來自 MODEL_REGISTRY 內建值)
+            //   避免 setActiveModel 失敗導致 "dim=undefined" 錯誤
+            const defaultDim = (m && m.dim) || 192
             // v1.23.4: 後端會自動 setActiveModel；為了保險，額外主動呼叫一次。
             //   避免「下載完但仍是 camp」的情況。
             try {
               const sa = await window.electronAPI.voiceprintSetActiveModel({ modelKey: key })
               if (sa && sa.success) {
                 this.currentVoiceprintModel = sa.modelKey
-                this.voiceprintModelDim = sa.dim || 192
+                this.voiceprintModelDim = sa.dim || defaultDim
+              } else {
+                // v1.23.5: 即使 setActiveModel 失敗，至少保持本地能拿到正確的 dim
+                this.currentVoiceprintModel = key
+                this.voiceprintModelDim = defaultDim
               }
             } catch (e2) {
               console.warn('[voiceprint] setActiveModel 前端保險呼叫失敗 (不影響主流程):', e2)
+              this.voiceprintModelDim = defaultDim
             }
             this.statusText = `✅ ${m.label} 下載完成並已切換為當前模型 (dim=${this.voiceprintModelDim})`
           }
           await this.loadVoiceprintModels()
-          // 重新載入當前模型狀態（防 race）
+          // v1.23.5: voiceprintGetCurrentModel 也跟著同步更新 dim，避免後端有最新狀態時 UI 仍顯示舊值
           try {
             const cur = await window.electronAPI.voiceprintGetCurrentModel()
             if (cur && cur.success) {
               this.currentVoiceprintModel = cur.modelKey
+              if (typeof cur.dim === 'number') this.voiceprintModelDim = cur.dim
             }
           } catch (_) {}
         } else {

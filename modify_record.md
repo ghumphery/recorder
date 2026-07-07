@@ -1,3 +1,27 @@
+
+
+## [2026-07-07 17:45]
+- **version**: 1.23.4 → 1.23.5 (patch: 修復下載完成後狀態訊息 "(dim=undefined)" bug)
+- **修改要求**: v1.23.4 釋出後，使用者反映「點 resnet_se 下載 → 狀態列出現 ✅ resnet_se 下載完成並已切換為當前模型 (dim=undefined)」。切換成功但 dim 變成 undefined。
+- **根因分析**:
+  1. `frontend/src/App.vue` `downloadVoiceprintModel()` line 904：`this.voiceprintModelDim = sa.dim || 192` — 但變數 `voiceprintModelDim` **從未在 `data()` 中初始化**。只有在 `if (sa && sa.success)` 分支內才設定，若後端回傳 success: false (例：InferenceSession 仍鎖住 .onnx 檔案、或 `loadModel` 剛把舊 session 釋放但新 session 建立中)，此變數仍是 `undefined`。
+  2. line 909 的 `statusText = ...(dim=${this.voiceprintModelDim})` 仍會組裝並 push 到 UI。
+  3. 即使後續 line 914 呼叫 `voiceprintGetCurrentModel()` 成功，也只更新了 `currentVoiceprintModel`，沒有同步更新 `voiceprintModelDim`。
+  4. `voiceprint:getCurrentModel` IPC handler 本身只回傳 `modelKey`，沒有回傳 `dim`，所以前端即使同步讀也拿不到數值。
+- **修改規劃**:
+  - `frontend/src/App.vue`：
+    1. `data()` 新增 `voiceprintModelDim: 192` (camplus 預設值)
+    2. `downloadVoiceprintModel()` 重構：以上傳中的 `m.dim` (來自 MODEL_REGISTRY 內建值) 作為預設，確保 setActiveModel 失敗時仍能 render 正確 dim
+    3. `voiceprintGetCurrentModel()` 取得回應時，若 `cur.dim` 為 number 也同步更新 `voiceprintModelDim`
+  - `frontend/electron/voiceprint.js`：新增 `getCurrentModelDim()` 函式 + export (讀取 `currentModelKey` 在 MODEL_REGISTRY 中的 `dim`)
+  - `frontend/electron/main.js` `voiceprint:getCurrentModel` handler：除了 `modelKey` 同時回傳 `dim`
+  - `frontend/package.json`：version 1.23.4 → 1.23.5
+- **修改結果**:
+  - 即使 IPC 失敗，UI 仍能顯示 (dim=192) / (dim=256) 等正確數值，不會再 (dim=undefined)
+  - `voiceprintGetCurrentModel` IPC 契約擴充為回傳 `{ modelKey, dim }`，未來前端可隨時重同步 dim
+  - 預期驗證：resnet_se 下載完成後，狀態列顯示「✅ resnet_se 下載完成並已切換為當前模型 (dim=256)」
+
+
 ## [2026-07-07 17:10]
 - **version**: 1.23.3 → 1.23.4 (patch: resnet_se 下載完成後自動切換為當前模型)
 - **修改要求**: 使用者反映「resnet_se 下載後沒有完成後續啟用設定」— 下載完成後 voiceprintJobManager.currentModelKey 仍是 camp，下一次「語者識別」仍使用 camp。v1.23.3 修了下載但漏了啟用。
