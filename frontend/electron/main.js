@@ -757,7 +757,7 @@ class VoiceprintJobManager {
     }
   }
 
-  addJob({ audioPath, segments, recordingId }) {
+  addJob({ audioPath, segments, recordingId, useGpu }) {
     const job = {
       id: this._generateId(),
       type: 'voiceprint',
@@ -770,10 +770,11 @@ class VoiceprintJobManager {
       result: null,
       audioPath,
       recordingId: recordingId || null,
+      useGpu: !!useGpu,  // v1.23.6
       params: { segments: segments || [] },
       log: [],
     }
-    this._log(job, `Job created (${(segments || []).length} segments)`)
+    this._log(job, `Job created (${(segments || []).length} segments, useGpu=${!!useGpu})`)
     this.jobQueue.push(job)
     this._sendUpdate(job)
     this.processNext()
@@ -809,10 +810,11 @@ class VoiceprintJobManager {
   async _executeJob(job) {
     const audioPath = job.audioPath
     const segments = (job.params && job.params.segments) || []
+    const useGpu = !!job.useGpu  // v1.23.6
     const result = await voiceprint.diarizeAudio(audioPath, segments, (percent) => {
       job.progress.percent = percent
       this._sendUpdate(job)
-    })
+    }, useGpu)
     job.result = { segments: result }
 
     // 如果有 recordingId，自動寫回 metadata 的 segments[].speaker
@@ -2334,15 +2336,17 @@ ipcMain.handle('voiceprint:openAudioDialog', async () => {
 })
 
 // v1.23.0: 有監督式 speaker identification
+// v1.23.6: voiceprint:identifySpeakers 也接受 useGpu
 ipcMain.handle('voiceprint:identifySpeakers', async (event, payload) => {
-  const { audioPath, segments, modelKey, threshold } = payload
-  appLog("INFO", "voiceprint", `identifySpeakers: ${audioPath} (${segments.length} 句, modelKey=${modelKey})`)
+  const { audioPath, segments, modelKey, threshold, useGpu } = payload
+  const useGpuFlag = !!useGpu
+  appLog("INFO", "voiceprint", `identifySpeakers: ${audioPath} (${segments.length} 句, modelKey=${modelKey}, useGpu=${useGpuFlag})`)
   try {
     const profiles = speakerProfile.getProfilesByModel(modelKey || "camplus")
     if (profiles.length === 0) {
       return { success: false, error: `沒有 modelKey=${modelKey} 的 profile，請先建立 speaker profile`, profiles: [] }
     }
-    const opts = {}
+    const opts = { useGpu: useGpuFlag }
     if (typeof threshold === "number") opts.threshold = threshold
     const r = await voiceprint.identifySpeakers(audioPath, segments, profiles, opts)
     appLog("INFO", "voiceprint", `辨識完成: ${r.matches.length} 個 segment 匹配到 profiles`)
@@ -2354,9 +2358,11 @@ ipcMain.handle('voiceprint:identifySpeakers', async (event, payload) => {
 })
 
 // v1.23.0: 批次對所有歷史錄音套用所有 profiles
+// v1.23.6: voiceprint:backfillAll 也接受 useGpu
 ipcMain.handle('voiceprint:backfillAll', async (event, payload = {}) => {
-  const { modelKey, threshold } = payload
-  appLog("INFO", "voiceprint", `backfillAll: 對所有歷史錄音套用 profiles (modelKey=${modelKey})`)
+  const { modelKey, threshold, useGpu } = payload
+  const useGpuFlag = !!useGpu
+  appLog("INFO", "voiceprint", `backfillAll: 對所有歷史錄音套用 profiles (modelKey=${modelKey}, useGpu=${useGpuFlag})`)
   try {
     const profiles = speakerProfile.getProfilesByModel(modelKey || "camplus")
     if (profiles.length === 0) return { success: false, error: "無 profile", processed: 0 }
@@ -2373,7 +2379,7 @@ ipcMain.handle('voiceprint:backfillAll', async (event, payload = {}) => {
         if (!meta.segments || meta.segments.length === 0 || !meta.audioPath) continue
         if (!fs.existsSync(meta.audioPath)) continue
         if (mainWindow) mainWindow.webContents.send("voiceprint:backfill-progress", { current: i + 1, total: metaFiles.length, recordingId: meta.id })
-        const opts = {}
+        const opts = { useGpu: useGpuFlag }
         if (typeof threshold === "number") opts.threshold = threshold
         const r = await voiceprint.identifySpeakers(meta.audioPath, meta.segments, profiles, opts)
         for (let j = 0; j < r.segments.length && j < meta.segments.length; j++) {
@@ -2530,6 +2536,7 @@ ipcMain.handle('voiceprint:getCurrentModel', async () => {
 })
 
 // v1.22.0: 列出當前所有已下載/已匯入模型（簡化版）
+// v1.23.6: status 增加 provider 欄位，回報 voiceprint session 實際使用的 EP (dml / cpu)
 ipcMain.handle('voiceprint:status', async () => {
   try {
     const models = voiceprint.listModels()
@@ -2538,7 +2545,8 @@ ipcMain.handle('voiceprint:status', async () => {
       success: true,
       cached: camplus ? camplus.cached : false,
       models,
-      currentModel: voiceprint.getCurrentModel()
+      currentModel: voiceprint.getCurrentModel(),
+      provider: voiceprint.getCurrentProvider ? voiceprint.getCurrentProvider() : 'cpu',
     }
   } catch (e) {
     return { success: true, cached: false }
@@ -2548,8 +2556,10 @@ ipcMain.handle('voiceprint:status', async () => {
 // v1.22.0: 下載指定模型（向後相容：未指定 modelKey 時下載預設 campplus）
 // v1.23.2: 先檢查快取，isModelCached 為 true 時只 log「已是最新」不 print「下載開始 / 完成」
 //   避免「重覆按按鈕」時 log 被 8 條「下載開始 / 下載完成」淺淺堆滿、誤導使用者。
-ipcMain.handle('voiceprint:download', async (event, { modelKey } = {}) => {
+// v1.23.6: voiceprint:download 接受 useGpu。下載 + 自動 setActiveModel 時以該 GPU 設定載入。
+ipcMain.handle('voiceprint:download', async (event, { modelKey, useGpu } = {}) => {
   const targetKey = modelKey || 'camplus'
+  const useGpuFlag = !!useGpu
   try {
     if (voiceprint.isModelCached(targetKey)) {
       appLog('INFO', 'voiceprint', `聲紋模型 ${targetKey} 已是最新 (cached)，略過下載`)
@@ -2563,11 +2573,12 @@ ipcMain.handle('voiceprint:download', async (event, { modelKey } = {}) => {
     appLog('INFO', 'voiceprint', `聲紋模型 ${targetKey} 下載完成`)
     // v1.23.4: 下載成功後自動設為當前模型，讓使用者接下來用「語者識別」時真的使用該模型。
     //   同時寫回 settings.json，下次 App 開啟仍是此模型。
+    // v1.23.6: setActiveModel 也支援 useGpu
     try {
-      const ar = voiceprint.setActiveModel(targetKey)
+      const ar = voiceprint.setActiveModel(targetKey, useGpuFlag)
       if (ar && ar.success) {
-        appLog('INFO', 'voiceprint', `已自動切換當前模型為 ${targetKey} (dim=${ar.dim})`)
-        if (mainWindow) mainWindow.webContents.send('voiceprint:active-model-changed', { modelKey: targetKey, dim: ar.dim })
+        appLog('INFO', 'voiceprint', `已自動切換當前模型為 ${targetKey} (dim=${ar.dim}, useGpu=${useGpuFlag})`)
+        if (mainWindow) mainWindow.webContents.send('voiceprint:active-model-changed', { modelKey: targetKey, dim: ar.dim, useGpu: useGpuFlag })
         // 嘗試寫回 settings（避免 main 依賴與 settings 模組互相干擾，使用 try/catch 隔離）
         try {
           const settingsPath = path.join(os.homedir(), 'recoder', 'settings.json')
@@ -2576,6 +2587,7 @@ ipcMain.handle('voiceprint:download', async (event, { modelKey } = {}) => {
             try { s = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) } catch (_) { s = {} }
           }
           s.voiceprintModel = targetKey
+          s.voiceprintUseGpu = useGpuFlag
           fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
           fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2), 'utf-8')
         } catch (e2) {
@@ -2594,12 +2606,14 @@ ipcMain.handle('voiceprint:download', async (event, { modelKey } = {}) => {
   }
 })
 
-ipcMain.handle('voiceprint:diarize', async (event, { audioPath, segments }) => {
-  appLog('INFO', 'voiceprint', `說話者標註開始: ${audioPath} (${segments.length} 句)`)
+// v1.23.6: voiceprint:diarize 接受 useGpu，轉傳給 diarizeAudio
+ipcMain.handle('voiceprint:diarize', async (event, { audioPath, segments, useGpu } = {}) => {
+  const useGpuFlag = !!useGpu
+  appLog('INFO', 'voiceprint', `說話者標註開始: ${audioPath} (${segments.length} 句, useGpu=${useGpuFlag})`)
   try {
     const result = await voiceprint.diarizeAudio(audioPath, segments, (percent) => {
       if (mainWindow) mainWindow.webContents.send('voiceprint:progress', { percent })
-    })
+    }, useGpuFlag)
     appLog('INFO', 'voiceprint', `說話者標註完成: ${result.length} 句`)
     return { success: true, segments: result }
   } catch (e) {
@@ -2609,10 +2623,12 @@ ipcMain.handle('voiceprint:diarize', async (event, { audioPath, segments }) => {
 })
 
 // v1.21.0: 半監督式 speaker propagation 同步接口 (秒回，量大仍走 voiceprint:jobSubmit)
-ipcMain.handle('voiceprint:propagate', async (event, { audioPath, segments, seeds, threshold }) => {
-  appLog('INFO', 'voiceprint', `半監督推算開始: ${audioPath} (${segments.length} 句, ${seeds.length} seeds)`)
+// v1.23.6: voiceprint:propagate 也接受 useGpu
+ipcMain.handle('voiceprint:propagate', async (event, { audioPath, segments, seeds, threshold, useGpu } = {}) => {
+  const useGpuFlag = !!useGpu
+  appLog('INFO', 'voiceprint', `半監督推算開始: ${audioPath} (${segments.length} 句, ${seeds.length} seeds, useGpu=${useGpuFlag})`)
   try {
-    const opts = {}
+    const opts = { useGpu: useGpuFlag }
     if (typeof threshold === 'number') opts.threshold = threshold
     // v1.21.4: propagateSpeakers() 回傳 { segments, centroidInfo }
     const r = await voiceprint.propagateSpeakers(audioPath, segments, seeds, opts)
@@ -2627,9 +2643,10 @@ ipcMain.handle('voiceprint:propagate', async (event, { audioPath, segments, seed
 })
 
 // ── Voiceprint Job IPC Handlers（v1.20.2） ──
-ipcMain.handle('voiceprint:jobSubmit', async (event, { audioPath, segments, recordingId }) => {
+// v1.23.6: voiceprint:jobSubmit 接受 useGpu
+ipcMain.handle('voiceprint:jobSubmit', async (event, { audioPath, segments, recordingId, useGpu } = {}) => {
   try {
-    const jobId = voiceprintJobManager.addJob({ audioPath, segments, recordingId })
+    const jobId = voiceprintJobManager.addJob({ audioPath, segments, recordingId, useGpu: !!useGpu })
     return { success: true, jobId }
   } catch (e) { return { success: false, error: e.message } }
 })

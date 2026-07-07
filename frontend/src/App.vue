@@ -1791,7 +1791,8 @@ export default {
               this.voiceprintProgress = data.percent
             })
           }
-          const dl = await window.electronAPI.voiceprintDownload()
+// v1.23.6: 下載聲紋模型時也帶上 useGpu
+          const dl = await window.electronAPI.voiceprintDownload({ useGpu: this.useGpu })
           if (!dl.success) {
             this.statusText = `❌ 下載失敗: ${dl.error}`
             this.statusError = true
@@ -1812,10 +1813,12 @@ export default {
       this.statusError = false
       try {
         const segments = this.transcriptionResults.map(s => ({ start: s.start, end: s.end, text: s.text }))
+// v1.23.6: 帶 useGpu
         const r = await window.electronAPI.voiceprintJobSubmit({
           audioPath: this.currentAudioPath,
           segments,
           recordingId: this.currentRecordingId || null,
+          useGpu: this.useGpu,
         })
         if (r.success) {
           this._diarizeJobId = r.jobId
@@ -2110,11 +2113,13 @@ export default {
       this.statusError = false
       try {
         const segments = this.transcriptionResults.map(s => ({ start: s.start, end: s.end, text: s.text, speaker: s.speaker || '' }))
+// v1.23.6: 帶 useGpu
         const r = await window.electronAPI.voiceprintPropagate({
           audioPath: this.currentAudioPath,
           segments,
           seeds,
           threshold: this.propagateThreshold,
+          useGpu: this.useGpu,
         })
         if (r.success) {
           // 套用結果 (保留使用者 seeds)
@@ -2337,10 +2342,12 @@ export default {
       this.statusError = false
       try {
         const segments = this.transcriptionResults.map(s => ({ start: s.start, end: s.end, text: s.text, speaker: s.speaker || '' }))
+// v1.23.6: 帶 useGpu
         const r = await window.electronAPI.voiceprintIdentifySpeakers({
           audioPath: this.currentAudioPath,
           segments,
           profiles: JSON.parse(JSON.stringify(this.profiles)),
+          useGpu: this.useGpu,
         })
         if (r.success) {
           let matched = 0, unmatched = 0
@@ -2383,8 +2390,10 @@ export default {
             this.statusText = `🔄 ${this.$t('voiceprint.profileBackfillProgress', { current: data.current, total: data.total })}`
           })
         }
+// v1.23.6: 帶 useGpu
         const r = await window.electronAPI.voiceprintBackfillAll({
           profiles: JSON.parse(JSON.stringify(this.profiles)),
+          useGpu: this.useGpu,
         })
         if (r.success) {
           this.statusText = `✅ 回溯完成：${r.processed} 個錄音已標註`

@@ -358,12 +358,12 @@ function downloadModel(progressCallback, modelKey = 'camplus') {
  *   - 需要預先下載/匯入 modelKey 對應的 .onnx
  *   - 返回 { success, modelKey, dim, message }
  */
-async function setActiveModel(modelKey) {
+async function setActiveModel(modelKey, useGpu = false) {
   try {
     if (!MODEL_REGISTRY[modelKey]) return { success: false, error: `未知的模型: ${modelKey}` }
     if (!isModelCached(modelKey)) return { success: false, error: `模型 ${modelKey} 尚未下載/匯入` }
-    // 如果切換到相同模型，不需重載
-    if (currentModelKey === modelKey && modelLoaded && session) {
+    // 如果切換到相同模型且 useGpu 未變，不需重載
+    if (currentModelKey === modelKey && modelLoaded && session && useGpu === _lastLoadUseGpu) {
       return { success: true, modelKey, dim: MODEL_REGISTRY[modelKey].dim, message: '已是當前模型' }
     }
     // 卸載舊 session
@@ -371,8 +371,8 @@ async function setActiveModel(modelKey) {
     session = null
     modelLoaded = false
     currentModelKey = modelKey
-    // 載入新模型
-    const ok = await loadModel(modelKey)
+    // 載入新模型 (v1.23.6: 支援 useGpu)
+    const ok = await loadModel(modelKey, useGpu)
     if (!ok) return { success: false, error: `載入模型 ${modelKey} 失敗` }
     return { success: true, modelKey, dim: MODEL_REGISTRY[modelKey].dim, message: '已切換' }
   } catch (e) {
@@ -397,31 +397,67 @@ function getCurrentModelDim() {
   return entry ? entry.dim : null
 }
 
-async function loadModel(modelKey) {
+// v1.23.6: 邏輯為「preferredEps + fallback」
+//   - useGpu=true: 優先 ['dml', 'cpu']。DML 是 onnxruntime-node 1.27.0 唯一原生支援的 GPU EP
+//     （在 Windows 11 + WDDM 2.9+ 驅動下會透過 Vulkan API 轉譯）
+//   - useGpu=false: 純 ['cpu']，行為與 v1.23.5 相同
+//   - 若 DML 載入失敗 (例如 v1.20.12 記錄的 campplus AveragePool 拋 80070057)，
+//     自動 retry 純 CPU 路徑，避免整個 diarize 失敗
+let _lastLoadProvider = 'cpu'  // v1.23.6: 記錄實際走哪個 EP，供 UI / log 參考
+let _lastLoadUseGpu = false    // v1.23.6: 記錄上次載入時 user 設定的 useGpu，供 cache 命中判斷
+
+async function loadModel(modelKey, useGpu = false) {
   // 向後相容：未傳 modelKey 時用 currentModelKey
   if (!modelKey) modelKey = currentModelKey
-  if (modelKey === currentModelKey && modelLoaded && session) return true
+  if (modelKey === currentModelKey && modelLoaded && session && useGpu === _lastLoadUseGpu) return true
   try {
     if (!ort) ort = require('onnxruntime-node')
     const mp = modelPath(modelKey)
     if (!fs.existsSync(mp)) return false
-    // v1.20.12: campplus-zh-en 模型在 DML (DirectML) 上 AveragePool 等節點會拋 80070057 參數錯誤。
-    // 改成優先 CPU。CPU 本身已成 principal 路徑，且聲紋抽取 5-15s/段不是 IO-bottleneck，DML 加速價值有限。
-    const newSession = await ort.InferenceSession.create(mp, {
-      executionProviders: ['cpu'],
-      graphOptimizationLevel: 'all'
-    })
+
+    // v1.23.6: useGpu=true 時嘗試 DML，失敗自動 fallback CPU
+    const providers = useGpu ? ['dml', 'cpu'] : ['cpu']
+    let newSession = null
+    let usedProvider = null
+    let lastErr = null
+    for (const ep of providers) {
+      try {
+        newSession = await ort.InferenceSession.create(mp, {
+          executionProviders: [ep],
+          graphOptimizationLevel: 'all',
+        })
+        usedProvider = ep
+        break
+      } catch (e) {
+        lastErr = e
+        console.warn(`[voiceprint] loadModel(${modelKey}) 嘗試 EP '${ep}' 失敗: ${e && e.message ? e.message : e}${ep === 'dml' ? ' — 將 fallback CPU' : ''}`)
+        if (ep === 'cpu') throw e  // CPU 也失敗就放棄
+      }
+    }
+    if (!newSession) {
+      // 不可能走到這裡（CPU 失敗已 throw），防呆
+      throw lastErr || new Error('all execution providers failed')
+    }
+
     // 切換成功後才取代全域 session
     if (session) { try { session.release && session.release() } catch (_) {} }
     session = newSession
     modelLoaded = true
     currentModelKey = modelKey
+    _lastLoadProvider = usedProvider
+    _lastLoadUseGpu = useGpu
+    console.log(`[voiceprint] loadModel(${modelKey}) 完成，使用 EP: ${usedProvider}${usedProvider === 'dml' ? ' (Vulkan via DirectML)' : ''}`)
     return true
   } catch (e) {
     modelLoaded = false
     console.error(`[voiceprint] loadModel(${modelKey}) 失敗:`, e && e.message ? e.message : e)
     return false
   }
+}
+
+// v1.23.6: 對外讀取目前實際使用的 EP (供 UI 顯示 / debug)
+function getCurrentProvider() {
+  return _lastLoadProvider
 }
 
 /**
@@ -964,7 +1000,8 @@ function clusterEmbeddings(embeddings, threshold = CLUSTER_THRESHOLD) {
  * 載入聲紋模型，供 diarizeAudio / propagateSpeakers 共用。
  * v1.22.0: 支援指定 modelKey
  */
-async function _ensureModelLoaded(modelKey) {
+// v1.23.6: _ensureModelLoaded 也接受 useGpu，轉傳給 loadModel 以選擇 EP
+async function _ensureModelLoaded(modelKey, useGpu = false) {
   if (!modelKey) modelKey = currentModelKey
   const mp = modelPath(modelKey)
   if (!fs.existsSync(mp)) {
@@ -982,7 +1019,7 @@ async function _ensureModelLoaded(modelKey) {
     resetModel(modelKey)
     throw new Error(`聲紋模型檔已損壞 (大小: ${(stat.size / 1024 / 1024).toFixed(1)} MB，但前 10 bytes 不是合法 ONNX header)。已自動刪除，請重新下載。`)
   }
-  if (!await loadModel(modelKey)) {
+  if (!await loadModel(modelKey, useGpu)) {
     // v1.23.2: loadModel 失敗時也自動重設一次。
     //   可能是 onnxruntime native binary 問題 (v1.20.3 已修但需要重編譯)，
     //   也可能是上述 ONNX 驗證後 size 仍正常但 binary 結構損壞的罕見情境。
@@ -998,11 +1035,12 @@ async function _ensureModelLoaded(modelKey) {
  * 主流程：對音檔進行說話者標註 (無監督聚類)
  * v1.21.0: 重構為使用 _ensureModelLoaded + _extractAllEmbeddings 共用 helper
  */
-async function diarizeAudio(audioPath, segments, progressCallback) {
+// v1.23.6: diarizeAudio 也接受 useGpu，轉傳給 _ensureModelLoaded 以選 EP
+async function diarizeAudio(audioPath, segments, progressCallback, useGpu = false) {
   if (!fs.existsSync(audioPath)) {
     throw new Error(`音檔不存在: ${audioPath}`)
   }
-  await _ensureModelLoaded()
+  await _ensureModelLoaded(undefined, useGpu)
   const { embeddings, validIndices } = await _extractAllEmbeddings(audioPath, segments, progressCallback)
 
   // 對有 embedding 的 segment 進行聚類
@@ -1074,15 +1112,17 @@ async function diarizeAudio(audioPath, segments, progressCallback) {
  *     seeds:     Array<{ idx: number, name: string }>   使用者已標註的種子 (idx 為 segments 索引)
  *     options:   { progressCallback?: (percent: number) => void, threshold?: number }
  */
+// v1.23.6: propagateSpeakers 也接受 useGpu (從 options.useGpu 或第二個參數)
 async function propagateSpeakers(audioPath, segments, seeds, options = {}) {
-  const { progressCallback, threshold = PROPAGATE_MIN_THRESHOLD } = options
+  const useGpu = typeof options === 'object' && options !== null && 'useGpu' in options ? !!options.useGpu : false
+  const { progressCallback, threshold = PROPAGATE_MIN_THRESHOLD } = (typeof options === 'object' && options !== null) ? options : {}
   if (!fs.existsSync(audioPath)) throw new Error(`音檔不存在: ${audioPath}`)
   if (!Array.isArray(seeds) || seeds.length === 0) {
     throw new Error('seeds 不可為空 — 至少需標註一句才能推算')
   }
   if (!segments || segments.length === 0) return segments
 
-  await _ensureModelLoaded()
+  await _ensureModelLoaded(undefined, useGpu)
   const { embeddings, validIndices } = await _extractAllEmbeddings(audioPath, segments, progressCallback)
 
   // 為每個 seed 找其對應的 embedding (可能 null = 該段太短無法抽出)
@@ -1236,13 +1276,14 @@ function _computeCentroidFromEmbeddings(embs) {
  *   與 propagateSpeakers 共享 trimmed mean centroid 邏輯
  *   回傳的 profile 物件可直接傳給 speakerProfile.saveProfile()
  */
-async function buildProfile(audioPath, segments, seeds, modelKey) {
+// v1.23.6: buildProfile 也接受 useGpu
+async function buildProfile(audioPath, segments, seeds, modelKey, useGpu = false) {
   if (!fs.existsSync(audioPath)) throw new Error(`音檔不存在: ${audioPath}`)
   if (!Array.isArray(seeds) || seeds.length === 0) {
     throw new Error('seeds 不可為空')
   }
   if (!modelKey) modelKey = currentModelKey
-  await _ensureModelLoaded(modelKey)
+  await _ensureModelLoaded(modelKey, useGpu)
   const { embeddings, validIndices } = await _extractAllEmbeddings(audioPath, segments, null)
 
   // 收集該 name 的所有 seed embeddings
@@ -1288,11 +1329,12 @@ async function buildProfile(audioPath, segments, seeds, modelKey) {
  *   整段音檔視為單一 speaker
  *   回傳單一 profile
  */
-async function buildProfileFromAudioFile(audioPath, name, modelKey) {
+// v1.23.6: buildProfileFromAudioFile 也接受 useGpu
+async function buildProfileFromAudioFile(audioPath, name, modelKey, useGpu = false) {
   if (!fs.existsSync(audioPath)) throw new Error(`音檔不存在: ${audioPath}`)
   if (!name || !name.trim()) throw new Error('name 不可為空')
   if (!modelKey) modelKey = currentModelKey
-  await _ensureModelLoaded(modelKey)
+  await _ensureModelLoaded(modelKey, useGpu)
   const pcm = await extractSegmentPcm(audioPath, 0, 999999, null)
   if (!pcm || pcm.length < 4800) {
     throw new Error('音檔太短（< 0.3 秒），無法抽取 embedding')
@@ -1319,8 +1361,10 @@ async function buildProfileFromAudioFile(audioPath, name, modelKey) {
  *   options: { progressCallback, threshold }
  *   回傳 { segments: [{ start, end, speaker, score }], matches: [...] }
  */
+// v1.23.6: identifySpeakers 也接受 useGpu (從 options.useGpu)
 async function identifySpeakers(audioPath, segments, profiles, options = {}) {
-  const { progressCallback, threshold = PROPAGATE_MIN_THRESHOLD } = options
+  const useGpu = typeof options === 'object' && options !== null && 'useGpu' in options ? !!options.useGpu : false
+  const { progressCallback, threshold = PROPAGATE_MIN_THRESHOLD } = (typeof options === 'object' && options !== null) ? options : {}
   if (!fs.existsSync(audioPath)) throw new Error(`音檔不存在: ${audioPath}`)
   if (!segments || segments.length === 0) return { segments: [], matches: [] }
   if (!Array.isArray(profiles) || profiles.length === 0) {
@@ -1328,7 +1372,7 @@ async function identifySpeakers(audioPath, segments, profiles, options = {}) {
   }
   // 用第一個 profile 的 modelKey 決定要載入哪個模型
   const modelKey = profiles[0].modelKey || currentModelKey
-  await _ensureModelLoaded(modelKey)
+  await _ensureModelLoaded(modelKey, useGpu)
   const { embeddings, validIndices } = await _extractAllEmbeddings(audioPath, segments, progressCallback)
 
   // 過濾出同 modelKey 的 profiles
@@ -1381,6 +1425,7 @@ module.exports = {
   isModelCached,
   downloadModel,
   loadModel,
+  getCurrentProvider,  // v1.23.6
   resetModel,
   diarizeAudio,
   propagateSpeakers,
