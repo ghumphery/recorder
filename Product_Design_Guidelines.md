@@ -1,7 +1,8 @@
 # 產品設計指引 (Product Design Guidelines)
 
-> **版本**: 1.21.4
-> **最後更新日期**: 2026-07-01
+> **版本**: 1.23.6
+> **最後更新日期**: 2026-07-08
+- **v1.23.6 (2026-07-08)**：patch — 修聲紋 GPU/DirectML (Vulkan) 加速。原 v1.23.5 UI 有「啟用 GPU」勾選框但程式碼未傳 useGpu flag 給 voiceprint 模組，造成 `loadModel()` 永遠 hardcoded `executionProviders: ['cpu']`，勾選無效。修正：(1) `voiceprint.js` `loadModel(modelKey, useGpu)` 改為 `useGpu ? ['dml', 'cpu'] : ['cpu']`，DML 失敗自動 fallback CPU（避免 v1.20.12 記錄的 campplus AveragePool 拋 80070057 報錯）；新增 `_lastLoadProvider` / `_lastLoadUseGpu` cache 變數（移至 loadModel 之前），cache hit 判斷包含 useGpu；新增 `getCurrentProvider()` 對外讀取當前 session 實際使用的 EP。(2) 級聯到 setActiveModel / _ensureModelLoaded / diarizeAudio / propagateSpeakers / identifySpeakers / buildProfile / buildProfileFromAudioFile 全部加 useGpu 參數並轉傳；module.exports 新增 `getCurrentProvider`。(3) main.js 7 個 voiceprint IPC handler 接受 useGpu：`voiceprint:status` 新增 `provider` 欄位回傳、`voiceprint:download` 下載後 setActiveModel 也帶 useGpu、`voiceprint:diarize` / `voiceprint:propagate` (用 opts.useGpu) / `voiceprint:identifySpeakers` / `voiceprint:backfillAll` / `voiceprint:jobSubmit`（新 useGpu 欄位透傳）。(4) `VoiceprintJobManager` addJob / _executeJob 接受 useGpu，背景 diarize job 也會走 GPU 加速。(5) App.vue 5 個呼叫點都帶 `useGpu: this.useGpu`（voiceprintDownload / voiceprintJobSubmit / voiceprintPropagate / voiceprintIdentifySpeakers / voiceprintBackfillAll）。(6) `frontend/package.json` 1.23.5 → 1.23.6。DirectML 是 onnxruntime-node 1.27.0 唯一原生支援的 GPU EP，在 Windows 11 + WDDM 2.9+ 驅動下會透過 Vulkan API 轉譯 GPU 運算，與 whisper.cpp 的 Vulkan 加速路徑一致。
 - **v1.21.4 (2026-07-01)**：minor 演算法強化 — 強化多 seed centroid 計算 (trimmed mean + outlier rejection)。`propagateSpeakers()` 在 ≥3 個 seeds 時改為：先計算每個 seed 與其他 seed 的平均 cosine similarity，排序後去掉最高/最低各 ⌊n/4⌋ 個 outliers（最多各 1 個），再用剩餘 seeds 的 mean 作為 centroid；保留 `centroidInfo` 供 UI 顯示 `internalCoherence` (種子內部一致性 0~1)。解決「同一句重覆標記的 seed 拉偏 centroid」與「無關句子（背景音、咳嗽）拉偏 centroid」兩個問題；對大多數實際場景，3–5 個乾淨 seeds 已足夠，10+ 個 seeds 的邊際效益遞減。
 - **v1.21.3 (2026-07-01)**：minor 新功能 — 逐字稿講者標籤顯示每一句的聲紋值。`diarizeAudio()` 與 `propagateSpeakers()` 在 result 中加入 `score` (cosine similarity 0~1)，App.vue speaker tag 旁顯示「[speaker] [score]」如「張三 85」表示 85% 相似度。
 - **v1.21.2 (2026-06-30)**：hotfix — 修正講者標籤編輯後逐字稿變成無音檔狀態。`saveRecordingMeta()` 當 `currentAudioPath` 為空時主動從舊 metadata 載入保留 `audioPath`；`reviewRecording()` 不再強制將 `currentAudioPath` 設為 `null`，改為讀取 `r.meta.audioPath`，並自動呼叫 `loadAudioUrl` 載入音檔 URL。
@@ -640,8 +641,8 @@ resnet_se: {
 
 ### 10. 聲紋說話者標註 (`frontend/electron/voiceprint.js` + `frontend/electron/main.js`)
 - **功能**：基於 ONNX Runtime 對每個 segment 抽取 speaker embedding，透過 cosine similarity 聚類分群，自動標註 Speaker_1、Speaker_2...
-- **模型**：`campplus-zh-en.onnx`（~50MB，200k 說話者訓練，支援中英日，Apache-2.0）
-- **推理引擎**：`onnxruntime-node`（優先 DirectML GPU，fallback CPU）
+- **模型**：`campplus-zh-en.onnx`（~50MB，200k 說話者訓練，支援中英日，Apache-2.0）；v1.22.0 起支援多模型架構 MODEL_REGISTRY（camplus / ecapa_tdnn / resnet_se）
+- **推理引擎**：`onnxruntime-node` 1.27.0。**v1.23.6 起** Execution Provider 改為參數化：`useGpu=true` 時 EP 陣列 `['dml', 'cpu']` 優先嘗試 DirectML（Vulkan 後端），失敗自動 fallback CPU；`useGpu=false` 時直接 `['cpu']`。
 - **特徵抽取**：80-dim fbank + CMVN（純 JS 實作，無 Python 依賴）
 - **分群演算法**：Cosine similarity + 貪婪聚類（threshold=0.6）
 - **音檔切割**：ffmpeg 依 segment 時間區間切割為獨立 WAV
@@ -649,22 +650,28 @@ resnet_se: {
   ```
   segments → ffmpeg 切割每個 segment 的 PCM
           → 80-dim fbank 特徵抽取
-          → ONNX Runtime 抽取 192 維 embedding
+          → ONNX Runtime 抽取 192 維 embedding (EP: dml 或 cpu)
           → Cosine similarity 計算相鄰段落相似度
           → 貪婪聚類分群
           → 標註 Speaker_1, Speaker_2, ...
           → 寫入 segments[].speaker
   ```
-- **後端 IPC**：
-  - `voiceprint:status` — 檢查模型是否已下載
-  - `voiceprint:download` — 下載聲紋模型（含進度推送）
-  - `voiceprint:diarize` — 執行說話者標註（含進度推送）
+- **後端 IPC**（v1.23.6 起所有 IPC 都接受 useGpu 參數）：
+  - `voiceprint:status` — 檢查模型是否已下載，回傳 `{ cached, models, currentModel, provider }`（`provider` 為 `'dml'` 或 `'cpu'`，v1.23.6 新增）
+  - `voiceprint:download` — 下載聲紋模型（含進度推送），`{ modelKey, useGpu }` → 下載後自動 `setActiveModel(modelKey, useGpu)`
+  - `voiceprint:diarize` — 執行說話者標註（含進度推送），`{ audioPath, segments, useGpu }`
+  - `voiceprint:propagate` — 半監督式標註（v1.21.0），`{ audioPath, segments, seeds, threshold, useGpu }` (useGpu 在 options.useGpu)
+  - `voiceprint:identifySpeakers` — 監督式識別（v1.23.0），`{ audioPath, segments, modelKey, threshold, useGpu }`
+  - `voiceprint:backfillAll` — 批次回溯（v1.23.0），`{ modelKey, threshold, useGpu }`
+  - `voiceprint:jobSubmit` — 背景 Job 提交（v1.20.2），`{ audioPath, segments, recordingId, useGpu }`
+  - `voiceprint:profileList / Save / Rename / Delete / Stats / BuildFromSeeds / BuildFromAudioFile` — Profile Database CRUD（v1.23.0）
+  - `voiceprint:listModels / importModel / setActiveModel / openImportDialog / getCurrentModel` — 多模型管理（v1.22.0）
 - **前端 UI**：
   - LLM 動作列新增「👥 標註說話者」按鈕（橙色 #FF5722）
   - 首次使用提示下載模型（~50MB）
   - 處理中顯示進度百分比
   - 完成後逐字稿每句顯示 Speaker 標籤
-- **GPU 加速**：`onnxruntime-node` 支援 DirectML EP（Windows），與現有 Vulkan GPU 加速機制一致
+- **GPU 加速（v1.23.6）**：直接拿設定面板的 `useGpu` flag 傳給所有 voiceprint 操作。`onnxruntime-node` 1.27.0 唯一原生支援的 GPU EP 是 DirectML（DML），在 Windows 11 + WDDM 2.9+ 驅動下會自動透過 Vulkan API 轉譯 GPU 運算。與 whisper.cpp 的 Vulkan 加速路徑同源。失敗自動 fallback CPU（v1.20.12 記錄的 campplus AveragePool 拋 80070057 不會阻斷使用）。使用者可從 `voiceprint:status` 的 `provider` 欄位看到當前 session 實際使用的 EP。
 
 ### 9. LLM 文件管理 (`frontend/src/App.vue` + `frontend/electron/main.js`)
 - **功能**：將 LLM 優化/翻譯/摘要結果自動存入 documents 歷史陣列，支援檢視、刪除、持久化儲存
@@ -777,3 +784,146 @@ resnet_se: {
 - profile 必須與其 modelKey 一致使用；切換 model 後舊 profile 不可用
 - 短音檔建立 profile 時若 < 1.5s 可能 centroid 不穩定（顯示低 coherence 提示使用者重做）
 - 跨資料夾 backfill 不自動限速，可能 CPU 短時間高負載
+
+## 18. v1.23.6 新增 — 聲紋 GPU/DirectML (Vulkan) 加速架構
+
+### 動機與現狀
+- v1.20.2 首次實作聲紋說話者標註時，`onnxruntime-node` 在 Windows 下唯一可用的 GPU EP 是 DirectML (DML)。
+- 但 v1.20.6–v1.23.5 期間 `voiceprint.js` 的 `loadModel()` 函式 `executionProviders` 寫死為 `['cpu']`，GPU 加速實際上從未走過。
+- 設定面板的「啟用 GPU」勾選雖然會把 `useGpu` 寫入 settings，但 `App.vue` 從未把這個 flag 傳給 voiceprint 操作，造成「勾了沒用」的體驗。
+- v1.23.6 修正這個一致性问题：把 `useGpu` 串流從前端到後端到 ONNX InferenceSession EP 選擇全線打通。
+
+### 架構總覽
+
+```
+Settings UI (useGpu checkbox)
+       ↓ this.useGpu
+App.vue voiceprintDownload() / jobSubmit() / propagate() / identify() / backfill()
+       ↓ useGpu: this.useGpu
+main.js voiceprint:* IPC handler (7 個加 useGpu 參數)
+       ↓ useGpu
+voiceprintJobManager.addJob({useGpu}) / _executeJob(...)
+       ↓ useGpu
+voiceprint.js loadModel(modelKey, useGpu)
+       ↓ useGpu
+ort.InferenceSession.create(mp, { executionProviders: useGpu ? ['dml', 'cpu'] : ['cpu'] })
+       ↓ GPU
+DirectML (DML) → Vulkan API → WDDM 2.9+ driver → GPU
+       ↓ CPU (fallback)
+onnxruntime CPU EP
+```
+
+### 函數簽名變更
+
+`voiceprint.js`：
+| 函式 | 變更 |
+|---|---|
+| `loadModel(modelKey, useGpu=false)` | 改為接受 `useGpu` 參數，動態決定 EP 陣列；新增 `_lastLoadProvider` / `_lastLoadUseGpu` cache 變數 |
+| `setActiveModel(modelKey, useGpu=false)` | 改為接受 `useGpu`，轉傳給 `loadModel` |
+| `_ensureModelLoaded(modelKey, useGpu=false)` | 改為接受 `useGpu`，轉傳給 `loadModel` |
+| `diarizeAudio(audioPath, segments, progressCb, useGpu=false)` | 改為接受 `useGpu`，轉傳給 `_ensureModelLoaded` |
+| `propagateSpeakers(audioPath, segments, seeds, options={useGpu, threshold})` | 改為從 `options.useGpu` 讀取 |
+| `identifySpeakers(audioPath, segments, profiles, options={useGpu, threshold})` | 改為從 `options.useGpu` 讀取 |
+| `buildProfile(audioPath, segments, seeds, modelKey, useGpu=false)` | 改為接受 `useGpu` |
+| `buildProfileFromAudioFile(audioPath, name, modelKey, useGpu=false)` | 改為接受 `useGpu` |
+| `getCurrentProvider()` | **新增** — 對外讀取當前 session 實際使用的 EP (`'dml'` / `'cpu'`) |
+
+`module.exports`：
+- 新增 `getCurrentProvider`
+
+### EP 選擇策略（loadModel 內部）
+
+```js
+const providers = useGpu ? ['dml', 'cpu'] : ['cpu']
+let newSession = null, usedProvider = null, lastErr = null
+for (const ep of providers) {
+  try {
+    newSession = await ort.InferenceSession.create(mp, {
+      executionProviders: [ep],
+      graphOptimizationLevel: 'all',
+    })
+    usedProvider = ep
+    break
+  } catch (e) {
+    lastErr = e
+    console.warn(`[voiceprint] loadModel(${modelKey}) 嘗試 EP '${ep}' 失敗: ${e.message}${ep === 'dml' ? ' — 將 fallback CPU' : ''}`)
+    if (ep === 'cpu') throw e  // CPU 也失敗就放棄
+  }
+}
+```
+
+### IPC 契約變更
+
+| Channel | Payload 變更 |
+|---|---|
+| `voiceprint:status` | 無變更 payload；回傳新增 `provider` 欄位 |
+| `voiceprint:download` | 新增 `useGpu?: boolean`；下載後 `setActiveModel(modelKey, useGpu)` |
+| `voiceprint:diarize` | 新增 `useGpu?: boolean` |
+| `voiceprint:propagate` | 新增 `useGpu?: boolean` (傳入 `options.useGpu`) |
+| `voiceprint:identifySpeakers` | 新增 `useGpu?: boolean` |
+| `voiceprint:backfillAll` | 新增 `useGpu?: boolean` |
+| `voiceprint:jobSubmit` | 新增 `useGpu?: boolean` |
+
+### VoiceprintJobManager 變更
+
+- `addJob({ ..., useGpu })` — 接受 useGpu 欄位並存入 job 物件
+- `_executeJob(job)` — 從 `job.useGpu` 讀取並傳給 `voiceprint.diarizeAudio(..., useGpu)`
+- 背景 diarize job 因此也會走 GPU 加速，與手動 submit 行為一致
+
+### App.vue 變更
+
+5 個 voiceprint 操作呼叫點都帶 `useGpu: this.useGpu`：
+```js
+await window.electronAPI.voiceprintDownload({ modelKey, useGpu: this.useGpu })
+await window.electronAPI.voiceprintJobSubmit({ audioPath, segments, recordingId, useGpu: this.useGpu })
+await window.electronAPI.voiceprintPropagate({ audioPath, segments, seeds, threshold, useGpu: this.useGpu })
+await window.electronAPI.voiceprintIdentifySpeakers({ audioPath, segments, profiles: ..., useGpu: this.useGpu })
+await window.electronAPI.voiceprintBackfillAll({ profiles: ..., useGpu: this.useGpu })
+```
+
+`preload.js` 不用改 — payload pass-through 已正確。
+
+### DirectML vs CUDA vs WebGPU
+
+- **DirectML (DML)**：onnxruntime-node 1.27.0 在 Windows 下唯一原生支援的 GPU EP。在 Windows 11 + WDDM 2.9+ 驅動下會自動透過 **Vulkan API** 轉譯 GPU 運算。**不需 CUDA toolkit 或 NVIDIA 顯卡**，AMD RX / Intel Arc / NVIDIA 全系列都能用。
+- **CUDA**：onnxruntime-node 不支援（需要 nvidia/cuda-onnxruntime 特殊 build）。Recorder 不走這條。
+- **WebGPU**：onnxruntime-node 不支援（WebGPU 是瀏覽器端的 EP，Node.js side 沒有）。Recorder 不走這條。
+- **ROCm / OpenCL**：onnxruntime-node 也不支援。DirectML 是唯一選項。
+
+### 失敗自動 fallback 行為
+
+- DML 失敗時（例如 v1.20.12 記錄的 campplus ONNX AveragePool 算子拋 `80070057 參數錯誤`），`loadModel()` 自動 retry CPU 端。
+- 整體 diarize / propagate / identify 不會因此失敗，只會跑得稍慢。
+- `getCurrentProvider()` 回傳 `'cpu'` 表示實際走了 fallback 路徑。
+- 使用者可從 recorder.log (`recorder.log` 在 `~/.recoder/`) 看到 `[voiceprint] loadModel(camplus) 嘗試 EP 'dml' 失敗: ... — 將 fallback CPU` 警告。
+
+### 設計決策紀錄
+
+- **為什麼不做 ONNX Runtime EP priority 全開（`['cuda', 'dml', 'cpu']`）？** 因為 onnxruntime-node 1.27.0 build 不含 CUDA support，列出 cuda EP 會導致不必要的 `EP_NOT_FOUND` 警告日誌。只列 `['dml', 'cpu']` 兩個候選即可。
+- **為什麼不寫成「總是用 DML 失敗就 throw」？** 因為部分使用者環境的 DML 驅動可能在邊緣狀態（例如 VDD 重啟後、顯卡被其它程式佔用）。提供 fallback 提升使用體驗。
+- **為什麼在 loadModel 內部控制 EP 選擇？** 讓 `useGpu` 變成「語意 flag」而非「EP 字串」，未來若 onnxruntime-node 新增其它 EP（如 DirectX 12、WebGPU Node binding）只需改 loadModel 內部幾行，不需改 API 契約。
+- **為什麼 cache key 包含 `_lastLoadUseGpu`？** 因為 ONNX InferenceSession 不能同時存在兩個（不同 EP 會 conflict）。當使用者切換 useGpu 時需要重新載入。cache key 確保下次 `useGpu` 變動時 force reload。
+
+### 與 whisper Vulkan 加速的關係
+
+whisper-cli.exe 的 Vulkan 加速路徑是 **whisper.cpp 內建的 ggml-vulkan backend**，透過 `ggml-vulkan.dll` 直接呼叫 Vulkan API。
+voiceprint 的 DML 加速路徑是 **onnxruntime-node 透過 DML 內部呼叫 Vulkan API**。
+兩者最終都走 Vulkan → WDDM → GPU 驅動，但 API 進入點不同（whisper 自帶、voiceprint 透過 DML）。**理論上若 GPU 驅動有問題，兩個會一起出問題；好的話兩個都受惠。**
+
+### 與 v1.20.12 / v1.20.13 的關係
+
+- v1.20.12 記錄：「DML GPU AveragePool 算子與 campplus 模型不相容，抛 80070057」
+- v1.20.13 暫時解法：把 executionProviders 改為 `['cpu']` 完全避開
+- v1.23.6 改進：改為 `['dml', 'cpu']` 嘗試 DML，失敗自動 fallback。雖然 AveragePool 80070057 仍可能發生（DML driver bug），但至少 DML driver 更新 / 不同顯卡可能可成功。多數 AMD / Intel 內顯 + Windows 11 24H2+ 環境下 DML 跑 campplus 應該是 OK 的。
+
+### 未來 Roadmap
+
+- **`voiceprint:status` 顯示 `provider`**：UI 可在 speaker panel 旁顯示「目前使用 DML/Vulkan」徽章。
+- **GPU device 選擇**：v1.20.6 whisper 已有 `gpuDevice` 設定，voiceprint 可參考。但 onnxruntime-node 的 DML EP 不直接支援 device 選擇（總是使用預設 GPU）。可考慮加入 `onnxruntime-node/dml-directml` 第三方程式庫。
+- **多 GPU 支援**：DML 多卡環境下可加入 `deviceId` 參數（v1.0 onnxruntime-DirectML API 有，但 v1.27.0 預設不暴露）。
+- **WebGPU 評估**：未來 onnxruntime-node 若新增 WebGPU backend（Node 20+ 已內建 WebGPU），可作為 WDDM 2.9 不滿足時的替代方案。
+
+## 輸出限制
+- **不要刪除舊有核心邏輯**：更新是「增量」或「修正」，除非新功能取代了舊功能，否則不可遺漏舊有的規範。
+- **保持簡潔與具體**：寫出具體的技術與設計指導，避免空泛的形容詞。
+- **高可讀性**：使用 Markdown 的標題、粗體、條列式，確保開發者能在 3 分鐘內讀完變更重點。

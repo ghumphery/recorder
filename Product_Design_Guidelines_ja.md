@@ -1,7 +1,23 @@
 # 製品設計ガイドライン (Product Design Guidelines)
 
-> **バージョン**: 1.20.11
-> **最終更新日**: 2026-06-30
+> **バージョン**: 1.23.6
+> **最終更新日**: 2026-07-08
+
+## v1.23.6 (2026-07-08) — 声紋 GPU / DirectML (Vulkan) アクセラレーション対応
+
+**問題**: v1.23.5 では設定パネルに「GPU 有效化」チェックボックスが表示されていたが、コードが `useGpu` フラグを声紋モジュールに伝えていなかったため、`loadModel()` は常に `executionProviders: ['cpu']` がハードコードされており、チェックボックスは実質的に無効だった。ユーザーから「vulkan GPU 在聲紋辨識 無法使用gpu，就算 enable vulkan 選項」という報告を受けた。
+
+**修正**:
+1. `voiceprint.js` の `loadModel(modelKey, useGpu)` を `useGpu ? ['dml', 'cpu'] : ['cpu']` に変更。DML は `onnxruntime-node` 1.27.0 がネイティブにサポートする唯一の GPU EP。Windows 11 + WDDM 2.9+ ドライバ上で Vulkan API コールに透過変換される。DML 失敗時 (例: v1.20.12 で記録された campplus AveragePool の `80070057`)、`loadModel` は自動的に CPU パスにリトライする。`_lastLoadProvider` / `_lastLoadUseGpu` キャッシュ変数を `loadModel` の前に移動（hoisting 順序バグ回避）、`getCurrentProvider()` を新設して実際の使用 EP を公開。
+2. カスケード: `setActiveModel`、`_ensureModelLoaded`、`diarizeAudio`、`propagateSpeakers`、`identifySpeakers`、`buildProfile`、`buildProfileFromAudioFile` 全て `useGpu` を受け取って転送。`module.exports` に `getCurrentProvider` を追加。
+3. `main.js` 7 個の voiceprint IPC ハンドラで `useGpu` 受け入れ: `voiceprint:status` (`provider` フィールドを返すように)、`voiceprint:download` (ダウンロード後に `setActiveModel(modelKey, useGpu)`)、`voiceprint:diarize` / `voiceprint:propagate` (`opts.useGpu` 経由) / `voiceprint:identifySpeakers` / `voiceprint:backfillAll` / `voiceprint:jobSubmit` (新規 `useGpu` フィールドをそのまま透過)。
+4. `VoiceprintJobManager` の addJob / _executeJob も `useGpu` 受け入れ。バックグラウンド diarize ジョブも GPU 上で動作。
+5. `App.vue` 5 箇所の voiceprint 呼び出しに `useGpu: this.useGpu` を付与（voiceprintDownload / voiceprintJobSubmit / voiceprintPropagate / voiceprintIdentifySpeakers / voiceprintBackfillAll）。`preload.js` は変更不要 — ペイロードパススルーは元々正しかった。
+6. `frontend/package.json` 1.23.5 → 1.23.6。
+
+**なぜ DirectML が Windows 唯一の選択肢か**: `onnxruntime-node` 1.27.0 には CUDA ビルドが含まれず、WebGPU / ROCm / OpenCL EP も提供されていない。DirectML が唯一のネイティブサポート GPU EP であり、AMD RX / Intel Arc / NVIDIA 全シリーズで動作する（CUDA toolkit 不要）。
+
+**結果**: 声紋モジュールが GPU チェックボックスを尊重するようになった。DML 成功時は GPU で動作、失敗時は diarize / propagate / identify を中断せず CPU に自動フォールバック。
 
 ## v1.20.11 (2026-06-30) — 声紋モデルダウンロード hotfix
 - `MIN_MODEL_SIZE` を `40 MB` から `25 MB` に引き下げ、「ダウンロード不完全(受信 28283928 bytes のみ)」繰り返し失敗を解消。

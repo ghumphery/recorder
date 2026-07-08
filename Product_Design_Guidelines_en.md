@@ -1,7 +1,23 @@
 # Product Design Guidelines
 
-> **Version**: 1.20.11
-> **Last Updated**: 2026-06-30
+> **Version**: 1.23.6
+> **Last Updated**: 2026-07-08
+
+## v1.23.6 (2026-07-08) — Voiceprint GPU / DirectML (Vulkan) Acceleration
+
+**Issue**: v1.23.5 exposed a "Enable GPU" checkbox in the Settings panel, but the code never propagated the `useGpu` flag into the voiceprint module, so `loadModel()` was always hardcoded `executionProviders: ['cpu']` and the checkbox had no effect. Users reported "Vulkan GPU not working in voiceprint, even with enable option".
+
+**Fix**:
+1. `voiceprint.js` `loadModel(modelKey, useGpu)` now uses `useGpu ? ['dml', 'cpu'] : ['cpu']`. DML is the only GPU EP natively supported by `onnxruntime-node` 1.27.0; on Windows 11 + WDDM 2.9+ drivers it transparently translates to Vulkan API calls. If DML fails (e.g. v1.20.12 recorded campplus AveragePool throwing `80070057`), `loadModel` automatically retries the CPU path. New `_lastLoadProvider` / `_lastLoadUseGpu` cache variables (moved before `loadModel` to avoid hoisting pitfalls); new `getCurrentProvider()` exposes the actual EP used.
+2. Cascade: `setActiveModel`, `_ensureModelLoaded`, `diarizeAudio`, `propagateSpeakers`, `identifySpeakers`, `buildProfile`, `buildProfileFromAudioFile` all accept and forward `useGpu`. `module.exports` adds `getCurrentProvider`.
+3. `main.js` accepts `useGpu` in 7 voiceprint IPC handlers: `voiceprint:status` (now returns a `provider` field), `voiceprint:download` (calls `setActiveModel(modelKey, useGpu)` after download), `voiceprint:diarize` / `voiceprint:propagate` (via `opts.useGpu`) / `voiceprint:identifySpeakers` / `voiceprint:backfillAll` / `voiceprint:jobSubmit` (new `useGpu` field passed through).
+4. `VoiceprintJobManager` addJob / _executeJob accept `useGpu`; background diarize jobs also run on GPU.
+5. `App.vue` passes `useGpu: this.useGpu` in all 5 voiceprint call sites (voiceprintDownload / voiceprintJobSubmit / voiceprintPropagate / voiceprintIdentifySpeakers / voiceprintBackfillAll). `preload.js` requires no change — the payload pass-through was already correct.
+6. `frontend/package.json` 1.23.5 → 1.23.6.
+
+**Why DirectML is the only choice on Windows**: `onnxruntime-node` 1.27.0 ships no CUDA build and no WebGPU / ROCm / OpenCL EP. DirectML is the only natively supported GPU EP, and it works on AMD RX, Intel Arc and NVIDIA GPUs alike (no CUDA toolkit required).
+
+**Result**: Voiceprint module now respects the GPU checkbox. If DML succeeds the session runs on GPU; if it fails, it transparently falls back to CPU without breaking the diarize / propagate / identify operations.
 
 ## v1.20.11 (2026-06-30) — Voiceprint Model Download Hotfix
 - Lower `MIN_MODEL_SIZE` from `40 MB` to `25 MB`, fixing the "Download incomplete (received only 28283928 bytes)" failure loop.
